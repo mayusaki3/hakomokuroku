@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24mm" height="20mm" viewBox="0 0 24 20">
+    <!-- 左: QR 埋め込み領域（14mm角） -->
+    <rect x="1" y="3" width="14" height="14" fill="none" stroke="#000" stroke-dasharray="0.5 0.5"/>
+    <!-- 実際はここに {{QR_SVG}} を <g> で差し込み（等倍/中央寄せ） -->
+    <!-- 右: テキスト領域 -->
+    <text x="16.5" y="6" font-size="3" font-family="sans-serif">{{BOX_CODE}}</text>
+    <text x="16.5" y="10" font-size="2.5" font-family="sans-serif">{{BOX_NAME}}</text>
+    <text x="16.5" y="14" font-size="2.2" font-family="sans-serif">{{LOCATION}}</text>
+</svg>
