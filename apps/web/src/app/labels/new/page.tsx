@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { generateBoxCode } from '@/lib/id';
 import { makeQrSvg } from '@/lib/qr';
 import QrLabel24 from '@/components/QrLabel24';
 
@@ -43,6 +44,13 @@ export default function NewLabelPage() {
       </form>
 
       <div style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          onClick={() => setBoxCode(generateBoxCode())}
+          style={{ padding: '6px 10px' }}
+        >
+          コードを自動生成
+        </button>
         <button onClick={handlePrint} style={{ padding: '8px 12px' }}>印刷（スケール100%）</button>
       </div>
 

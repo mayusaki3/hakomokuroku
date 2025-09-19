@@ -2,6 +2,9 @@
 export const metadata = {
   title: 'hakomokuroku',
   description: '箱の目録・QRラベル管理',
+};
+
+export const viewport = {
   themeColor: '#111827',
 };
 
@@ -10,7 +13,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ja">
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
-        <meta name="theme-color" content="#111827" />
       </head>
       <body>{children}</body>
     </html>
