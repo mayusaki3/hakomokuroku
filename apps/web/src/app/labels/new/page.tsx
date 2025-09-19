@@ -23,6 +23,16 @@ export default function NewLabelPage() {
 
   const handlePrint = () => window.print();
 
+  const handleOpenTapePrint = () => {
+    const params = new URLSearchParams({
+      code: boxCode,
+      name: boxName,
+      location: location,
+      n: '1'
+    });
+    window.open(`/print/tape?${params.toString()}`, '_blank');
+  };
+
   return (
     <main style={{ padding: 24 }}>
       <h1>QRラベル作成</h1>
@@ -51,7 +61,12 @@ export default function NewLabelPage() {
         >
           コードを自動生成
         </button>
-        <button onClick={handlePrint} style={{ padding: '8px 12px' }}>印刷（スケール100%）</button>
+        <button onClick={handlePrint} style={{ padding: '6px 10px' }}>
+          単票印刷（1枚）
+        </button>
+        <button type="button" onClick={handleOpenTapePrint} style={{ padding: '6px 10px' }}>
+          テープ連続印刷ページへ
+        </button>
       </div>
 
       <div style={{ marginTop: 24 }}>
