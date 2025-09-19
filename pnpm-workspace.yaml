@@ -1,6 +1,4 @@
-@'
 packages:
   - "apps/*"
   - "packages/*"
   - "tools/*"
-'@ | Set-Content -Encoding UTF8 .\pnpm-workspace.yaml
