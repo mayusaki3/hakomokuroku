@@ -8,18 +8,22 @@ export default function NewLabelPage() {
   const [boxCode, setBoxCode] = useState('BX-8F3K');
   const [boxName, setBoxName] = useState('書籍Aダンボール');
   const [location, setLocation] = useState('押入れ上段');
-  const [qrSvg, setQrSvg] = useState<string>('');
 
+  // ← 追加：QRサイズ(mm)とQuiet Zone（margin）
+  const [qrSizeMm, setQrSizeMm] = useState<14 | 16>(14);
+  const [qrMargin, setQrMargin] = useState<number>(2); // 0〜4 推奨
+
+  const [qrSvg, setQrSvg] = useState<string>('');
   const url = useMemo(() => `https://app.example/box/${encodeURIComponent(boxCode)}`, [boxCode]);
 
   useEffect(() => {
     let canceled = false;
     (async () => {
-      const svg = await makeQrSvg(url);
+      const svg = await makeQrSvg(url, { margin: qrMargin, ecl: 'M' });
       if (!canceled) setQrSvg(svg);
     })();
     return () => { canceled = true; };
-  }, [url]);
+  }, [url, qrMargin]); // ← margin 変更でも再生成
 
   const handlePrint = () => window.print();
 
@@ -28,7 +32,9 @@ export default function NewLabelPage() {
       code: boxCode,
       name: boxName,
       location: location,
-      n: '1'
+      n: '1',
+      s: String(qrSizeMm),     // ← 追加: size
+      m: String(qrMargin),     // ← 追加: margin
     });
     window.open(`/print/tape?${params.toString()}`, '_blank');
   };
@@ -38,27 +44,39 @@ export default function NewLabelPage() {
       <h1>QRラベル作成</h1>
       <p>24mmテープ向け（PT-2430PC）</p>
 
-      <form onSubmit={(e) => e.preventDefault()} style={{ display: 'grid', gap: 12, maxWidth: 640 }}>
-        <label>
-          箱コード
+      <form onSubmit={(e) => e.preventDefault()} style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
+        <label>箱コード
           <input value={boxCode} onChange={(e) => setBoxCode(e.target.value)} style={{ width: '100%', padding: 8 }} />
         </label>
-        <label>
-          箱名
+        <label>箱名
           <input value={boxName} onChange={(e) => setBoxName(e.target.value)} style={{ width: '100%', padding: 8 }} />
         </label>
-        <label>
-          場所 / タグ
+        <label>場所 / タグ
           <input value={location} onChange={(e) => setLocation(e.target.value)} style={{ width: '100%', padding: 8 }} />
         </label>
+
+        {/* QRサイズ・Quiet Zone */}
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label>QRサイズ(mm)
+            <select value={qrSizeMm} onChange={(e) => setQrSizeMm(Number(e.target.value) as 14 | 16)} style={{ marginLeft: 8, padding: 6 }}>
+              <option value={14}>14</option>
+              <option value={16}>16</option>
+            </select>
+          </label>
+          <label>Quiet Zone（margin）
+            <select value={qrMargin} onChange={(e) => setQrMargin(Number(e.target.value))} style={{ marginLeft: 8, padding: 6 }}>
+              <option value={0}>0</option>
+              <option value={1}>1</option>
+              <option value={2}>2（推奨）</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+            </select>
+          </label>
+        </div>
       </form>
 
-      <div style={{ marginTop: 16 }}>
-        <button
-          type="button"
-          onClick={() => setBoxCode(generateBoxCode())}
-          style={{ padding: '6px 10px' }}
-        >
+      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" onClick={() => setBoxCode(generateBoxCode())} style={{ padding: '6px 10px' }}>
           コードを自動生成
         </button>
         <button onClick={handlePrint} style={{ padding: '6px 10px' }}>
@@ -72,13 +90,13 @@ export default function NewLabelPage() {
       <div style={{ marginTop: 24 }}>
         <h2>プレビュー</h2>
         <div style={{ display: 'inline-flex', gap: '8mm', padding: '8mm', background: '#fafafa' }}>
-          <QrLabel24 code={boxCode} name={boxName} location={location} qrSvg={qrSvg} />
+          <QrLabel24 code={boxCode} name={boxName} location={location} qrSvg={qrSvg} qrSizeMm={qrSizeMm} />
         </div>
+        <p style={{ marginTop: 8, color: '#555' }}>
+          ※ 読み取り安定性が低ければ、まずは Quiet Zone を 2→3→4 と増やして試してください。<br />
+          ※ 16mm にするとQRは大きくなりますが、その分テキスト領域が狭くなります。
+        </p>
       </div>
-
-      <p style={{ marginTop: 16, color: '#555' }}>
-        ※ ブラウザ印刷で「余白なし / スケール100%」。まずコピー紙で確認→PT-2430PCで24mmテープに出力。
-      </p>
     </main>
   );
 }
