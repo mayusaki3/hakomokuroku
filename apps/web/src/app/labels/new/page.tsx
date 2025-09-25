@@ -9,7 +9,7 @@ export default function NewLabelPage() {
   const [boxName, setBoxName] = useState('書籍Aダンボール');
   const [location, setLocation] = useState('押入れ上段');
 
-  // ← 追加：QRサイズ(mm)とQuiet Zone（margin）
+  // ← QRサイズ(mm)とQuiet Zone（margin）
   const [qrSizeMm, setQrSizeMm] = useState<14 | 16>(14);
   const [qrMargin, setQrMargin] = useState<number>(2); // 0〜4 推奨
 
@@ -37,6 +37,21 @@ export default function NewLabelPage() {
       m: String(qrMargin),     // ← 追加: margin
     });
     window.open(`/print/tape?${params.toString()}`, '_blank');
+  };
+
+  const handleOpenA4Print = () => {
+    const params = new URLSearchParams({
+      code: boxCode,
+      name: boxName,
+      location,
+      n: '21',           // 既定の枚数（適宜変更）
+      cols: '7',         // 既定列数
+      gap: '2',          // ギャップmm
+      s: String(qrSizeMm),
+      m: String(qrMargin),
+      o: 'portrait'
+    });
+    window.open(`/print/labels?${params.toString()}`, '_blank');
   };
 
   return (
@@ -84,6 +99,9 @@ export default function NewLabelPage() {
         </button>
         <button type="button" onClick={handleOpenTapePrint} style={{ padding: '6px 10px' }}>
           テープ連続印刷ページへ
+        </button>
+        <button type="button" onClick={handleOpenA4Print} style={{ padding: '6px 10px' }}>
+          A4面付けページへ
         </button>
       </div>
 
