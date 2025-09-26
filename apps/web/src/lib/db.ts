@@ -67,11 +67,15 @@ class HKDB extends Dexie {
       boxes: '&id, code, name, location, *tags, updatedAt',
       items: '&id, boxId, name, *tags, updatedAt',
       images: '&id, boxId, itemId, createdAt',
-    }).upgrade(tx => {
-      // 既存データの tags 初期化など必要ならここで
-      return tx.table('boxes').toCollection().modify((b: any) => {
-        if (!Array.isArray(b.tags)) b.tags = [];
-      });
+    }).upgrade(tx => tx.table('boxes').toCollection().modify((b: any) => {
+      if (!Array.isArray(b.tags)) b.tags = [];
+    }));
+
+    // v3: 画像に blob/thumbBlob を追加（スキーマ変更なし＝no-op）
+    this.version(3).stores({
+      boxes: '&id, code, name, location, *tags, updatedAt',
+      items: '&id, boxId, name, *tags, updatedAt',
+      images: '&id, boxId, itemId, createdAt',
     });
   }
 }
@@ -131,4 +135,74 @@ export async function removeBox(id: string) {
     await db.images.where('boxId').equals(id).delete();
     await db.boxes.delete(id);
   });
+}
+
+export interface ImageRec {
+  id: string;
+  owner?: string;
+  boxId?: string;
+  itemId?: string;
+  // ▼ 追加（MVPはBlobで直接保存）
+  blob?: Blob;         // 元画像（長辺 ~1600px）
+  thumbBlob?: Blob;    // サムネ（長辺 ~400px）
+  // 既存（将来用）
+  blobKey?: string;
+  dataUrl?: string;
+  w: number;
+  h: number;
+  exif?: any;
+  createdAt: ISOms;
+}
+
+// ▼ アイテムAPI
+export async function createItem(boxId: string, input: Omit<Item,'id'|'boxId'|'createdAt'|'updatedAt'>) {
+  const now = Date.now();
+  const id = crypto.randomUUID();
+  await db.items.add({ ...input, id, boxId, createdAt: now, updatedAt: now });
+  await db.boxes.update(boxId, { updatedAt: now });
+  return id;
+}
+
+export async function listItemsByBox(boxId: string) {
+  return db.items.where('boxId').equals(boxId).reverse().sortBy('updatedAt');
+}
+
+export async function getItem(itemId: string) {
+  return db.items.get(itemId);
+}
+
+export async function removeItem(itemId: string) {
+  const it = await db.items.get(itemId);
+  if (!it) return;
+  await db.transaction('rw', db.images, db.items, async () => {
+    await db.images.where('itemId').equals(itemId).delete();
+    await db.items.delete(itemId);
+  });
+  await db.boxes.update(it.boxId, { updatedAt: Date.now() });
+}
+
+// ▼ 画像API
+export async function addImagesToItem(params: {
+  boxId: string;
+  itemId: string;
+  images: Array<{ blob: Blob; thumbBlob: Blob; w: number; h: number; exif?: any }>;
+}) {
+  const now = Date.now();
+  const recs: ImageRec[] = params.images.map(img => ({
+    id: crypto.randomUUID(),
+    boxId: params.boxId,
+    itemId: params.itemId,
+    blob: img.blob,
+    thumbBlob: img.thumbBlob,
+    w: img.w,
+    h: img.h,
+    exif: img.exif,
+    createdAt: now,
+  }));
+  await db.images.bulkAdd(recs);
+  await db.items.update(params.itemId, { updatedAt: now });
+}
+
+export async function listImagesByItem(itemId: string) {
+  return db.images.where('itemId').equals(itemId).reverse().sortBy('createdAt');
 }
