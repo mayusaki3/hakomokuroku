@@ -56,7 +56,9 @@ self.addEventListener('fetch', (event) => {
       } catch {
         const cache = await caches.open(STATIC_CACHE);
         // 既存ページ or offline.html にフォールバック
-        const cached = await cache.match(req) || await cache.match('/offline.html');
+        const cached = await cache.match(req)
+                     || await cache.match('/')              // まずアプリシェルにフォールバック
+                     || await cache.match('/offline.html'); // 最後にオフラインページ
         return cached || new Response('<h1>Offline</h1>', { headers: { 'Content-Type': 'text/html' } });
       }
     })());
