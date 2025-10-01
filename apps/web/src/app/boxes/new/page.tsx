@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { createBox, isBoxCodeTaken } from '@/lib/db';
 import { generateBoxCode } from '@/lib/id';
 import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 
 export default function NewBoxPage() {
   const router = useRouter();
@@ -12,6 +13,13 @@ export default function NewBoxPage() {
   const [tags, setTags] = useState('');
   const [busy, setBusy] = useState(false);
   const [dup, setDup] = useState<boolean | null>(null);
+
+  const sp = useSearchParams();
+  useEffect(() => {
+    const c = sp.get('code');
+    if (c) setCode(c.toUpperCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     // “消えにくい保存”を要求（失敗してもOK）

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { generateBoxCode } from '@/lib/id';
 import { makeQrSvg } from '@/lib/qr';
+import { buildQrPayload } from '@/lib/qrpayload';
 import QrLabel24 from '@/components/QrLabel24';
 
 export default function NewLabelPage() {
@@ -14,7 +15,7 @@ export default function NewLabelPage() {
   const [qrMargin, setQrMargin] = useState<number>(2); // 0〜4 推奨
 
   const [qrSvg, setQrSvg] = useState<string>('');
-  const url = useMemo(() => `https://app.example/box/${encodeURIComponent(boxCode)}`, [boxCode]);
+  const url = useMemo(() => buildQrPayload(boxCode), [boxCode]);
 
   useEffect(() => {
     let canceled = false;
