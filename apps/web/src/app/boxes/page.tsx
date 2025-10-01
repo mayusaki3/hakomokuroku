@@ -73,6 +73,11 @@ export default function BoxesPage() {
                 style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
               >A4面付け</a>
             </div>
+            <div>
+              <a href="/settings/backup" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>
+                バックアップ/復元
+              </a>
+            </div>
           </article>
         ))}
       </div>
