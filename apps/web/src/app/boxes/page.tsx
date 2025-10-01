@@ -33,6 +33,7 @@ export default function BoxesPage() {
         />
         <a href="/boxes/new" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>新規作成</a>
         <a href="/scan" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>スキャン</a>
+        <a href="/search" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>検索</a>
         <a href="/settings/backup" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>バックアップ/復元</a>
       </div>
 
