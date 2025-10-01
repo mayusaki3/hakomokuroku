@@ -40,12 +40,15 @@ export interface ImageRec {
   owner?: string;
   boxId?: string;
   itemId?: string;
+  blob?: Blob;
+  thumbBlob?: Blob;
   blobKey?: string;     // 将来S3キー等
   dataUrl?: string;     // MVPはDataURLでも可。最終的にはBlob保管推奨
   w: number;
   h: number;
   exif?: any;
   createdAt: ISOms;
+  order?: number;
 }
 
 class HKDB extends Dexie {
@@ -56,7 +59,7 @@ class HKDB extends Dexie {
   constructor() {
     super('hakomokuroku');
 
-    // v1 → v2: tags を multiEntry 化
+    // v2: tags を multiEntry 化
     this.version(1).stores({
       boxes: '&id, code, name, location, updatedAt',
       items: '&id, boxId, name, updatedAt',
@@ -76,6 +79,25 @@ class HKDB extends Dexie {
       boxes: '&id, code, name, location, *tags, updatedAt',
       items: '&id, boxId, name, *tags, updatedAt',
       images: '&id, boxId, itemId, createdAt',
+    });
+
+    // v4: images に order インデックスを追加
+    this.version(4).stores({
+      boxes: '&id, code, name, location, *tags, updatedAt',
+      items: '&id, boxId, name, *tags, updatedAt',
+      images: '&id, boxId, itemId, createdAt, order', // order をインデックス化
+    }).upgrade(async tx => {
+      // 既存画像に order が無い場合は createdAt の昇順で 10,20,30... を付与
+      const t = tx.table('images');
+      const byItem: Record<string, any[]> = {};
+      await t.toCollection().modify((im: any) => {
+        const key = im.itemId || '_';
+        (byItem[key] ??= []).push(im);
+      });
+      for (const arr of Object.values(byItem)) {
+        arr.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+        arr.forEach((im, idx) => im.order ??= (idx + 1) * 10);
+      }
     });
   }
 }
@@ -180,15 +202,19 @@ export async function removeItem(itemId: string) {
   });
   await db.boxes.update(it.boxId, { updatedAt: Date.now() });
 }
-
 // ▼ 画像API
+// 既存 addImagesToItem を「末尾に追加」できるよう更新
 export async function addImagesToItem(params: {
   boxId: string;
   itemId: string;
   images: Array<{ blob: Blob; thumbBlob: Blob; w: number; h: number; exif?: any }>;
 }) {
   const now = Date.now();
-  const recs: ImageRec[] = params.images.map(img => ({
+  // 末尾の現在最大 order を取得（無ければ 0）
+  const last = await db.images.where('itemId').equals(params.itemId).sortBy('order');
+  const base = last.length ? (last[last.length - 1].order ?? 0) : 0;
+
+  const recs: ImageRec[] = params.images.map((img, i) => ({
     id: crypto.randomUUID(),
     boxId: params.boxId,
     itemId: params.itemId,
@@ -198,11 +224,29 @@ export async function addImagesToItem(params: {
     h: img.h,
     exif: img.exif,
     createdAt: now,
+    order: base + (i + 1) * 10, // ステップ幅10で末尾に
   }));
   await db.images.bulkAdd(recs);
   await db.items.update(params.itemId, { updatedAt: now });
 }
 
-export async function listImagesByItem(itemId: string) {
-  return db.images.where('itemId').equals(itemId).reverse().sortBy('createdAt');
+export async function listImagesByItemOrdered(itemId: string) {
+  const arr = await db.images.where('itemId').equals(itemId).toArray();
+  return arr.sort((a, b) => (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
+}
+
+// ▼ 追加：1枚削除
+export async function removeImage(imageId: string) {
+  await db.images.delete(imageId);
+}
+
+// ▼ 追加：順序の一括保存（orderedIds の並びで 10,20.. を振り直し）
+export async function setImageOrder(itemId: string, orderedIds: string[]) {
+  const updates = orderedIds.map((id, idx) => ({ id, order: (idx + 1) * 10 }));
+  await db.transaction('rw', db.images, async () => {
+    for (const u of updates) {
+      await db.images.update(u.id, { order: u.order });
+    }
+    await db.items.update(itemId, { updatedAt: Date.now() });
+  });
 }

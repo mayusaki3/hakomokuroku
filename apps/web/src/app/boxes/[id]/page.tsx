@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { Box, getBox, removeBox, updateBox } from '@/lib/db';
 import { useParams, useRouter } from 'next/navigation';
+import { db } from '@/lib/db';
+import { useDexieLive } from '@/lib/live';
 
 export default function BoxDetailPage() {
   const params = useParams<{ id: string }>();
@@ -24,6 +26,12 @@ export default function BoxDetailPage() {
     })();
     return () => { alive = false; };
   }, [params.id]);
+  
+  const { data: itemCount } = useDexieLive<number>(
+    async () => db.items.where('boxId').equals(params.id).count(),
+    [params.id],
+    0
+  );
 
   if (!box) {
     return <main style={{ padding: 24 }}><p>読み込み中、または存在しません。</p></main>;
@@ -71,6 +79,18 @@ export default function BoxDetailPage() {
           <button onClick={onSave} style={{ padding: '6px 10px' }}>保存</button>
           <a href={tapeUrl} target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>テープ印刷</a>
           <a href={a4Url}   target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>A4面付け</a>
+          <a
+            href={`/boxes/${box.id}/items`}
+            style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
+          >
+            アイテム一覧{itemCount ? ` (${itemCount})` : ''}
+          </a>
+          <a
+            href={`/boxes/${box.id}/items/new`}
+            style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
+          >
+            アイテム追加
+          </a>
           <button onClick={onDelete} style={{ padding: '6px 10px', color: '#b91c1c', border: '1px solid #fca5a5', background: '#fff' }}>
             削除
           </button>
