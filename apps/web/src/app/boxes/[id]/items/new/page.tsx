@@ -52,9 +52,17 @@ export default function NewItemPage() {
       // 画像の縮小＆サムネ生成 → IndexedDB 保存
       const payload = [];
       for (const f of files) {
+        // 正立化してから保存
         const full = await downscaleToWebp(f, 1600, 0.85);
         const thumb = await makeThumbWebp(f, 400, 0.8);
-        payload.push({ blob: full.blob, thumbBlob: thumb.blob, w: full.w, h: full.h });
+
+        payload.push({
+          blob: full.blob,
+          thumbBlob: thumb.blob,
+          w: full.w,
+          h: full.h,
+          exif: { orientation: full.orientation ?? thumb.orientation }, // 参考保持
+        });
       }
       if (payload.length) {
         await addImagesToItem({ boxId, itemId, images: payload });
