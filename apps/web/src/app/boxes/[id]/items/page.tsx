@@ -1,44 +1,64 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { listItemsByBox, listImagesByItem } from '@/lib/db';
+import { useEffect, useMemo, useState } from 'react';
+import { db } from '@/lib/db';
 import { useParams } from 'next/navigation';
+import { useDexieLive } from '@/lib/live';
 
 type Row = {
   id: string;
   name: string;
-  thumbUrl?: string;
   tagLine?: string;
+  // UI用（objectURL）—計算で作る
+  thumbUrl?: string;
+  // 内部保持（URL破棄のため）
+  _blob?: Blob;
 };
 
 export default function BoxItemsPage() {
-  const params = useParams<{ id: string }>();
-  const boxId = params.id;
-  const [rows, setRows] = useState<Row[]>([]);
+  const { id: boxId } = useParams<{ id: string }>();
   const [q, setQ] = useState('');
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const items = await listItemsByBox(boxId);
-      const rows: Row[] = [];
-      for (const it of items) {
-        let thumbUrl: string | undefined;
-        const imgs = await listImagesByItem(it.id);
-        if (imgs[0]?.thumbBlob) {
-          thumbUrl = URL.createObjectURL(imgs[0].thumbBlob);
-        }
-        rows.push({ id: it.id, name: it.name, thumbUrl, tagLine: (it.tags ?? []).join(', ') });
-      }
-      if (alive) setRows(rows);
-    })();
-    return () => {
-      alive = false;
-      // objectURL の開放
-      rows.forEach(r => r.thumbUrl && URL.revokeObjectURL(r.thumbUrl));
-    };
-  }, [boxId]);
+  // items と images の両方に反応する liveQuery
+  const { data: rowsRaw } = useDexieLive<Row[]>(
+    async () => {
+      const items = await db.items.where('boxId').equals(boxId).reverse().sortBy('updatedAt');
+      const rows = await Promise.all(items.map(async it => {
+        const img = await db.images.where('itemId').equals(it.id).reverse().sortBy('createdAt').then(xs => xs[0]);
+        return {
+          id: it.id,
+          name: it.name,
+          tagLine: (it.tags ?? []).join(', '),
+          _blob: img?.thumbBlob ?? img?.blob, // あればサムネ、なければ原本
+        } as Row;
+      }));
+      return rows;
+    },
+    [boxId],
+    []
+  );
 
-  const filtered = rows.filter(r => (r.name + ' ' + (r.tagLine ?? '')).toLowerCase().includes(q.toLowerCase()));
+  // objectURL を生成（変更時に古いURLは破棄）
+  const [rows, setRows] = useState<Row[]>([]);
+  useEffect(() => {
+    // 既存URLをクリーンアップ
+    rows.forEach(r => r.thumbUrl && URL.revokeObjectURL(r.thumbUrl));
+
+    const withUrl = rowsRaw.map(r => ({
+      ...r,
+      thumbUrl: r._blob ? URL.createObjectURL(r._blob) : undefined,
+    }));
+    setRows(withUrl);
+
+    return () => {
+      withUrl.forEach(r => r.thumbUrl && URL.revokeObjectURL(r.thumbUrl));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowsRaw]);
+
+  const filtered = useMemo(() => {
+    const needle = q.toLowerCase();
+    return rows.filter(r => (r.name + ' ' + (r.tagLine ?? '')).toLowerCase().includes(needle));
+  }, [rows, q]);
 
   return (
     <main style={{ padding: 24 }}>

@@ -1,47 +1,39 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { Box, db, listBoxes } from '@/lib/db';
+import { useMemo, useState } from 'react';
+import { Box, db } from '@/lib/db';
+import { useDexieLive } from '@/lib/live';
 
 export default function BoxesPage() {
-  const [boxes, setBoxes] = useState<Box[]>([]);
   const [q, setQ] = useState('');
 
-  useEffect(() => {
-    let alive = true;
+  // updatedAt 降順で常に最新を取得
+  const { data: boxes } = useDexieLive<Box[]>(
+    async () => db.boxes.orderBy('updatedAt').reverse().toArray(),
+    [], // 依存はなし（クエリ自体がテーブル更新で再実行される）
+    []
+  );
 
-    // 初回ロード
-    (async () => {
-      const list = await listBoxes();
-      if (alive) setBoxes(list);
-    })();
-
-    // liveQuery 相当（ポーリングでも十分だが、ここは簡易ウォッチ）
-    const interval = setInterval(async () => {
-      const list = await listBoxes();
-      if (alive) setBoxes(list);
-    }, 1500);
-
-    return () => { alive = false; clearInterval(interval); };
-  }, []);
-
-  const filtered = boxes.filter(b => {
-    const hay = [b.code, b.name, b.location ?? '', ...(b.tags ?? [])].join(' ').toLowerCase();
-    return hay.includes(q.toLowerCase());
-  });
+  const filtered = useMemo(() => {
+    const needle = q.toLowerCase();
+    return boxes.filter(b => {
+      const hay = [b.code, b.name, b.location ?? '', ...(b.tags ?? [])].join(' ').toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [boxes, q]);
 
   return (
     <main style={{ padding: 24 }}>
       <h1>箱 一覧</h1>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <input
           placeholder="検索（コード/名前/場所/タグ）"
           value={q}
           onChange={e => setQ(e.target.value)}
-          style={{ flex: 1, padding: 8 }}
+          style={{ flex: 1, minWidth: 240, padding: 8 }}
         />
-        <a href="/boxes/new" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>
-          新規作成
-        </a>
+        <a href="/boxes/new" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>新規作成</a>
+        <a href="/scan" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>スキャン</a>
+        <a href="/settings/backup" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>バックアップ/復元</a>
       </div>
 
       {filtered.length === 0 && <p>データがありません。まずは「新規作成」から。</p>}
@@ -72,11 +64,6 @@ export default function BoxesPage() {
                 target="_blank"
                 style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
               >A4面付け</a>
-            </div>
-            <div>
-              <a href="/settings/backup" style={{ padding: '8px 12px', border: '1px solid #ddd', textDecoration: 'none' }}>
-                バックアップ/復元
-              </a>
             </div>
           </article>
         ))}
