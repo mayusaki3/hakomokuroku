@@ -1,12 +1,12 @@
 // apps/web/src/app/layout.tsx
+import SWRegister from '@/app/sw-register';
+
 export const metadata = {
   title: 'hakomokuroku',
   description: '箱の目録・QRラベル管理',
 };
 
-export const viewport = {
-  themeColor: '#111827',
-};
+export const viewport = { themeColor: '#111827' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -14,7 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <SWRegister /> {/* ← SW を登録 */}
+      </body>
     </html>
   );
 }
