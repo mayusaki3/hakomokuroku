@@ -11,7 +11,7 @@
   --fs-h2: 18px;
 
   /* header / footer */
-  --topbar-h: 48px;      /* ヘッダー高さ（少し低め） */
+  --topbar-h: 48px;      /* ヘッダー高さ */
   --bottombar-h: 56px;   /* モバイル下タブ高さ */
   --avatar-size: 32px;   /* 👤 と タイトル行の基準サイズ（両者が連動） */
 
@@ -21,6 +21,10 @@
   --muted: #6b7280;
   --bg: #ffffff;         /* 画面全体の下地 */
   --content-bg: #ffdabb; /* ヘッダー/下タブ以外の中面背景 */
+
+  /* 検索カードの“画面端からの見た目距離” */
+  --search-edge-mobile: 8px;   /* モバイル左右距離 */
+  --search-edge-desktop: 0px;  /* PC左右距離（0=container既定に揃える） */
 }
 
 @media (min-width: 768px) {
@@ -55,6 +59,14 @@ body {
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 a, button { min-height: 44px; min-width: 44px; }
 input, button, select, textarea { font: inherit; }
+
+/* モバイル固定ボトムナビに隠れないための下余白 */
+.bottom-safe {
+  padding-bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  .bottom-safe { padding-bottom: 0; }
+}
 
 /* 表示切替（PC=上メニュー / モバイル=下タブ） */
 .only-mobile { display: block !important; }
@@ -150,7 +162,7 @@ input[type="text"], input[type="search"], textarea {
 
 .title-text {
   font-weight: 700;
-  font-size: calc(var(--avatar-size) * 0.8);  /* 32px時 ≈25.5px */
+  font-size: calc(var(--avatar-size) * 0.56); /* 32px時 ≈18px */
   line-height: var(--avatar-size);            /* 行高で縦中央揃え */
   white-space: nowrap;
   overflow: hidden;
@@ -165,4 +177,59 @@ input[type="text"], input[type="search"], textarea {
   text-decoration: none;
   color: var(--brand);
   background: #fff;
+}
+
+/* ===== Search (Home) ===== */
+
+/* 検索カード：containerの左右padを相殺して“画面端からの距離”を実効化 */
+.search-card {
+  padding: 12px;
+  margin-inline: calc(var(--search-edge-mobile) - var(--pad));
+}
+@media (min-width: 768px) {
+  .search-card {
+    margin-inline: calc(var(--search-edge-desktop) - var(--pad));
+  }
+}
+
+/* 検索バーをグリッドで1行固定（入力 1fr / 検索ボタン / カメラ） */
+.searchbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.searchbar input { min-width: 0; }
+
+/* ボタン */
+.btn {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand);
+}
+
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+}
+
+/* 検索ヘルプ（検索枠の内側に表示する説明） */
+.search-help {
+  margin: 8px 2px 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 360px) {
+  .searchbar { gap: 6px; }
+  .btn { padding: 8px 12px; }
 }
