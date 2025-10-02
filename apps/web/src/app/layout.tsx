@@ -24,16 +24,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="theme-color" content="#111827" />
       </head>
       <body>
-        <HeaderTitleProvider>
-          <Header />
-          <div className="app-content">
-            <div className="container">
-              {children}
-            </div>
-          </div>
-          <MobileTabBar />
-          <SWRegister />
-        </HeaderTitleProvider>
+        <Header />
+        <div className="app-content">
+          <div className="container">{children}</div>
+        </div>
+        <MobileTabBar />
+        <SWRegister />
       </body>
     </html>
   );
