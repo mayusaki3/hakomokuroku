@@ -115,24 +115,28 @@ input[type="text"], input[type="search"], textarea {
   border-bottom: 1px solid #eee;
 }
 
-/* PCデフォルト：従来配置（左:👤 / 中央:タイトル / 右:メニュー） */
+/* ===== Header ===== */
+
+/* PC：左=auto（👤の実寸）、中央=1fr、右=auto（メニュー実寸）。
+   → 中央セルの center が、左アイコンと右メニューの“間”の中点になる */
 .header-grid {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: auto 1fr auto;  /* ← PCでのセンタリング条件 */
   align-items: center;
   gap: 8px;
   height: var(--topbar-h);
 }
+
 .header-left  { justify-self: start; }
-.header-mid   { justify-self: start; }  /* PCは従来の見え方を維持 */
+.header-mid   { justify-self: center; }  /* ← 中央セルを常にセンター */
 .header-right { justify-self: end; }
 
-/* モバイルのみ：タイトルを真正センターに */
+/* モバイル：右メニューはhiddenなので、画面の絶対中心でセンタリング */
 @media (max-width: 767px) {
   .header-grid {
-    grid-template-columns: 1fr auto 1fr; /* 左右対称化 */
+    grid-template-columns: 1fr auto 1fr; /* ← 絶対センター（左右対称） */
   }
-  .header-mid { justify-self: center; }
+  .header-right { display: none !important; } /* 念のための保険（既に only-desktop でも非表示） */
 }
 
 .avatar {

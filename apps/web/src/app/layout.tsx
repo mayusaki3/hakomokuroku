@@ -1,5 +1,6 @@
 import SWRegister from '@/app/sw-register';
 import Header from '@/app/components/Header';
+import { HeaderTitleProvider } from '@/app/components/HeaderTitleContext';
 import MobileTabBar from '@/app/components/MobileTabBar';
 import './globals.css'
 
@@ -23,16 +24,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="theme-color" content="#111827" />
       </head>
       <body>
-        <Header />
-        {/* 中面（背景適用エリア） */}
-        <div className="app-content">
-          <div className="container">
-            {children}
+        <HeaderTitleProvider>
+          <Header />
+          <div className="app-content">
+            <div className="container">
+              {children}
+            </div>
           </div>
-        </div>
-
-        <MobileTabBar />
-        <SWRegister />
+          <MobileTabBar />
+          <SWRegister />
+        </HeaderTitleProvider>
       </body>
     </html>
   );
