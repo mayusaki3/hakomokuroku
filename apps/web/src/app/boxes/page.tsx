@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, Box } from '@/lib/db';
 import { useDexieLive } from '@/lib/live';
 import { useHeaderTitle } from '@/app/components/HeaderTitleContext';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 let BrowserQRCodeReader: any;
 
@@ -14,36 +15,55 @@ function CameraIcon() {
     </svg>
   );
 }
+function ClearIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
 
 type Unreg = { kind:'unregistered'; code: string };
 
 export default function BoxesPage() {
   useHeaderTitle('箱リスト');
 
-  const [q, setQ] = useState('');
-  const [qrCode, setQrCode] = useState<string | null>(null);
+  const router = useRouter();
+  const sp = useSearchParams();
+
+  // 初期値をURLから復元
+  const [q, setQ] = useState(() => sp.get('q') ?? '');
+  const [qrCode, setQrCode] = useState<string | null>(() => sp.get('qr') ?? null);
   const [unreg, setUnreg] = useState<Unreg | null>(null);
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const readerRef = useRef<any>(null);
 
+  // Dexie live
   const { data: boxes = [] } = useDexieLive<Box[]>(
     async () => db.boxes.orderBy('updatedAt').reverse().toArray(),
     [],
     [],
   );
 
+  // クエリ→URLへ即時反映（replaceで履歴を汚さない）
+  useEffect(() => {
+    const params = new URLSearchParams(sp.toString());
+    if (q) params.set('q', q); else params.delete('q');
+    if (qrCode) params.set('qr', qrCode); else params.delete('qr');
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : '?', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, qrCode]);
+
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const byText = !needle ? boxes : boxes.filter(b => {
+    let byText = !needle ? boxes : boxes.filter(b => {
       const s = `${b.code} ${b.name} ${b.location ?? ''} ${(b.tags ?? []).join(' ')}`.toLowerCase();
       return s.includes(needle);
     });
-
-    // QR優先（箱コード完全一致で絞り込み）
     if (qrCode) {
-      const hit = byText.filter(b => b.code.toLowerCase() === qrCode.toLowerCase());
-      return hit;
+      byText = byText.filter(b => b.code.toLowerCase() === qrCode.toLowerCase());
     }
     return byText;
   }, [boxes, q, qrCode]);
@@ -62,15 +82,13 @@ export default function BoxesPage() {
       const result = await readerRef.current.decodeOnceFromVideoDevice(undefined, videoEl);
       const text = result.getText().trim();
 
-      // 箱コード（/b/<code> or プレーンコード）
       const m = text.match(/(?:^|\/)b\/([^/]+)/);
-      const code = m ? decodeURIComponent(m[1]) :
-        (/^[A-Za-z0-9._-]{2,64}$/.test(text) ? text : null);
+      const code = m ? decodeURIComponent(m[1])
+        : (/^[A-Za-z0-9._-]{2,64}$/.test(text) ? text : null);
 
       if (!code) {
         alert('このQRから箱コードを抽出できませんでした。');
-        setQrCode(null);
-        setUnreg(null);
+        setQrCode(null); setUnreg(null);
       } else {
         setQrCode(code);
         const hit = await db.boxes.where('code').equalsIgnoreCase(code).first();
@@ -84,6 +102,8 @@ export default function BoxesPage() {
     }
   };
 
+  const clearAll = () => { setQ(''); setQrCode(null); setUnreg(null); };
+
   const onRowClick = (b: Box) => { window.location.href = `/boxes/${b.id}`; };
   const onUnregClick = (code: string) => {
     const params = new URLSearchParams({ code });
@@ -92,30 +112,23 @@ export default function BoxesPage() {
 
   return (
     <main className="container bottom-safe" style={{ display: 'grid', gap: 12, paddingTop: 8 }}>
-      {/* 絞り込み（トップ準拠） */}
+      {/* 絞り込み（ボタン無し／クリア＋カメラ） */}
       <section className="card search-card">
         <div className="searchbar">
           <input
             value={q}
             onChange={e => setQ(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') {/* Enterで絞り込み済み */} }}
             placeholder="絞り込み（コード／箱名／場所／タグ）"
             enterKeyHint="search"
             style={{ padding: 12, fontSize: 16 }}
           />
-          <button type="button" className="btn" onClick={() => {/* 入力で既に反映。視認性のため残す */}}>絞り込み</button>
+          <button type="button" className="clear-btn" onClick={clearAll} disabled={!q && !qrCode} title="絞り込みをクリア">
+            <ClearIcon />
+          </button>
           <button type="button" className="icon-btn" onClick={startScan} aria-disabled={scanning} title="箱コードで絞り込み">
             <CameraIcon />
           </button>
         </div>
-
-        {/* ガイダンス（該当0件時に表示） */}
-        {rows.length === 0 && !unreg && !scanning && (
-          <p className="search-help">
-            条件に一致する箱がありません。<br />
-            カメラで<strong>箱のQR</strong>を読み取ると、<strong>箱コード</strong>で絞り込みます。
-          </p>
-        )}
 
         {/* スキャン中プレビュー */}
         {scanning && (

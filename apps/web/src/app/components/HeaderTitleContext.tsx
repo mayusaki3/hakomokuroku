@@ -1,28 +1,31 @@
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
 
-type CtxType = { title: string; setTitle: (t: string) => void };
+type CtxType = { title: string | null; setTitle: (t: string | null) => void };
 const TitleCtx = createContext<CtxType | null>(null);
 
 export function HeaderTitleProvider({ children }: { children: React.ReactNode }) {
-  const [title, setTitle] = useState('箱目録');
+  const [title, setTitle] = useState<string | null>(null);
   return <TitleCtx.Provider value={{ title, setTitle }}>{children}</TitleCtx.Provider>;
 }
 
-/** ページ側で呼ぶ：useHeaderTitle('箱一覧') のように */
-export function useHeaderTitle(newTitle?: string) {
+/** ページ側から見出しを上書き。空文字/空白は null に正規化して、未指定扱いに。 */
+export function useHeaderTitle(newTitle?: string | null) {
   const ctx = useContext(TitleCtx);
   useEffect(() => {
-    if (!ctx || !newTitle) return;
+    if (!ctx) return;
+    const toNull = (s: string | null | undefined) =>
+      s && s.trim().length > 0 ? s : null;
+
     const prev = ctx.title;
-    ctx.setTitle(newTitle);
-    return () => ctx.setTitle('箱目録'); // アンマウントで戻す
+    ctx.setTitle(toNull(newTitle));
+    return () => ctx.setTitle(prev ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx, newTitle]);
-  return ctx?.title ?? '箱目録';
+  return ctx?.title ?? null;
 }
 
-/** ヘッダーが読む：現在のタイトルを取得 */
 export function useCurrentHeaderTitle() {
   const ctx = useContext(TitleCtx);
-  return ctx?.title ?? '箱目録';
+  return ctx?.title ?? null;
 }

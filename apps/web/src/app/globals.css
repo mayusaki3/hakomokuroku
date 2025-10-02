@@ -214,6 +214,24 @@ input[type="text"], input[type="search"], textarea {
   color: var(--brand);
 }
 
+/* クリア（×）ボタン：アイコンボタンと同サイズ */
+.clear-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.clear-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/* QR読み込み（📷）ボタン */
 .icon-btn {
   width: 44px;
   height: 44px;
@@ -237,3 +255,8 @@ input[type="text"], input[type="search"], textarea {
   .searchbar { gap: 6px; }
   .btn { padding: 8px 12px; }
 }
+
+/* モバイル下部タブの装飾 */
+.tabbar a.tab-link { text-decoration: none; color: var(--brand); display: inline-grid; place-items: center; }
+.tabbar .tab-label { font-size: 11px; line-height: 1.1; }
+.tabbar a.tab-link[aria-current="page"] { font-weight: 700; } /* 下線ではなく太字などに */

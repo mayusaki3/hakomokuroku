@@ -1,5 +1,5 @@
 /* hakomokuroku SW - minimal offline + runtime caching */
-const VERSION = 'v1-20251003';
+const VERSION = 'v1-20251002A';
 const STATIC_CACHE = `static-${VERSION}`;
 const RUNTIME_CACHE = `runtime-${VERSION}`;
 const IMAGE_CACHE = `images-${VERSION}`;
