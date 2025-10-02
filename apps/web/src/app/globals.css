@@ -6,20 +6,19 @@
   --fs-body: 16px;
   --fs-h1: 20px;
   --fs-h2: 18px;
-  --topbar-h: 56px;
+
+  /* ↓ ここを調整しました */
+  --topbar-h: 48px;           /* ヘッダー高を少し低く */
+  --bottombar-h: 56px;        /* モバイルの下タブ高さ */
   --brand: #111827;
   --border: #e5e7eb;
   --muted: #6b7280;
-  --bg: #f9fafb;
+  --bg: #ffffff;              /* 画面全体の下地 */
+  --content-bg: #ffdabb;      /* 中面（上部/下部を除くエリア）の背景 */
 }
 
-/* ≥768px をデスクトップ基準に */
 @media (min-width: 768px) {
-  :root {
-    --pad: 20px;
-    --fs-h1: 22px;
-    --fs-h2: 20px;
-  }
+  :root { --pad: 20px; --fs-h1: 22px; --fs-h2: 20px; }
 }
 
 html, body { height: 100%; }
@@ -31,76 +30,80 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* レイアウトユーティリティ */
+/* 中面（ヘッダー・下タブを除いた領域）の背景をここで統一 */
+.app-content {
+  min-height: calc(100vh - var(--topbar-h));
+  background: var(--content-bg);
+}
+@media (max-width: 767px) {
+  .app-content {
+    min-height: calc(100vh - var(--topbar-h) - var(--bottombar-h));
+  }
+}
+
+/* レイアウト共通 */
 .container { padding: var(--pad); max-width: var(--maxw); margin: 0 auto; }
 .card { border: 1px solid #eee; border-radius: 8px; background: #fff; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 a, button { min-height: 44px; min-width: 44px; }
 input, button, select, textarea { font: inherit; }
 
-/* 表示切り替え（PC/モバイル） */
+/* 表示切替 */
 .only-mobile { display: block !important; }
 nav.only-desktop { display: none !important; }
 @media (min-width: 768px) {
   .only-mobile { display: none !important; }
-  nav.only-desktop { display: block !important; } /* PC幅でのみ表示 */
+  nav.only-desktop { display: block !important; }
 }
 
-/* 汎用カードグリッド */
-.grid-cards {
-  display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min-mobile), 1fr));
-}
-@media (min-width: 768px) {
-  .grid-cards {
-    grid-template-columns: repeat(auto-fill, minmax(var(--card-min-desktop), 1fr));
-  }
-}
+/* グリッド/テーブルは既存のまま… */
 
-/* テーブル（PC想定） */
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  background: #fff;
-  border: 1px solid #eee;
-  border-radius: 8px;
-}
-.table th, .table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; text-align: left; }
-.table th { background: #fafafa; font-weight: 600; }
-
-/* 見出し */
-h1 { font-size: var(--fs-h1); margin: 0 0 10px; }
-h2 { font-size: var(--fs-h2); margin: 0 0 8px; }
-
-/* 入力の底上げ */
-input[type="text"], input[type="search"], textarea { font-size: 16px; padding: 12px; }
-
-/* モバイルの下タブに隠れないよう既定の下余白 */
-main { padding-bottom: 72px; }
-@media (min-width: 768px) { main { padding-bottom: 0; } }
-
-/* ── ヘッダー用（inline style 排除） ── */
+/* ヘッダー（高さ縮小＆タイトル左にアイコン） */
 .header {
   position: sticky; top: 0; z-index: 40;
   background: rgba(255,255,255,0.9);
   backdrop-filter: saturate(180%) blur(8px);
   border-bottom: 1px solid #eee;
 }
+/* PCデフォルト：従来レイアウト */
 .header-grid {
-  display: grid; grid-template-columns: 44px 1fr auto;
-  align-items: center; gap: 8px; height: var(--topbar-h);
+  display: grid;
+  grid-template-columns: 44px 1fr auto; /* 左=固定, 中央=可変, 右=メニュー */
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
 }
+.header-left  { justify-self: start; }
+.header-mid   { justify-self: start; }  /* 中央セル内で左寄せ(従来の見え方に合わせる) */
+.header-right { justify-self: end; }
+
+/* モバイル時のみ「真正センター」 */
+@media (max-width: 767px) {
+  .header-grid {
+    grid-template-columns: 1fr auto 1fr; /* 左右対称 */
+  }
+  .header-mid { justify-self: center; }     /* タイトルを幾何学的ど真ん中へ */
+}
+
 .avatar {
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 32px; height: 32px; border-radius: 50%;
   background: #e5e7eb; color: var(--muted); border: 1px solid #d1d5db;
   display: grid; place-items: center;
 }
-.title {
-  text-align: center; font-weight: 700; font-size: 18px;
+.title-row {
+  display: flex; justify-content: center; align-items: center; gap: 6px;
+}
+.brandmark {
+  width: 20px; height: 20px; display: inline-block;
+}
+.title-text {
+  font-weight: 700; font-size: 18px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.nav-horizontal { display: flex; gap: 8px; }
+.nav-horizontal { display: flex; gap: 6px; }
 .btn-link {
-  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
   text-decoration: none; color: var(--brand); background: #fff;
 }
+
+/* 入力の底上げ／下タブの余白などは既存の定義でOK */

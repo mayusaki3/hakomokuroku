@@ -4,11 +4,10 @@ import MobileTabBar from '@/app/components/MobileTabBar';
 import './globals.css'
 
 export const metadata = {
-  title: 'hakomokuroku',
+  title: '箱目録',                             // ← タイトルも統一
   description: '箱の目録・QRラベル管理',
 };
 
-// Next.js の警告回避：themeColor は viewport で指定
 export const viewport = { themeColor: '#111827' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -25,9 +24,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <Header />
-        <div className="container">
-          {children}
+        {/* 中面（背景適用エリア） */}
+        <div className="app-content">
+          <div className="container">
+            {children}
+          </div>
         </div>
+
         <MobileTabBar />
         <SWRegister />
       </body>

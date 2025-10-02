@@ -8,13 +8,17 @@ export default function Header() {
   return (
     <header className="header">
       <div className="container header-grid">
-        {/* 左：ユーザーアイコン（設定へ） */}
+        {/* 左：ユーザー（設定へ） */}
         <a href="/settings/backup" aria-label="アカウント/設定" title="設定">
           <div className="avatar">👤</div>
         </a>
 
-        {/* 中央：タイトル */}
-        <div className="title">hakomokuroku</div>
+        {/* 中央：ロゴ＋タイトル */}
+        <div className="title-row" aria-label="アプリタイトル">
+          {/* 作成したfavicon.svgをそのまま使います */}
+          <img src="/favicon.svg" alt="" className="brandmark" />
+          <div className="title-text">箱目録</div>
+        </div>
 
         {/* 右：PCのみメニュー */}
         <nav className="only-desktop nav-horizontal" aria-label="トップメニュー">
