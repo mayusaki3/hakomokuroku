@@ -1,65 +1,70 @@
-// apps/web/src/components/QrLabel24.tsx
 'use client';
+
+import { useMemo } from 'react';
+import { makeQrSvg } from '@/lib/qr';
 
 type Props = {
   code: string;
-  name: string;
-  location?: string;
-  qrSvg: string;      // makeQrSvg の戻り値（SVG文字列）
-  qrSizeMm?: number;  // 14 or 16 を想定（既定14）
+  /** ラベル高さ（mm）。24mmテープ想定だが、必要なら変更可 */
+  mmHeight?: number;
+  /** 余白（mm） */
+  mmPadding?: number;
+  /** QRの物理サイズ（mm） */
+  mmQr?: number;
+  /** テキスト表示の有無 */
+  showText?: boolean;
 };
 
 /**
- * 24mmテープ想定：幅24mm × 高さ20mm（例）
- * 左 14mm角にQR、右にテキスト3行。印刷時はスケール100%で。
+ * 24mmテープ向けの簡易QRラベル（プレビュー/印刷兼用）
+ * - mm単位でサイズを指定（印刷時に実寸に近づけやすい）
+ * - 画面表示ではCSSがmm→px換算されるため、見た目は環境で若干変わります
  */
-export default function QrLabel24({ code, name, location, qrSvg, qrSizeMm = 14 }: Props) {
-  // 左列を QR の実寸に合わせる
-  const gridCols = `${qrSizeMm}mm 1fr`;
+export default function QrLabel24({
+  code,
+  mmHeight = 24,
+  mmPadding = 2,
+  mmQr = 20,
+  showText = true,
+}: Props) {
+  // 高解像度SVGを生成してCSSで物理サイズへ縮小
+  const qrSvg = useMemo(() => {
+    // 余裕をもって512pxで生成（印刷時のスケール縮小でシャープに出やすい）
+    return makeQrSvg(code, 512); // string (SVG)
+  }, [code]);
 
   return (
     <div
       style={{
-        width: '24mm',
-        height: '20mm',
-        padding: 0,
-        boxSizing: 'border-box',
-        display: 'grid',
-        gridTemplateColumns: gridCols,
-        gap: '1mm',
+        height: `${mmHeight}mm`,
+        display: 'flex',
         alignItems: 'center',
-        border: '1px dashed #ddd' // 画面目安。印刷時はCSSで非表示
+        gap: `${Math.max(1, Math.min(mmPadding, 6))}mm`,
+        padding: `${mmPadding}mm`,
+        background: '#fff',
+        border: '1px solid #eee',     // 画面確認用。印刷では気になる場合は外してOK
+        borderRadius: 6,
       }}
-      className="print-label"
     >
-      {/* 左：QR（実寸 qrSizeMm にフィット） */}
+      {/* QR本体（SVGをそのまま埋め込み） */}
       <div
-        style={{ width: `${qrSizeMm}mm`, height: `${qrSizeMm}mm` }}
-        dangerouslySetInnerHTML={{ __html: sizedQr(qrSvg, qrSizeMm) }}
+        style={{
+          width: `${mmQr}mm`,
+          height: `${mmQr}mm`,
+          lineHeight: 0,
+        }}
+        aria-label="箱コードQR"
+        // makeQrSvg が返す <svg ...> をそのまま表示
+        dangerouslySetInnerHTML={{ __html: qrSvg }}
       />
-      {/* 右：テキスト */}
-      <div style={{ lineHeight: 1.1 }}>
-        <div style={{ fontSize: '3mm',  fontFamily: 'sans-serif', fontWeight: 600 }}>{code}</div>
-        <div style={{ fontSize: '2.5mm', fontFamily: 'sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-        <div style={{ fontSize: '2.2mm', fontFamily: 'sans-serif', color: '#333' }}>{location ?? ''}</div>
-      </div>
 
-      <style jsx global>{`
-        @media print {
-          @page { size: 24mm auto; margin: 0; }
-          .print-label { border: none !important; }
-          body { margin: 0 !important; }
-        }
-      `}</style>
+      {/* 右側テキスト（任意） */}
+      {showText && (
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ fontSize: '3.2mm', fontWeight: 700, lineHeight: 1.1 }}>箱目録</div>
+          <code style={{ fontSize: '3.4mm', lineHeight: 1.1 }}>{code}</code>
+        </div>
+      )}
     </div>
   );
-}
-
-/** 生成されたSVGに mm 指定を強制して等倍にする */
-function sizedQr(svg: string, mm: number) {
-  if (!svg) return '';
-  return svg
-    .replace(/width="[^"]*"/, '')
-    .replace(/height="[^"]*"/, '')
-    .replace('<svg', `<svg width="${mm}mm" height="${mm}mm" style="display:block"`);
 }

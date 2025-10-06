@@ -1,74 +1,125 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { exportZip, importZip, downloadBlob } from '@/lib/backup';
 
-export default function BackupPage() {
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { clearAllLocalData, exportBackup, getDbCounts, importBackup } from '@/lib/backup';
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="card" style={{ padding: 12 }}>
+      <h2 style={{ margin: '4px 0 8px', fontSize: 16 }}>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+export default function SettingsBackupPage() {
+  const [counts, setCounts] = useState<{boxes:number;items:number}>({ boxes: 0, items: 0 });
+  const [includeThumbs, setIncludeThumbs] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string>('');
-  const [est, setEst] = useState<{usage?: number; quota?: number}>({});
+  const [log, setLog] = useState<string>('');
 
   useEffect(() => {
-    (async () => {
-      if (navigator.storage?.estimate) {
-        const e = await navigator.storage.estimate();
-        setEst({ usage: e.usage, quota: e.quota });
-      }
-    })();
+    refreshCounts();
   }, []);
 
-  const onExport = async () => {
-    setBusy(true); setMsg('');
-    try {
-      const { blob, summary } = await exportZip();
-      downloadBlob(blob, summary.filename);
-      const mb = (summary.bytes ?? 0) / (1024*1024);
-      setMsg(`エクスポート完了: boxes=${summary.boxes}, items=${summary.items}, images=${summary.images}, ${(mb).toFixed(2)} MB`);
-    } catch (e:any) {
-      setMsg(`エクスポート失敗: ${e?.message ?? e}`);
-    } finally {
-      setBusy(false);
-    }
+  const refreshCounts = async () => {
+    const c = await getDbCounts();
+    setCounts(c);
   };
 
-  const onImport = async (file: File) => {
-    setBusy(true); setMsg('');
+  const onExport = async () => {
     try {
-      const res = await importZip(file);
-      setMsg(`インポート完了: boxes +${res.added.boxes}, items +${res.added.items}, images +${res.added.images}` +
-             (res.warnings.length ? ` / 注意: ${res.warnings.join('; ')}` : ''));
+      setBusy(true);
+      const { blob, filename, size } = await exportBackup({ includeThumbs });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setLog(`バックアップを書き出しました: ${filename} (${Math.round(size/1024)} KB)`);
+      setTimeout(() => URL.revokeObjectURL(a.href), 0);
     } catch (e:any) {
-      setMsg(`インポート失敗: ${e?.message ?? e}`);
-    } finally {
-      setBusy(false);
+      alert(`書き出しに失敗: ${e.message ?? e}`);
+    } finally { setBusy(false); }
+  };
+
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const onImport = async (strategy: 'merge'|'replace') => {
+    const input = fileRef.current;
+    if (!input || !input.files?.length) {
+      alert('バックアップJSONを選択してください');
+      return;
     }
+    const file = input.files[0];
+    try {
+      setBusy(true);
+      await importBackup(file, strategy);
+      await refreshCounts();
+      setLog(`インポート(${strategy})が完了しました: ${file.name}`);
+    } catch (e:any) {
+      alert(`インポートに失敗: ${e.message ?? e}`);
+    } finally { setBusy(false); }
+  };
+
+  const onClear = async () => {
+    if (!confirm('ローカルの箱・アイテムを全て削除します。よろしいですか？')) return;
+    await clearAllLocalData();
+    await refreshCounts();
+    setLog('ローカルデータを削除しました。');
+  };
+
+  const onResetSW = async () => {
+    if (!('serviceWorker' in navigator)) { alert('Service Worker 未対応'); return; }
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map(r => r.unregister()));
+    setLog('Service Worker を解除しました。ページを再読み込みします。');
+    location.reload();
   };
 
   return (
-    <main style={{ padding: 24, maxWidth: 720 }}>
-      <h1>バックアップ／復元</h1>
+    <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
+      <Section title="ステータス">
+        <div>箱: <b>{counts.boxes}</b>　アイテム: <b>{counts.items}</b></div>
+        <p className="search-help">PC とスマホ間の同期は、以下の書き出し/読み込みで実現できます。</p>
+      </Section>
 
-      <section style={{ border: '1px solid #eee', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-        <h2>エクスポート（Zip）</h2>
-        <p>IndexedDB 内のデータ（箱・アイテム・画像）を Zip にまとめてダウンロードします。</p>
-        <button onClick={onExport} disabled={busy} style={{ padding: '8px 12px' }}>
-          {busy ? '処理中…' : 'すべてエクスポート'}
+      <Section title="書き出し（バックアップ）">
+        <label style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
+          <input type="checkbox" checked={includeThumbs} onChange={e=>setIncludeThumbs(e.target.checked)} />
+          画像サムネ（photoThumbs）も含める（ファイルサイズが大きくなります）
+        </label>
+        <button className="btn" onClick={onExport} disabled={busy}>JSON をダウンロード</button>
+      </Section>
+
+      <Section title="読み込み（手動同期）">
+        <input ref={fileRef} type="file" accept="application/json" />
+        <div className="row" style={{ marginTop:8 }}>
+          <button className="btn" onClick={() => onImport('merge')} disabled={busy}>マージで取り込む</button>
+          <button className="btn" onClick={() => onImport('replace')} disabled={busy}>置換で取り込む（上級者向け）</button>
+        </div>
+        <p className="search-help">
+          マージ: 既存と突合して、新しい更新日時の内容を優先します。<br />
+          置換: 既存データを消去して、バックアップの内容に置換します。
+        </p>
+      </Section>
+
+      <Section title="ローカルデータの管理">
+        <button className="btn" onClick={onClear} disabled={busy} style={{ borderColor:'#ef4444', color:'#ef4444' }}>
+          すべて削除（ローカルのみ）
         </button>
-      </section>
+        <div className="row" style={{ marginTop:8 }}>
+          <button className="btn" onClick={onResetSW}>キャッシュをクリアして再読み込み（SWリセット）</button>
+        </div>
+        <p className="search-help">
+          表示が更新されない/古いリソースが出る場合は、Service Worker を解除して再読み込みしてください。
+        </p>
+      </Section>
 
-      <section style={{ border: '1px solid #eee', borderRadius: 8, padding: 12 }}>
-        <h2>インポート（Zip）</h2>
-        <p>過去にエクスポートした Zip を選択してください。既存データは<strong>上書きせず</strong>、重複コードは <code>-IMP</code> を付与して追記します。</p>
-        <input type="file" accept=".zip,application/zip" onChange={e => {
-          const f = e.target.files?.[0]; if (f) onImport(f);
-        }} />
-      </section>
-
-      <section style={{ marginTop: 16, color: '#555' }}>
-        <h3>ストレージ使用量</h3>
-        <div>使用量: {est.usage ? (est.usage/1024/1024).toFixed(1) : '-'} MB / クォータ: {est.quota ? (est.quota/1024/1024).toFixed(1) : '-'} MB</div>
-      </section>
-
-      {msg && <p style={{ marginTop: 16 }}><b>{msg}</b></p>}
+      {log && (
+        <div className="card" style={{ padding:12 }}>
+          <div style={{ fontWeight:600 }}>ログ</div>
+          <div style={{ fontSize:13, color:'#555', whiteSpace:'pre-wrap' }}>{log}</div>
+        </div>
+      )}
     </main>
   );
 }

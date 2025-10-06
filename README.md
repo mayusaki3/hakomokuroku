@@ -13,3 +13,6 @@
 pnpm i
 pnpm dev
 # http://localhost:3000
+
+# HTTPSトンネルで公開 → 表示されたURLにアクセス
+cloudflared tunnel --url http://localhost:3000

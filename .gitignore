@@ -5,3 +5,8 @@ out
 coverage
 .DS_Store
 *.local
+
+apps/web/prisma/*.db
+apps/web/prisma/*.db-journal
+
+/generated/prisma

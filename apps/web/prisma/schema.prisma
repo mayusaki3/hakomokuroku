@@ -1,0 +1,32 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Box {
+  id        String   @id
+  code      String   @unique
+  name      String
+  location  String?
+  tags      Json               // ← 既定値なし（アプリ側で [] を入れる）
+  createdAt DateTime
+  updatedAt DateTime
+
+  items     Item[]
+}
+
+model Item {
+  id        String   @id
+  boxId     String
+  name      String
+  tags      Json               // ← 既定値なし（アプリ側で [] を入れる）
+  note      String?
+  createdAt DateTime
+  updatedAt DateTime
+
+  box       Box      @relation(fields: [boxId], references: [id], onDelete: Cascade)
+}
