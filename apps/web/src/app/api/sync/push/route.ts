@@ -1,24 +1,30 @@
+// apps/web/src/app/api/sync/push/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 import { syncPushZ } from '../types';
 
-function toDate(s: string) { return new Date(s); }
-function asTags(x: any): any { return Array.isArray(x) ? x : []; }
+export const runtime = 'nodejs'; // ← Prisma は Edge で動かないので明示
+
+const toDate = (s: string) => new Date(s);
+const asArray = (x: any): any[] => (Array.isArray(x) ? x : []);
+const asTags  = (x: any): any   => (Array.isArray(x) ? x : []);
 
 export async function POST(req: Request) {
   try {
+    // Content-Type/JSON パース
     const body = await req.json();
 
-    // ログ出力（開発時のみ）
-    console.log('PUSH body sample:', JSON.stringify({
-      boxes: (body?.boxes ?? []).slice(0, 1),
-      items: (body?.items ?? []).slice(0, 1),
-    }, null, 2));
+    // Zod で形を検証（ここで投げたら 400 を返す）
+    const parsed = syncPushZ.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'ZodError', issues: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+    const { boxes = [], items = [], locations = [] } = parsed.data;
 
-    const parsed = syncPushZ.parse(body); // 失敗すると throw
-    const { boxes, items } = parsed;
-
-    // 1) Box
+    // 1) Boxes（code 一意）
     for (const b of boxes) {
       const old = await prisma.box.findUnique({ where: { code: b.code } });
       const newer = !old || toDate(b.updatedAt) > old.updatedAt;
@@ -30,6 +36,7 @@ export async function POST(req: Request) {
             name: b.name ?? '',
             location: b.location ?? null,
             tags: asTags(b.tags),
+            thumbs: asArray(b.thumbs),
             createdAt: toDate(b.createdAt),
             updatedAt: toDate(b.updatedAt),
           },
@@ -41,13 +48,14 @@ export async function POST(req: Request) {
             name: b.name ?? '',
             location: b.location ?? null,
             tags: asTags(b.tags),
+            thumbs: asArray(b.thumbs),
             updatedAt: toDate(b.updatedAt),
           },
         });
       }
     }
 
-    // 2) Item
+    // 2) Items（id 一意）
     for (const it of items) {
       const old = await prisma.item.findUnique({ where: { id: it.id } });
       const newer = !old || toDate(it.updatedAt) > old.updatedAt;
@@ -59,6 +67,7 @@ export async function POST(req: Request) {
             name: it.name ?? '',
             tags: asTags(it.tags),
             note: it.note ?? null,
+            thumbs: asArray(it.thumbs),
             createdAt: toDate(it.createdAt),
             updatedAt: toDate(it.updatedAt),
           },
@@ -67,23 +76,53 @@ export async function POST(req: Request) {
         await prisma.item.update({
           where: { id: it.id },
           data: {
+            boxId: it.boxId,
             name: it.name ?? '',
             tags: asTags(it.tags),
             note: it.note ?? null,
-            boxId: it.boxId,
+            thumbs: asArray(it.thumbs),
             updatedAt: toDate(it.updatedAt),
           },
         });
       }
     }
 
-    return NextResponse.json({ ok: true });
+    // 3) Locations（boxId 一意）
+    for (const loc of locations) {
+      const old = await prisma.boxLocation.findUnique({ where: { boxId: loc.boxId } });
+      const newer = !old || toDate(loc.updatedAt) > old.updatedAt;
+      if (!old) {
+        await prisma.boxLocation.create({
+          data: {
+            id: loc.id,
+            boxId: loc.boxId,
+            thumbs: asArray(loc.thumbs),
+            note: loc.note ?? null,
+            createdAt: toDate(loc.createdAt),
+            updatedAt: toDate(loc.updatedAt),
+          },
+        });
+      } else if (newer) {
+        await prisma.boxLocation.update({
+          where: { boxId: loc.boxId },
+          data: {
+            thumbs: asArray(loc.thumbs),
+            note: loc.note ?? null,
+            updatedAt: toDate(loc.updatedAt),
+          },
+        });
+      }
+    }
+
+    const res = NextResponse.json({ ok: true });
+    res.headers.set('content-type', 'application/json; charset=utf-8');
+    return res;
   } catch (e: any) {
-    console.error('PUSH ERROR:', e);
-    // ここでエラーメッセージを JSON で返す（暫定）
+    // dev で原因が見えるように返す（本番はログだけにして 500 固定でもよい）
+    console.error('sync/push error', e);
     return NextResponse.json(
-      { error: String(e?.message ?? e), stack: e?.stack ?? null },
-      { status: 500 },
+      { error: String(e?.message ?? e), stack: e?.stack },
+      { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } },
     );
   }
 }
