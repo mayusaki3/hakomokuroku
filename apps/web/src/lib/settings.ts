@@ -30,6 +30,10 @@ export type Settings = {
   qrPayloadMode: 'code' | 'url'; // 生コード or URL
   qrUrlPrefix: string;           // url時の prefix（例: https://your.host/b/）
 
+  // 同期
+  syncBaseUrl: string;        // 同期用URL
+  syncToken: string;          // 同期用トークン
+
   // バックアップ既定
   backupIncludeThumbs: boolean;  // サムネ含める既定
 };
@@ -55,6 +59,9 @@ export const defaultSettings: Settings = {
 
   qrPayloadMode: 'code',
   qrUrlPrefix: '',
+
+  syncBaseUrl: '',
+  syncToken: '',
 
   backupIncludeThumbs: true,
 };

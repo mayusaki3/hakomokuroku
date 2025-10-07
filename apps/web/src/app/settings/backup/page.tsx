@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clearAllLocalData, exportBackup, getDbCounts, importBackup } from '@/lib/backup';
+import { useSettings } from '@/lib/settings';
+import { db } from '@/lib/db';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -17,6 +19,8 @@ export default function SettingsBackupPage() {
   const [includeThumbs, setIncludeThumbs] = useState(true);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string>('');
+  const {settings: s} = useSettings();
+  const [syncBusy, setSyncBusy] = useState(false);
 
   useEffect(() => {
     refreshCounts();
@@ -26,6 +30,86 @@ export default function SettingsBackupPage() {
     const c = await getDbCounts();
     setCounts(c);
   };
+
+  async function getAllForPush() {
+    const [boxes, items] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
+    // Dexie の tags は配列。サーバーは Json で受けるのでそのままでOK
+    return { boxes, items };
+  }
+  async function getLatestUpdatedAtIso() {
+    const [b, i] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
+    const maxTs = Math.max(
+      0,
+      ...b.map(x => new Date(x.updatedAt).getTime()),
+      ...i.map(x => new Date(x.updatedAt).getTime())
+    );
+    return maxTs ? new Date(maxTs).toISOString() : undefined;
+  }
+  async function doPush() {
+    if (!s.syncBaseUrl || !s.syncToken) { alert('同期URL/トークンを設定してください'); return; }
+    setSyncBusy(true);
+    try {
+      const body = await getAllForPush();
+      const res = await fetch(`${s.syncBaseUrl.replace(/\/+$/,'')}/api/sync/push`, {
+        method: 'POST',
+        headers: { 'content-type':'application/json', authorization: `Bearer ${s.syncToken}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setLog('サーバーへ PUSH 完了');
+    } catch (e:any) {
+      alert(`PUSH 失敗: ${e.message ?? e}`);
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+  async function doPull(full = false) {
+    if (!s.syncBaseUrl || !s.syncToken) { alert('同期URL/トークンを設定してください'); return; }
+    setSyncBusy(true);
+    try {
+      const since = full ? undefined : await getLatestUpdatedAtIso();
+      const u = new URL(`${s.syncBaseUrl.replace(/\/+$/,'')}/api/sync/pull`);
+      if (since) u.searchParams.set('since', since);
+      const res = await fetch(u, { headers: { authorization: `Bearer ${s.syncToken}` } });
+      if (!res.ok) throw new Error(await res.text());
+      const { boxes, items } = await res.json();
+
+      // 既存の "merge" 相当（updatedAt 比較）でローカルへ反映
+      await db.transaction('rw', db.boxes, db.items, async () => {
+        // Box: code 突合
+        for (const b of boxes as any[]) {
+          const hit = await db.boxes.where('code').equals(b.code).first();
+          if (!hit) {
+            await db.boxes.add(b);
+          } else if (new Date(b.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) {
+            await db.boxes.update(hit.id, {
+              name: b.name, location: b.location ?? '', tags: b.tags ?? [],
+              updatedAt: b.updatedAt,
+            } as any);
+          }
+        }
+        // Item: id 突合
+        for (const it of items as any[]) {
+          const hit = await db.items.get(it.id);
+          if (!hit) {
+            await db.items.add(it);
+          } else if (new Date(it.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) {
+            await db.items.update(hit.id, {
+              name: it.name, tags: it.tags ?? [], note: it.note ?? '',
+              boxId: it.boxId, updatedAt: it.updatedAt,
+            } as any);
+          }
+        }
+      });
+
+      await refreshCounts();
+      setLog(`PULL 完了（${since ? '差分' : '全量'}）`);
+    } catch (e:any) {
+      alert(`PULL 失敗: ${e.message ?? e}`);
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const onExport = async () => {
     try {
@@ -80,6 +164,15 @@ export default function SettingsBackupPage() {
       <Section title="ステータス">
         <div>箱: <b>{counts.boxes}</b>　アイテム: <b>{counts.items}</b></div>
         <p className="search-help">PC とスマホ間の同期は、以下の書き出し/読み込みで実現できます。</p>
+      </Section>
+
+      <Section title="サーバー同期（自己ホスト）">
+        <div className="row" style={{ gap:8 }}>
+          <button className="btn" onClick={() => doPush()} disabled={syncBusy}>PUSH（ローカル→サーバー）</button>
+          <button className="btn" onClick={() => doPull(false)} disabled={syncBusy}>PULL 差分</button>
+          <button className="btn" onClick={() => doPull(true)} disabled={syncBusy}>PULL 全量</button>
+        </div>
+        <p className="search-help">※ 認証は Bearer Token（設定で指定）。/api/sync/pull / push を使用。</p>
       </Section>
 
       <Section title="書き出し（バックアップ）">

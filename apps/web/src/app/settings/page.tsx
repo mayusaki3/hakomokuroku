@@ -111,6 +111,18 @@ export default function SettingsHomePage() {
         <p className="search-help">※ URL 形式にすると、ラベルのQRスキャンでブラウザ遷移が可能になります。</p>
       </Section>
 
+      <Section title="同期（自己ホスト）">
+        <div className="row" style={{ alignItems:'center' }}>
+          <label style={{ minWidth: 120 }}>同期ベースURL</label>
+          <input value={s.syncBaseUrl} onChange={e=>update('syncBaseUrl', e.target.value)} placeholder="例: https://your-host" />
+        </div>
+        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
+          <label style={{ minWidth: 120 }}>トークン</label>
+          <input type="password" value={s.syncToken} onChange={e=>update('syncToken', e.target.value)} placeholder="Bearer 用トークン" />
+        </div>
+        <p className="search-help">※ サーバー側は /api/sync/pull / push を用意（本プロジェクトに含まれます）。</p>
+      </Section>
+
       <Section title="バックアップ（既定）">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.backupIncludeThumbs} onChange={e=>update('backupIncludeThumbs', e.target.checked)} />
