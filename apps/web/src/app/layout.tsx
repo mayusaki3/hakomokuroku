@@ -2,6 +2,7 @@ import SWRegister from '@/app/sw-register';
 import Header from '@/app/components/Header';
 import { HeaderTitleProvider } from '@/app/components/HeaderTitleContext';
 import MobileTabBar from '@/app/components/MobileTabBar';
+import DevExposeDB from './dev-expose-db';
 import './globals.css'
 
 export const metadata = {
@@ -28,6 +29,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="app-content">
           <div className="container">{children}</div>
         </div>
+
+        {children}
+        {/* 開発時のみ露出 */}
+        {process.env.NODE_ENV !== 'production' ? <DevExposeDB /> : null}
+
         <MobileTabBar />
         <SWRegister />
       </body>
