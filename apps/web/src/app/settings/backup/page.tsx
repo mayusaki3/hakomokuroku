@@ -1,218 +1,92 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { clearAllLocalData, exportBackup, getDbCounts, importBackup } from '@/lib/backup';
-import { useSettings } from '@/lib/settings';
-import { db } from '@/lib/db';
+import { useEffect, useState, useMemo } from 'react';
+import { loadSyncSettings, saveSyncSettings } from '@/lib/sync-settings';
+import { pullFromServer, pushToServer } from '@/lib/sync';
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card" style={{ padding: 12 }}>
-      <h2 style={{ margin: '4px 0 8px', fontSize: 16 }}>{title}</h2>
-      {children}
-    </section>
-  );
-}
+export default function BackupSettingsPage() {
+  const [endpoint, setEndpoint] = useState('');
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState<'idle'|'pull'|'push'|'save'>('idle');
+  const [msg, setMsg] = useState<string>('');
 
-export default function SettingsBackupPage() {
-  const [counts, setCounts] = useState<{boxes:number;items:number}>({ boxes: 0, items: 0 });
-  const [includeThumbs, setIncludeThumbs] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [log, setLog] = useState<string>('');
-  const {settings: s} = useSettings();
-  const [syncBusy, setSyncBusy] = useState(false);
-
+  // 初期値読込
   useEffect(() => {
-    refreshCounts();
+    const s = loadSyncSettings();
+    setEndpoint(s.endpoint || 'http://localhost:3000/api/sync');
+    setToken(s.token || '');
   }, []);
 
-  const refreshCounts = async () => {
-    const c = await getDbCounts();
-    setCounts(c);
+  const canSync = useMemo(() => !!endpoint && !!token, [endpoint, token]);
+
+  const onSave = async () => {
+    setBusy('save'); setMsg('');
+    saveSyncSettings({ endpoint, token });
+    setBusy('idle'); setMsg('保存しました');
   };
 
-  async function getAllForPush() {
-    const [boxes, items] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
-    // Dexie の tags は配列。サーバーは Json で受けるのでそのままでOK
-    return { boxes, items };
-  }
-  async function getLatestUpdatedAtIso() {
-    const [b, i] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
-    const maxTs = Math.max(
-      0,
-      ...b.map(x => new Date(x.updatedAt).getTime()),
-      ...i.map(x => new Date(x.updatedAt).getTime())
-    );
-    return maxTs ? new Date(maxTs).toISOString() : undefined;
-  }
-  async function doPush() {
-    if (!s.syncBaseUrl || !s.syncToken) { alert('同期URL/トークンを設定してください'); return; }
-    setSyncBusy(true);
+  const onPull = async () => {
+    setBusy('pull'); setMsg('');
     try {
-      const body = await getAllForPush();
-      const res = await fetch(`${s.syncBaseUrl.replace(/\/+$/,'')}/api/sync/push`, {
-        method: 'POST',
-        headers: { 'content-type':'application/json', authorization: `Bearer ${s.syncToken}` },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setLog('サーバーへ PUSH 完了');
-    } catch (e:any) {
-      alert(`PUSH 失敗: ${e.message ?? e}`);
+      const res = await pullFromServer();
+      setMsg(`PULL 成功: boxes=${res.boxes}, items=${res.items}, locations=${res.locations}`);
+    } catch (e: any) {
+      setMsg(`PULL 失敗: ${e?.message ?? e}`);
     } finally {
-      setSyncBusy(false);
+      setBusy('idle');
     }
-  }
-  async function doPull(full = false) {
-    if (!s.syncBaseUrl || !s.syncToken) { alert('同期URL/トークンを設定してください'); return; }
-    setSyncBusy(true);
+  };
+
+  const onPush = async () => {
+    setBusy('push'); setMsg('');
     try {
-      const since = full ? undefined : await getLatestUpdatedAtIso();
-      const u = new URL(`${s.syncBaseUrl.replace(/\/+$/,'')}/api/sync/pull`);
-      if (since) u.searchParams.set('since', since);
-      const res = await fetch(u, { headers: { authorization: `Bearer ${s.syncToken}` } });
-      if (!res.ok) throw new Error(await res.text());
-      const { boxes, items } = await res.json();
-
-      // 既存の "merge" 相当（updatedAt 比較）でローカルへ反映
-      await db.transaction('rw', db.boxes, db.items, async () => {
-        // Box: code 突合
-        for (const b of boxes as any[]) {
-          const hit = await db.boxes.where('code').equals(b.code).first();
-          if (!hit) {
-            await db.boxes.add(b);
-          } else if (new Date(b.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) {
-            await db.boxes.update(hit.id, {
-              name: b.name, location: b.location ?? '', tags: b.tags ?? [],
-              updatedAt: b.updatedAt,
-            } as any);
-          }
-        }
-        // Item: id 突合
-        for (const it of items as any[]) {
-          const hit = await db.items.get(it.id);
-          if (!hit) {
-            await db.items.add(it);
-          } else if (new Date(it.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) {
-            await db.items.update(hit.id, {
-              name: it.name, tags: it.tags ?? [], note: it.note ?? '',
-              boxId: it.boxId, updatedAt: it.updatedAt,
-            } as any);
-          }
-        }
-      });
-
-      await refreshCounts();
-      setLog(`PULL 完了（${since ? '差分' : '全量'}）`);
-    } catch (e:any) {
-      alert(`PULL 失敗: ${e.message ?? e}`);
+      const res = await pushToServer();
+      setMsg(`PUSH 成功: boxes=${res.boxes}, items=${res.items}, locations=${res.locations}`);
+    } catch (e: any) {
+      setMsg(`PUSH 失敗: ${e?.message ?? e}`);
     } finally {
-      setSyncBusy(false);
+      setBusy('idle');
     }
-  }
-
-  const onExport = async () => {
-    try {
-      setBusy(true);
-      const { blob, filename, size } = await exportBackup({ includeThumbs });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      setLog(`バックアップを書き出しました: ${filename} (${Math.round(size/1024)} KB)`);
-      setTimeout(() => URL.revokeObjectURL(a.href), 0);
-    } catch (e:any) {
-      alert(`書き出しに失敗: ${e.message ?? e}`);
-    } finally { setBusy(false); }
-  };
-
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const onImport = async (strategy: 'merge'|'replace') => {
-    const input = fileRef.current;
-    if (!input || !input.files?.length) {
-      alert('バックアップJSONを選択してください');
-      return;
-    }
-    const file = input.files[0];
-    try {
-      setBusy(true);
-      await importBackup(file, strategy);
-      await refreshCounts();
-      setLog(`インポート(${strategy})が完了しました: ${file.name}`);
-    } catch (e:any) {
-      alert(`インポートに失敗: ${e.message ?? e}`);
-    } finally { setBusy(false); }
-  };
-
-  const onClear = async () => {
-    if (!confirm('ローカルの箱・アイテムを全て削除します。よろしいですか？')) return;
-    await clearAllLocalData();
-    await refreshCounts();
-    setLog('ローカルデータを削除しました。');
-  };
-
-  const onResetSW = async () => {
-    if (!('serviceWorker' in navigator)) { alert('Service Worker 未対応'); return; }
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.all(regs.map(r => r.unregister()));
-    setLog('Service Worker を解除しました。ページを再読み込みします。');
-    location.reload();
   };
 
   return (
-    <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
-      <Section title="ステータス">
-        <div>箱: <b>{counts.boxes}</b>　アイテム: <b>{counts.items}</b></div>
-        <p className="search-help">PC とスマホ間の同期は、以下の書き出し/読み込みで実現できます。</p>
-      </Section>
+    <div style={{ maxWidth: 680, margin: '0 auto', padding: '12px' }}>
+      <h2 style={{ marginBottom: 8 }}>同期設定</h2>
 
-      <Section title="サーバー同期（自己ホスト）">
-        <div className="row" style={{ gap:8 }}>
-          <button className="btn" onClick={() => doPush()} disabled={syncBusy}>PUSH（ローカル→サーバー）</button>
-          <button className="btn" onClick={() => doPull(false)} disabled={syncBusy}>PULL 差分</button>
-          <button className="btn" onClick={() => doPull(true)} disabled={syncBusy}>PULL 全量</button>
-        </div>
-        <p className="search-help">※ 認証は Bearer Token（設定で指定）。/api/sync/pull / push を使用。</p>
-      </Section>
+      <label className="form-label">エンドポイント（/api/sync）</label>
+      <input
+        className="input"
+        placeholder="http://localhost:3000/api/sync"
+        value={endpoint}
+        onChange={e => setEndpoint(e.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+      />
 
-      <Section title="書き出し（バックアップ）">
-        <label style={{ display:'flex', gap:8, alignItems:'center', marginBottom:8 }}>
-          <input type="checkbox" checked={includeThumbs} onChange={e=>setIncludeThumbs(e.target.checked)} />
-          画像サムネ（photoThumbs）も含める（ファイルサイズが大きくなります）
-        </label>
-        <button className="btn" onClick={onExport} disabled={busy}>JSON をダウンロード</button>
-      </Section>
+      <label className="form-label">トークン（Bearer）</label>
+      <input
+        className="input"
+        placeholder="例: wODSXM4OMTivH3E7"
+        value={token}
+        onChange={e => setToken(e.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+      />
 
-      <Section title="読み込み（手動同期）">
-        <input ref={fileRef} type="file" accept="application/json" />
-        <div className="row" style={{ marginTop:8 }}>
-          <button className="btn" onClick={() => onImport('merge')} disabled={busy}>マージで取り込む</button>
-          <button className="btn" onClick={() => onImport('replace')} disabled={busy}>置換で取り込む（上級者向け）</button>
-        </div>
-        <p className="search-help">
-          マージ: 既存と突合して、新しい更新日時の内容を優先します。<br />
-          置換: 既存データを消去して、バックアップの内容に置換します。
-        </p>
-      </Section>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="btn" onClick={onSave} disabled={busy !== 'idle'}>保存</button>
+        <button className="btn" onClick={onPull} disabled={!canSync || busy !== 'idle'}>PULL</button>
+        <button className="btn" onClick={onPush} disabled={!canSync || busy !== 'idle'}>PUSH</button>
+      </div>
 
-      <Section title="ローカルデータの管理">
-        <button className="btn" onClick={onClear} disabled={busy} style={{ borderColor:'#ef4444', color:'#ef4444' }}>
-          すべて削除（ローカルのみ）
-        </button>
-        <div className="row" style={{ marginTop:8 }}>
-          <button className="btn" onClick={onResetSW}>キャッシュをクリアして再読み込み（SWリセット）</button>
-        </div>
-        <p className="search-help">
-          表示が更新されない/古いリソースが出る場合は、Service Worker を解除して再読み込みしてください。
-        </p>
-      </Section>
+      {msg && <div className="note" role="status" style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>{msg}</div>}
 
-      {log && (
-        <div className="card" style={{ padding:12 }}>
-          <div style={{ fontWeight:600 }}>ログ</div>
-          <div style={{ fontSize:13, color:'#555', whiteSpace:'pre-wrap' }}>{log}</div>
-        </div>
-      )}
-    </main>
+      <hr style={{ margin: '16px 0' }} />
+
+      <p style={{ color: '#666', fontSize: 13 }}>
+        ※ トークンはブラウザの localStorage に保存されます（この端末のみ）。サーバ側の <code>.env</code> の <code>SYNC_TOKEN</code> と一致している必要があります。<br/>
+        ※ Pull は <code>?since=最後Pull時刻</code> で差分取得、Push は <code>updatedAt</code> 基準で差分送信します。
+      </p>
+    </div>
   );
 }

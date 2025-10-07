@@ -124,3 +124,31 @@ export function useSettings() {
 
   return { settings, update, setSettings };
 }
+
+// apps/web/src/lib/settings.ts
+export type SyncSettings = {
+  endpoint: string; // 例: http://localhost:3000/api/sync
+  token: string;    // Bearer の中身
+};
+
+const KEY = 'hk.sync.settings';
+
+export function loadSyncSettings(): SyncSettings {
+  if (typeof window === 'undefined') return { endpoint: '', token: '' };
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return { endpoint: '', token: '' };
+    const obj = JSON.parse(raw);
+    return {
+      endpoint: String(obj.endpoint ?? ''),
+      token: String(obj.token ?? ''),
+    };
+  } catch {
+    return { endpoint: '', token: '' };
+  }
+}
+
+export function saveSyncSettings(s: SyncSettings) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(KEY, JSON.stringify(s));
+}
