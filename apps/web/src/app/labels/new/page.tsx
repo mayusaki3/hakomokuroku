@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { generateBoxCode } from '@/lib/id';
 import { makeQrSvg } from '@/lib/qr';
 import { buildQrPayload } from '@/lib/qrpayload';
-import QrLabel24 from '@/components/QrLabel24';
+import QrLabel24 from '@/app/components/QrLabel24';
 
 export default function NewLabelPage() {
   const [boxCode, setBoxCode] = useState('BX-8F3K');

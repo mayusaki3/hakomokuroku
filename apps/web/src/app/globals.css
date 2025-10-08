@@ -260,3 +260,59 @@ input[type="text"], input[type="search"], textarea {
 .tabbar a.tab-link { text-decoration: none; color: var(--brand); display: inline-grid; place-items: center; }
 .tabbar .tab-label { font-size: 11px; line-height: 1.1; }
 .tabbar a.tab-link[aria-current="page"] { font-weight: 700; } /* 下線ではなく太字などに */
+
+/* ---- Register stepper ---- */
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.stepbtn {
+  --tip: 14px; /* 右側の矢先サイズ */
+  position: relative;
+  padding: 10px 12px 10px calc(12px + var(--tip));
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #111;
+  border-radius: 6px;
+  /* 右向きの五角形（ホームベース＋矢印風） */
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--tip)) 0,
+    100% 50%,
+    calc(100% - var(--tip)) 100%,
+    0 100%,
+    var(--tip) 50%
+  );
+}
+.stepbtn[aria-current="step"] {
+  background: #eef6ff;
+  border-color: #9ecbff;
+}
+.stepbtn[aria-disabled="true"] {
+  background: #f6f6f6;
+  color: #aaa;
+  border-color: #eee;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.box-banner {
+  background: #f7f7fa;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 6px 0 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.box-banner .meta {
+  font-size: 13px;
+  color: #555;
+}
+.box-banner .code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
