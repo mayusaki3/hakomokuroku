@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { db, type Box, type Item, type BoxLocation } from '@/lib/db';
 import { newBoxCode } from '@/lib/codegen';
 import { fileToThumbDataUrl, parseTags } from '@/lib/img';
+import { useEffect } from 'react';
 import QrLabel24 from '@/app/components/QrLabel24';
 
 type BoxDraft = Box & { photoFiles?: File[] }; // 写真は step2 で扱う
@@ -39,7 +40,10 @@ const emptyLocDraft = (boxId: string): LocDraft => ({
   updatedAt: new Date().toISOString(),
 });
 
-export default function RegisterClient() {
+export default function RegisterClient({
+  initialBoxId,
+  initialStep = 0,
+}: { initialBoxId?: string; initialStep?: number }) {
   // 0=箱登録,1=アイテム,2=箱写真,3=ラベル,4=場所
   const [step, setStep] = useState<number>(0);
 
@@ -50,6 +54,23 @@ export default function RegisterClient() {
   const itemPhotoInputRef = useRef<HTMLInputElement>(null);
   const boxPhotoInputRef = useRef<HTMLInputElement>(null);
   const locPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  // 編集モードの初期化
+  useEffect(() => {
+    setStep(initialStep);
+    if (!initialBoxId) return;
+
+    (async () => {
+      const b = await db.boxes.get(initialBoxId);
+      if (b) setBox({ ...b });
+
+      const its = await db.items.where('boxId').equals(initialBoxId).toArray();
+      if (its?.length) setItems(its as any); // Item[] -> ItemDraft[] 互換
+
+      const l = await db.boxLocations.where('boxId').equals(initialBoxId).first();
+      if (l) setLoc(l as any);
+    })();
+  }, [initialBoxId, initialStep]);
 
   // --- 箱登録 ---
   const issueBoxCode = () => {

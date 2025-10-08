@@ -271,19 +271,18 @@ input[type="text"], input[type="search"], textarea {
 .stepbtn {
   --tip: 14px; /* 右側の矢先サイズ */
   position: relative;
-  padding: 10px 12px 10px calc(12px + var(--tip));
+  padding: 10px 12px 10px calc(12px);
   border: 1px solid #ddd;
   background: #fff;
   color: #111;
   border-radius: 6px;
-  /* 右向きの五角形（ホームベース＋矢印風） */
+  /* 左は直線、右だけ矢先 */
   clip-path: polygon(
     0 0,
     calc(100% - var(--tip)) 0,
     100% 50%,
     calc(100% - var(--tip)) 100%,
-    0 100%,
-    var(--tip) 50%
+    0 100%
   );
 }
 .stepbtn[aria-current="step"] {
@@ -296,23 +295,4 @@ input[type="text"], input[type="search"], textarea {
   border-color: #eee;
   pointer-events: none;
   cursor: not-allowed;
-}
-.box-banner {
-  background: #f7f7fa;
-  border: 1px solid #eee;
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin: 6px 0 12px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: center;
-}
-.box-banner .meta {
-  font-size: 13px;
-  color: #555;
-}
-.box-banner .code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 600;
 }

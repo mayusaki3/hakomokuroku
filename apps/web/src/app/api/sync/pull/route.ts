@@ -1,29 +1,43 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 
-export const runtime = 'nodejs';
-
-const norm = <T extends Record<string, any>>(x: T) => ({
-  ...x,
-  thumbs: Array.isArray(x.thumbs) ? x.thumbs : [],
-});
+function checkAuth(req: Request) {
+  const auth = req.headers.get('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!process.env.SYNC_TOKEN || token !== process.env.SYNC_TOKEN) {
+    return false;
+  }
+  return true;
+}
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const since = url.searchParams.get('since');
-  const where = since ? { updatedAt: { gt: new Date(since) } } : {};
+  if (!checkAuth(req)) {
+    return new NextResponse('Unauthorized', { status: 401 });
+  }
 
-  const [boxes, items, locations] = await Promise.all([
-    prisma.box.findMany({ where }),
-    prisma.item.findMany({ where }),
-    prisma.boxLocation.findMany({ where }),
+  const url = new URL(req.url);
+  const cursor = url.searchParams.get('cursor'); // ISO or null
+  const whereBox   = cursor ? { updatedAt: { gt: new Date(cursor) } } : {};
+  const whereItem  = cursor ? { updatedAt: { gt: new Date(cursor) } } : {};
+  const whereLoc   = cursor ? { updatedAt: { gt: new Date(cursor) } } : {};
+
+  const [items, boxes, locations] = await Promise.all([
+    prisma.item.findMany({ where: whereItem }),
+    prisma.box.findMany({ where: whereBox }),
+    prisma.boxLocation.findMany({ where: whereLoc }),
   ]);
 
-  const res = NextResponse.json({
-    boxes: boxes.map(norm),
-    items: items.map(norm),
-    locations: locations.map(norm),
-  });
-  res.headers.set('content-type', 'application/json; charset=utf-8');
-  return res;
+  // DB全体の最新updatedAtからカーソルを生成（時刻ズレ影響なし）
+  const [iMax, bMax, lMax] = await Promise.all([
+    prisma.item.aggregate({ _max: { updatedAt: true } }),
+    prisma.box.aggregate({ _max: { updatedAt: true } }),
+    prisma.boxLocation.aggregate({ _max: { updatedAt: true } }),
+  ]);
+  const maxDate = [iMax._max.updatedAt, bMax._max.updatedAt, lMax._max.updatedAt]
+    .filter(Boolean)
+    .sort((a, b) => (a!.getTime() - b!.getTime())) // asc
+    .at(-1) || new Date();
+  const nextCursor = maxDate.toISOString();
+
+  return NextResponse.json({ boxes, items, locations, cursor: nextCursor });
 }

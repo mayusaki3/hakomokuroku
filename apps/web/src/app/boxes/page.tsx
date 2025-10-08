@@ -4,6 +4,7 @@ import { db, Box } from '@/lib/db';
 import { useDexieLive } from '@/lib/live';
 import { useHeaderTitle } from '@/app/components/HeaderTitleContext';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 
 let BrowserQRCodeReader: any;
 
@@ -160,6 +161,7 @@ export default function BoxesPage() {
                   {b.tags?.length ? <>　タグ: {b.tags.join(', ')}</> : null}
                 </div>
               </button>
+              <Link className="btn" href={`/register?boxId=${encodeURIComponent(b.id)}&step=2`}>編集</Link>              
             </li>
           ))}
         </ul>
