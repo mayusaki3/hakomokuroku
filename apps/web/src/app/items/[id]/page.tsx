@@ -1,9 +1,10 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { getItem, listImagesByItemOrdered, removeItem, removeImage, setImageOrder, addImagesToItem } from '@/lib/db';
+import { db } from '@/lib/db';
 import { useParams, useRouter } from 'next/navigation';
 import { useDexieLive } from '@/lib/live';
 import { downscaleToWebp, makeThumbWebp } from '@/lib/image';
+import { findBoxByCodeOrId, moveItem } from '@/lib/db';
 
 type ImgRow = { id: string; url?: string; blob?: Blob; w: number; h: number };
 
@@ -20,7 +21,7 @@ export default function ItemDetailPage() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const item = await getItem(itemId);
+      const item = await db.items.get(itemId);
       if (!item) { router.replace('/boxes'); return; }
       if (!alive) return;
       setName(item.name);
@@ -145,11 +146,36 @@ export default function ItemDetailPage() {
       </section>
 
       <div style={{ display: 'flex', gap: 8 }}>
+        <MoveItemButton itemId={itemId} />
         <button onClick={onDeleteItem} style={{ padding: '6px 10px', color: '#b91c1c', border: '1px solid #fca5a5', background: '#fff' }}>
-          アイテムごと削除
+          アイテム削除
         </button>
         {boxId && <a href={`/boxes/${boxId}/items`} style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>一覧に戻る</a>}
       </div>
     </main>
+  );
+}
+
+function MoveItemButton({ itemId }: { itemId: string }) {
+  const router = useRouter();
+
+  const onMove = async () => {
+    const key = prompt('移動先の「箱ID」または「箱コード」を入力してください（例: UNASSIGNED または B-...）');
+    if (!key) return;
+    const target = await findBoxByCodeOrId(key);
+    if (!target) {
+      alert('該当する箱が見つかりません');
+      return;
+    }
+    await moveItem(itemId, target.id);
+    alert(`「${target.name ?? target.code}」へ移動しました`);
+    // 好みで遷移先を変更: 移動先の箱詳細へ
+    router.push(`/boxes/${target.id}`);
+  };
+
+  return (
+    <button className="btn" onClick={onMove}>
+      アイテムを別の箱へ移動
+    </button>
   );
 }

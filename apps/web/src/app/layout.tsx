@@ -1,12 +1,12 @@
-import SWRegister from '@/app/sw-register';
 import Header from '@/app/components/Header';
-import { HeaderTitleProvider } from '@/app/components/HeaderTitleContext';
 import MobileTabBar from '@/app/components/MobileTabBar';
 import DevExposeDB from './dev-expose-db';
-import './globals.css'
+import AutoSyncEndpoint from './AutoSyncEndpoint';
+import SWRegister from './sw-register';
+import './globals.css';
 
 export const metadata = {
-  title: '箱目録',                             // ← タイトルも統一
+  title: '箱目録',
   description: '箱の目録・QRラベル管理',
 };
 
@@ -26,16 +26,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <Header />
+
+        {/* オリジンに追従して同期baseUrlを自動更新（クライアント側で実行） */}
+        <AutoSyncEndpoint />
+
         <div className="app-content">
           <div className="container">{children}</div>
         </div>
 
-        {children}
-        {/* 開発時のみ露出 */}
-        {process.env.NODE_ENV !== 'production' ? <DevExposeDB /> : null}
-
         <MobileTabBar />
         <SWRegister />
+
+        {/* 開発時のみ露出 */}
+        {process.env.NODE_ENV !== 'production' ? <DevExposeDB /> : null}
       </body>
     </html>
   );

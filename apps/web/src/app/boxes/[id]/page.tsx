@@ -80,7 +80,7 @@ export default function BoxDetailPage() {
           <a href={tapeUrl} target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>テープ印刷</a>
           <a href={a4Url}   target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>A4面付け</a>
           <a
-            href={`/boxes/${box.id}/items`}
+            href={`/items?boxId=${encodeURIComponent(box.id)}`}
             style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
           >
             アイテム一覧{itemCount ? ` (${itemCount})` : ''}

@@ -3,17 +3,20 @@
 import { useEffect, useState, useMemo } from 'react';
 import { loadSyncSettings, saveSyncSettings } from '@/lib/sync-settings';
 import { pullFromServer, pushToServer } from '@/lib/sync';
+import { useSyncSettings, computeDefaultBaseUrl } from '@/lib/sync-settings';
 
 export default function BackupSettingsPage() {
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState<'idle'|'pull'|'push'|'save'>('idle');
   const [msg, setMsg] = useState<string>('');
+  const { settings, update, refresh } = useSyncSettings();
+  const computed = computeDefaultBaseUrl();
 
   // 初期値読込
   useEffect(() => {
     const s = loadSyncSettings();
-    setEndpoint(s.endpoint || 'http://localhost:3000/api/sync');
+    setEndpoint(s.endpoint || computed);
     setToken(s.token || '');
   }, []);
 
