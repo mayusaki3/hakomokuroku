@@ -56,7 +56,7 @@ export default function Header() {
           <Btn href="/boxes" label="箱リスト" preserve />
           <Btn href="/items" label="アイテムリスト" preserve />
           <Btn href="/help" label="ヘルプ" />
-          <Btn href="/settings/backup" label="設定" />
+          <Btn href="/settings" label="設定" />
         </nav>
       </div>
     </header>

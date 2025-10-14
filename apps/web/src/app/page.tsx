@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import type { SearchRow } from '@/lib/search';
 import { searchByText, searchByQrPayload } from '@/lib/search';
+import ListRow from '@/app/components/ListRow';
 
 let BrowserQRCodeReader: any; // dynamic import for QR
 function CameraIcon() {
@@ -21,8 +22,39 @@ export default function Home() {
   const readerRef = useRef<any>(null);
 
   const runTextSearch = async () => {
-    const res = await searchByText(q);
-    setRows(res);
+    const q0 = q.trim();
+    try {
+      let res = await searchByText(q0 === '' ? '*' : q0);
+      if ((res?.length ?? 0) === 0 && q0 === '') {
+        const { db } = await import('@/lib/db');
+        const [boxes, items] = await Promise.all([
+          db.boxes.orderBy('updatedAt').reverse().limit(200).toArray(),
+          db.items.orderBy('updatedAt').reverse().limit(200).toArray(),
+        ]);
+        const boxMap = new Map<string, any>(boxes.map((b: any) => [b.id, b]));
+        res = [
+          ...boxes.map((b: any) => ({ kind: 'box', box: b } as SearchRow)),
+          ...items.map((it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) } as SearchRow)),
+        ];
+      }
+      setRows(res);
+    } catch {
+      if (q0 === '') {
+        try {
+          const { db } = await import('@/lib/db');
+          const [boxes, items] = await Promise.all([
+            db.boxes.orderBy('updatedAt').reverse().limit(200).toArray(),
+            db.items.orderBy('updatedAt').reverse().limit(200).toArray(),
+          ]);
+          const boxMap = new Map<string, any>(boxes.map((b: any) => [b.id, b]));
+          const fallback = [
+            ...boxes.map((b: any) => ({ kind: 'box', box: b } as SearchRow)),
+            ...items.map((it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) } as SearchRow)),
+          ];
+          setRows(fallback);
+        } catch {}
+      }
+    }
   };
 
   const startScan = async () => {
@@ -33,15 +65,13 @@ export default function Home() {
         BrowserQRCodeReader = mod.BrowserQRCodeReader;
       }
       if (!readerRef.current) readerRef.current = new BrowserQRCodeReader();
-
       const videoEl = videoRef.current!;
-      videoEl.setAttribute('playsinline', 'true'); // iOS対策
-      const result = await readerRef.current.decodeOnceFromVideoDevice(undefined, videoEl); // Resultを返す
+      videoEl.setAttribute('playsinline', 'true');
+      const result = await readerRef.current.decodeOnceFromVideoDevice(undefined, videoEl);
       const text = result.getText();
-
       const res = await searchByQrPayload(text);
       setRows(res);
-    } catch (e) {
+    } catch {
       alert('QRの読み取りに失敗しました。もう一度お試しください。');
     } finally {
       setScanning(false);
@@ -49,20 +79,8 @@ export default function Home() {
     }
   };
 
-  const onRowClick = (r: SearchRow) => {
-    if (r.kind === 'box') {
-      window.location.href = `/boxes/${r.box.id}`;
-    } else if (r.kind === 'item') {
-      window.location.href = `/items/${r.item.id}`;
-    } else {
-      const params = new URLSearchParams({ code: r.code });
-      window.location.href = `/boxes/new?${params.toString()}`;
-    }
-  };
-
   return (
     <main className="container bottom-safe" style={{ display: 'grid', gap: 12, paddingTop: 8 }}>
-      {/* 検索枠（説明文もこの中に移動） */}
       <section className="card search-card">
         <div className="searchbar">
           <input
@@ -79,16 +97,13 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 説明文：モバイルでも必ず見えるよう検索枠の内側に配置 */}
         {rows.length === 0 && !scanning && (
           <p className="search-help">
             検索結果はここに表示されます。<br />
-            <b>カメラ</b>をタップして<strong>箱のQR</strong>を読み取ると、該当の箱と中のアイテムが一覧表示されます。<br />
-            未登録のコードなら「未登録」として表示され、タップで箱の登録に進めます。
+            <b>カメラ</b>をタップして<strong>箱のQR</strong>を読み取ると、該当の箱と中のアイテムが一覧表示されます。
           </p>
         )}
 
-        {/* スキャナ表示（読み取り中のみ） */}
         {scanning && (
           <div style={{ marginTop: 8 }}>
             <video ref={videoRef} playsInline style={{ width: '100%', borderRadius: 8, border: '1px solid #eee' }} />
@@ -96,47 +111,54 @@ export default function Home() {
         )}
       </section>
 
-      {/* 検索結果（ホーム内で一覧表示） */}
+      {/* 共通レイアウト適用 */}
       <section aria-label="検索結果">
         {rows.length > 0 && (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+          <ul className="divide-y">
             {rows.map((r, idx) => {
               if (r.kind === 'box') {
+                const b = r.box;
                 return (
-                  <li key={`b-${r.box.id}-${idx}`}>
-                    <button onClick={() => onRowClick(r)} className="card"
-                      style={{ width: '100%', textAlign: 'left', padding: 12, cursor: 'pointer' }}>
-                      <div style={{ fontWeight: 600 }}>📦 {r.box.name}</div>
-                      <div style={{ fontSize: 12, color: '#555' }}>
-                        コード: <code>{r.box.code}</code>　場所: {r.box.location ?? '—'}
-                        {r.box.tags?.length ? <>　タグ: {r.box.tags.join(', ')}</> : null}
-                      </div>
-                    </button>
+                  <li key={`b-${b.id}-${idx}`}>
+                    <ListRow
+                      kind="box"
+                      id={b.id}
+                      name={b.name}
+                      code={b.code}
+                      location={b.location}
+                      thumbUrl={b.thumbs?.[0] ?? null}
+                      hrefDetail={`/boxes/${b.id}`}
+                      hrefEdit={`/register?step=edit&boxId=${encodeURIComponent(b.id)}`}
+                    />
                   </li>
                 );
               }
               if (r.kind === 'item') {
+                const it = r.item;
                 return (
-                  <li key={`i-${r.item.id}-${idx}`}>
-                    <button onClick={() => onRowClick(r)} className="card"
-                      style={{ width: '100%', textAlign: 'left', padding: 12, cursor: 'pointer' }}>
-                      <div style={{ fontWeight: 600 }}>🧰 {r.item.name}</div>
-                      <div style={{ fontSize: 12, color: '#555' }}>
-                        箱: {r.box ? <>{r.box.name} <code>{r.box.code}</code></> : '—'}
-                        {r.item.tags?.length ? <>　タグ: {r.item.tags.join(', ')}</> : null}
-                      </div>
-                    </button>
+                  <li key={`i-${it.id}-${idx}`}>
+                    <ListRow
+                      kind="item"
+                      id={it.id}
+                      name={it.name}
+                      thumbUrl={it.thumbs?.[0] ?? null}
+                      hrefDetail={`/items/${it.id}`}
+                      hrefEdit={`/register?step=item&itemId=${encodeURIComponent(it.id)}`}
+                    />
                   </li>
                 );
               }
-              // 未登録コード
+              // 未登録コードは専用行（ListRowの対象外）
               return (
-                <li key={`u-${r.code}-${idx}`}>
-                  <button onClick={() => onRowClick(r)} className="card"
-                    style={{ width: '100%', textAlign: 'left', padding: 12, cursor: 'pointer' }}>
-                    <div style={{ fontWeight: 600 }}>📦 箱コード: <code>{r.code}</code></div>
-                    <div style={{ fontSize: 12, color: '#b91c1c' }}>未登録（タップで箱の登録へ）</div>
-                  </button>
+                <li key={`u-${(r as any).code}-${idx}`} className="px-3 py-2">
+                  <a
+                    href={`/boxes/new?code=${encodeURIComponent((r as any).code)}`}
+                    className="block rounded border p-3 hover:bg-muted"
+                    aria-label="未登録コードの箱登録へ"
+                  >
+                    <div className="font-medium">📦 箱コード: <code>{(r as any).code}</code></div>
+                    <div className="text-sm text-destructive">未登録（タップで箱の登録へ）</div>
+                  </a>
                 </li>
               );
             })}
