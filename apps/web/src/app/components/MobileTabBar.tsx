@@ -45,7 +45,7 @@ export default function MobileTabBar() {
           <Link href="/help" aria-current={isActive('/help') ? 'page' : undefined} className="tab-link">❓<div className="tab-label">ヘルプ</div></Link>
         </li>
         <li style={{ textAlign: 'center' }}>
-          <Link href="/settings/backup" aria-current={isActive('/settings') ? 'page' : undefined} className="tab-link">⚙️<div className="tab-label">設定</div></Link>
+          <Link href="/settings" aria-current={isActive('/settings') ? 'page' : undefined} className="tab-link">⚙️<div className="tab-label">設定</div></Link>
         </li>
       </ul>
     </nav>

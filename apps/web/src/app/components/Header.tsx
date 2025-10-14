@@ -25,7 +25,7 @@ export default function Header() {
 
   const displayTitle = mapTitleFromPath(pathname);
 
-  const Btn = (p: { href: string; label: string; preserve?: boolean }) => (
+  const Btn = (p: { href: string; laaccountel: string; preserve?: boolean }) => (
     <Link href={p.preserve ? preserveParams(sp, p.href) : p.href} className="btn-link" prefetch>
       {p.label}
     </Link>
@@ -36,7 +36,7 @@ export default function Header() {
       <div className="container header-grid">
         {/* 左：ユーザー */}
         <div className="header-left">
-          <Link href="/settings/backup" aria-label="アカウント/設定" title="設定">
+          <Link href="/account" aria-label="アカウント/設定" title="設定">
             <div className="avatar">👤</div>
           </Link>
         </div>

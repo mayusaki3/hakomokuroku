@@ -17,17 +17,18 @@ export default function SettingsHomePage() {
 
   return (
     <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
-      <Section title="基本">
-        <div className="row" style={{ alignItems:'center' }}>
-          <label style={{ minWidth: 120 }}>表示名</label>
-          <input value={s.displayName} onChange={e=>update('displayName', e.target.value)} placeholder="任意（共有には使われません）" />
+      {/* 先頭：アカウント動線（認証/登録 → /auth、ユーザー情報編集 → /account） */}
+      <Section title="アカウント">
+        <div className="row" style={{ gap: 12 }}>
+          <Link href="/auth" className="btn-link">ユーザー認証 / 登録へ</Link>
+          <Link href="/account" className="btn-link">ユーザー情報の編集へ</Link>
         </div>
-        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-          <label style={{ minWidth: 120 }}>デバイス名</label>
-          <input value={s.deviceName} onChange={e=>update('deviceName', e.target.value)} placeholder="例：自宅PC / Pixel 8 など" />
-        </div>
+        <p className="search-help" style={{ marginTop: 6 }}>
+          ※ 認証に成功するとホームへ遷移します。登録を選んだ場合はユーザー情報編集（/account）へ。
+        </p>
       </Section>
 
+      {/* 表示（残す） */}
       <Section title="表示">
         <div className="row" style={{ alignItems:'center' }}>
           <label style={{ minWidth: 120 }}>テーマ</label>
@@ -46,6 +47,7 @@ export default function SettingsHomePage() {
         </div>
       </Section>
 
+      {/* スキャン（残す） */}
       <Section title="スキャン">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.preferBackCamera} onChange={e=>update('preferBackCamera', e.target.checked)} />
@@ -61,6 +63,7 @@ export default function SettingsHomePage() {
         </label>
       </Section>
 
+      {/* 検索/絞り込み（残す） */}
       <Section title="検索/絞り込み">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.keepFiltersOnNav} onChange={e=>update('keepFiltersOnNav', e.target.checked)} />
@@ -75,6 +78,7 @@ export default function SettingsHomePage() {
         </div>
       </Section>
 
+      {/* ラベル/QR 表示（残す） */}
       <Section title="ラベル/QR 表示">
         <div className="row" style={{ alignItems:'center' }}>
           <label style={{ minWidth: 120 }}>テープ幅</label>
@@ -94,6 +98,7 @@ export default function SettingsHomePage() {
         </label>
       </Section>
 
+      {/* QR ペイロード（残す） */}
       <Section title="QR ペイロード">
         <div className="row" style={{ alignItems:'center' }}>
           <label style={{ minWidth: 120 }}>形式</label>
@@ -111,18 +116,7 @@ export default function SettingsHomePage() {
         <p className="search-help">※ URL 形式にすると、ラベルのQRスキャンでブラウザ遷移が可能になります。</p>
       </Section>
 
-      <Section title="同期（自己ホスト）">
-        <div className="row" style={{ alignItems:'center' }}>
-          <label style={{ minWidth: 120 }}>同期ベースURL</label>
-          <input value={s.syncBaseUrl} onChange={e=>update('syncBaseUrl', e.target.value)} placeholder="例: https://your-host" />
-        </div>
-        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-          <label style={{ minWidth: 120 }}>トークン</label>
-          <input type="password" value={s.syncToken} onChange={e=>update('syncToken', e.target.value)} placeholder="Bearer 用トークン" />
-        </div>
-        <p className="search-help">※ サーバー側は /api/sync/pull / push を用意（本プロジェクトに含まれます）。</p>
-      </Section>
-
+      {/* バックアップ（残す） */}
       <Section title="バックアップ（既定）">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.backupIncludeThumbs} onChange={e=>update('backupIncludeThumbs', e.target.checked)} />
