@@ -30,6 +30,13 @@ export async function requireUserId(req: Request): Promise<string> {
   const tokenHash = crypto.createHash("sha256").update(token, "utf8").digest("hex");
   const t = await prisma.syncToken.findUnique({ where: { tokenHash } });
   if (!t || t.expiresAt < new Date()) throw new Response("Unauthorized", { status: 401 });
+
+  // 最終使用時刻を更新
+  await prisma.syncToken.update({
+    where: { tokenHash },
+    data: { lastUsedAt: new Date() },
+  });
+
   return t.userId;
 }
 
@@ -42,13 +49,27 @@ export async function verifyPassword(hash: string, password: string) {
 }
 
 // ---- SyncToken ----
-export async function issueSyncToken(userId: string, ttlDays = 90) {
-  const plain = crypto.randomUUID().replace(/-/g, "") + crypto.randomBytes(16).toString("hex");
-  const tokenHash = crypto.createHash("sha256").update(plain, "utf8").digest("hex");
+export async function issueSyncToken(
+  userId: string,
+  meta?: { deviceName?: string; userAgent?: string; ip?: string }
+) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
   const now = new Date();
-  const exp = new Date(now.getTime() + ttlDays * 24 * 60 * 60 * 1000);
-  await prisma.syncToken.create({ data: { userId, tokenHash, issuedAt: now, expiresAt: exp } });
-  return { token: plain, expiresAt: exp };
+  const expiresAt = new Date(now.getTime() + 90 * 24 * 3600 * 1000);
+
+  await prisma.syncToken.create({
+    data: {
+      userId,
+      tokenHash,
+      issuedAt: now,
+      expiresAt,
+      deviceName: meta?.deviceName ?? null,
+      userAgent: meta?.userAgent?.slice(0, 255) ?? null,
+      ip: meta?.ip?.slice(0, 64) ?? null,
+    },
+  });
+  return { token, expiresAt };
 }
 
 // ---- Login challenge for TOTP step ----

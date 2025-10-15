@@ -43,12 +43,16 @@ model User {
 }
 
 model SyncToken {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String   @unique                 // 平文は返却のみ／DBはハッシュ
-  issuedAt  DateTime @default(now())
-  expiresAt DateTime
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique                 // 平文は返却のみ／DBはハッシュ
+  issuedAt   DateTime @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime?
+  deviceName String?
+  userAgent  String?
+  ip         String?
 
   @@index([userId])
   @@index([expiresAt])

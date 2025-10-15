@@ -28,7 +28,10 @@ export async function POST(req: Request) {
     }
 
     // 直接ログイン完了：トークン発行 & 最終ログイン更新
-    const { token, expiresAt } = await issueSyncToken(u.id);
+    const { token, expiresAt } = await issueSyncToken(u.id, {
+      userAgent: req.headers.get('user-agent') || undefined,
+      ip: (req.headers.get('x-forwarded-for') || '').split(',')[0]?.trim() || 'local',
+    });
     await prisma.user.update({ where: { id: u.id }, data: { lastLoginAt: new Date() } });
 
     const res = NextResponse.json({ token, expiresAt });

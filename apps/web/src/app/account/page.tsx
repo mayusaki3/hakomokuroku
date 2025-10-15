@@ -131,7 +131,140 @@ export default function AccountPage() {
       </section>
     );
   }
-  
+
+  function sha256Hex(input: string): Promise<string> {
+    const enc = new TextEncoder().encode(input);
+    return crypto.subtle.digest('SHA-256', enc).then(buf =>
+      Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+    );
+  }
+  function readCurrentPlainToken(): string {
+    try { return JSON.parse(localStorage.getItem('hk.sync') || '{}')?.token ?? ''; } catch { return ''; }
+  }
+
+  function TokenSection() {
+    const [list, setList] = useState<Array<{id:string; tokenHash:string; issuedAt:string; expiresAt:string; lastUsedAt?:string|null;}>>([]);
+    const [currentHash, setCurrentHash] = useState<string>('');
+    const [editId, setEditId] = useState<string|null>(null);
+    const [editName, setEditName] = useState('');
+
+    async function refresh() {
+      const r = await fetch('/api/auth/tokens');
+      const j = await r.json();
+      if (r.ok) setList(j.tokens || []);
+      const plain = readCurrentPlainToken();
+      setCurrentHash(plain ? await sha256Hex(plain) : '');
+    }
+    useEffect(()=>{ refresh(); },[]);
+
+    // ラベル設定（現在トークンのみ）
+    async function setLabelCurrent(name: string) {
+      await fetch('/api/auth/tokens/label', {
+        method:'POST', headers:{ 'content-type':'application/json' },
+        body: JSON.stringify({ deviceName: name }),
+      });
+      await refresh();
+    }
+
+    return (
+      <section className="card" style={{ padding:12 }}>
+        <h2 style={{ margin:'4px 0 8px' }}>ログイン中デバイス / トークン</h2>
+        <div className="grid" style={{ gap:8 }}>
+          {list.map(t => {
+            const isCurrent = currentHash && t.tokenHash === currentHash;
+            const label = t.deviceName || (isCurrent ? 'このデバイス' : '未設定デバイス');
+            return (
+              <div key={t.id} className="row" style={{ justifyContent:'space-between', alignItems:'center', gap:12 }}>
+                <div className="col">
+                  <div className="text-sm"><b>{label}</b>{isCurrent && '（現在）'}</div>
+                  <div className="text-xs">
+                    発行: {new Date(t.issuedAt).toLocaleString()} / 期限: {new Date(t.expiresAt).toLocaleString()}
+                    {t.lastUsedAt && <> / 最終使用: {new Date(t.lastUsedAt).toLocaleString()}</>}
+                    {t.userAgent && <><br/>UA: {t.userAgent}</>}
+                  </div>
+                </div>
+                <div className="row" style={{ gap:8 }}>
+                  {isCurrent ? (
+                    editId === t.id ? (
+                      <>
+                        <input value={editName} onChange={e=>setEditName(e.target.value)} placeholder="デバイス名" />
+                        <button className="btn btn-primary" onClick={async ()=>{ await setLabelCurrent(editName); setEditId(null); }}>保存</button>
+                        <button className="btn" onClick={()=>setEditId(null)}>取消</button>
+                      </>
+                    ) : (
+                      <button className="btn" onClick={()=>{ setEditId(t.id); setEditName(t.deviceName || ''); }}>名前を付ける</button>
+                    )
+                  ) : null}
+                  <button className="btn" onClick={()=>revoke(t.id)}>無効化</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="row" style={{ justifyContent:'space-between', marginTop:12 }}>
+          <button className="btn" onClick={async ()=>{
+            // 初回ログイン直後に自動候補を付与
+            const hint = `${navigator.platform || 'Device'} / ${navigator.language || ''}`.trim();
+            await setLabelCurrent(hint);
+          }}>このデバイスに名前を付ける（自動）</button>
+          <button className="btn" onClick={revokeAll}>すべてログアウト</button>
+        </div>
+      </section>
+    );
+
+    async function revoke(id: string) {
+      if (!confirm('このトークンを無効化しますか？')) return;
+      await fetch('/api/auth/tokens/revoke', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id })});
+      // もし現在トークンを消したならローカルも消す
+      const t = list.find(x => x.id === id);
+      if (t && t.tokenHash === currentHash) {
+        localStorage.removeItem('hk.sync');
+        document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
+        location.href = '/auth';
+        return;
+      }
+      refresh();
+    }
+
+    async function revokeAll() {
+      if (!confirm('すべてのデバイスからログアウトします。続行しますか？')) return;
+      await fetch('/api/auth/tokens/revokeAll', { method:'POST' });
+      localStorage.removeItem('hk.sync');
+      document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
+      location.href = '/auth';
+    }
+
+    return (
+      <section className="card" style={{ padding:12 }}>
+        <h2 style={{ margin:'4px 0 8px' }}>ログイン中デバイス / トークン</h2>
+        <div className="grid" style={{ gap:8 }}>
+          {list.map(t => {
+            const isCurrent = currentHash && t.tokenHash === currentHash;
+            return (
+              <div key={t.id} className="row" style={{ justifyContent:'space-between', alignItems:'center' }}>
+                <div className="col">
+                  <div className="text-sm">
+                    <b>{isCurrent ? 'このデバイス' : '他デバイス'}</b>
+                  </div>
+                  <div className="text-xs">
+                    発行: {new Date(t.issuedAt).toLocaleString()} / 期限: {new Date(t.expiresAt).toLocaleString()}
+                    {t.lastUsedAt && <> / 最終使用: {new Date(t.lastUsedAt).toLocaleString()}</>}
+                  </div>
+                </div>
+                <div>
+                  <button className="btn" onClick={()=>revoke(t.id)}>無効化</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="row" style={{ justifyContent:'flex-end', marginTop:12 }}>
+          <button className="btn" onClick={revokeAll}>すべてログアウト</button>
+        </div>
+      </section>
+    );
+  }
+
   // ログアウト：localStorageとCookieを消して /auth へ
   async function logout() {
     writeToken(undefined);                     // localStorage から削除
@@ -201,6 +334,7 @@ export default function AccountPage() {
           <button className="btn btn-primary" onClick={onSave}>保存</button>
         </div>
         <TotpSection />
+        <TokenSection />
       </section>
       <section className="card" style={{ padding: 12 }}>
         <h2 style={{ margin: '4px 0 8px', fontSize: 16 }}>同期トークン</h2>
