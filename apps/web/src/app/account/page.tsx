@@ -35,6 +35,91 @@ export default function AccountPage() {
     return 'このデバイス';
   }
 
+  function readToken(): string {
+    try { return JSON.parse(localStorage.getItem('hk.sync') || '{}')?.token ?? ''; } catch { return ''; }
+  }
+  function writeToken(token?: string) {
+    try {
+      const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
+      if (token) localStorage.setItem('hk.sync', JSON.stringify({ ...cur, token }));
+      else {
+        delete cur.token;
+        localStorage.setItem('hk.sync', JSON.stringify(cur));
+      }
+    } catch {}
+  }
+
+  // 同期トークン表示（コピー可）
+  function TokenView() {
+    const [t, setT] = useState('');
+    useEffect(() => { setT(readToken()); }, []);
+    return (
+      <div className="row" style={{ alignItems:'center', gap:8 }}>
+        <input value={t} readOnly placeholder="未ログイン／未取得" style={{ flex:1 }} />
+        <button className="btn" onClick={() => { navigator.clipboard.writeText(t || ''); }}>コピー</button>
+      </div>
+    );
+  }
+
+  function TotpSection() {
+    const [svg, setSvg] = useState<string>(''); const [code, setCode] = useState(''); const [enabled, setEnabled] = useState<boolean>(false);
+    const [recovery, setRecovery] = useState<string[]|null>(null);
+
+    async function setup() {
+      const r = await fetch('/api/auth/totp/setup', { method:'POST' });
+      const j = await r.json(); setSvg(j.svg); setRecovery(null);
+    }
+    async function verify() {
+      const r = await fetch('/api/auth/totp/verify', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ code })});
+      const j = await r.json();
+      if (r.ok) { setEnabled(true); setRecovery(j.recoveryCodes); }
+    }
+    async function disable() {
+      const pw = prompt('パスワードを入力してください'); if (!pw) return;
+      const r = await fetch('/api/auth/totp/disable', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ password: pw })});
+      if (r.ok) { setEnabled(false); setSvg(''); setRecovery(null); }
+    }
+
+    return (
+      <section className="card" style={{ padding:12 }}>
+        <h2 style={{ margin:'4px 0 8px' }}>二段階認証</h2>
+        {!enabled && (
+          <>
+            <button className="btn" onClick={setup}>セットアップ開始（QR表示）</button>
+            {svg && <div dangerouslySetInnerHTML={{ __html: svg }} style={{ width:160, height:160, marginTop:8 }} />}
+            {svg && (
+              <div className="row" style={{ alignItems:'center', marginTop:8 }}>
+                <span style={{ minWidth:120 }}>6桁コード</span>
+                <input value={code} onChange={e=>setCode(e.target.value)} maxLength={6} inputMode="numeric" />
+                <button className="btn btn-primary" onClick={verify}>有効化</button>
+              </div>
+            )}
+          </>
+        )}
+        {enabled && (
+          <>
+            <div className="text-sm">有効</div>
+            <button className="btn" onClick={disable}>無効化</button>
+          </>
+        )}
+        {recovery && (
+          <div className="mt-2">
+            <div className="text-sm">回復コード（必ず安全な場所に保存）：</div>
+            <pre className="p-2 border rounded text-sm">{recovery.join('\n')}</pre>
+          </div>
+        )}
+      </section>
+    );
+  }
+  
+  // ログアウト：localStorageとCookieを消して /auth へ
+  async function logout() {
+    writeToken(undefined);                     // localStorage から削除
+    document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax'; // Cookie削除（即時）
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    window.location.href = '/auth';
+  }
+
   function onChange<K extends keyof UserProfile>(k: K, v: UserProfile[K]) {
     setP(prev => ({ ...prev, [k]: v }));
   }
@@ -94,6 +179,14 @@ export default function AccountPage() {
 
         <div className="row" style={{ justifyContent:'flex-end', marginTop:12 }}>
           <button className="btn btn-primary" onClick={onSave}>保存</button>
+        </div>
+        <TotpSection />
+      </section>
+      <section className="card" style={{ padding: 12 }}>
+        <h2 style={{ margin: '4px 0 8px', fontSize: 16 }}>同期トークン</h2>
+        <TokenView />
+        <div className="row" style={{ justifyContent:'flex-end', marginTop:12 }}>
+          <button className="btn" onClick={logout}>ログアウト</button>
         </div>
       </section>
     </main>

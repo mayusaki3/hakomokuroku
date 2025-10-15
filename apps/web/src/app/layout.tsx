@@ -5,6 +5,8 @@ import AutoSyncEndpoint from './AutoSyncEndpoint';
 import SWRegister from './sw-register';
 import './globals.css';
 
+import TokenMirror from '@/app/components/TokenMirror';
+
 export const metadata = {
   title: '箱目録',
   description: '箱の目録・QRラベル管理',
@@ -26,6 +28,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <Header />
+
+        <TokenMirror />
 
         {/* オリジンに追従して同期baseUrlを自動更新（クライアント側で実行） */}
         <AutoSyncEndpoint />

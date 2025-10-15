@@ -8,44 +8,50 @@ export default function AuthPage() {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [userName, setUserName] = useState('');
-
-  async function saveToken(token: string) {
-    const raw = localStorage.getItem('hk.sync');
-    const cur = raw ? JSON.parse(raw) : {};
-    localStorage.setItem('hk.sync', JSON.stringify({ ...cur, token }));
-  }
+  const [err, setErr] = useState<string | null>(null);
+  const next = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('next') || '/'
+    : '/';
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setErr(null);
     try {
-      if (mode === 'login') {
-        const r = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ userId, password }),
-        });
-        if (!r.ok) throw new Error('login failed');
-        const { token } = await r.json();
-        await saveToken(token);
-        window.location.href = '/';
-      } else {
+      if (mode === 'register') {
         const r = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ userId, password, userName }),
         });
-        if (!r.ok) throw new Error('register failed');
-        // 登録後はユーザー情報編集へ
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error || 'register_failed');
+        }
+        // 登録後はプロフィール編集へ
         window.location.href = '/account';
+        return;
       }
-    } catch {
-      // バックエンド未実装時のフォールバック
-      if (mode === 'login') {
-        await saveToken('DEMO_TOKEN');
-        window.location.href = '/';
-      } else {
-        window.location.href = '/account';
+
+      // login
+      const r = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, password }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'login_failed');
+
+      if (j.need_totp) {
+        // 次段で /auth/totp 実装予定（今は遷移のみ）
+        window.location.href = `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`;
+        return;
       }
+
+      // トークンを localStorage に保存（middleware 用CookieはサーバがSet-Cookie済みだが、既存フローも維持）
+      const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
+      localStorage.setItem('hk.sync', JSON.stringify({ ...cur, token: j.token }));
+
+      window.location.href = next;
+    } catch (e: any) {
+      setErr(e?.message || 'error');
     }
   }
 
@@ -71,13 +77,11 @@ export default function AuthPage() {
               <input value={userName} onChange={e=>setUserName(e.target.value)} />
             </label>
           )}
+          {err && <div className="text-destructive text-sm">{err}</div>}
           <div className="row" style={{ justifyContent:'flex-end', marginTop:4 }}>
             <button className="btn btn-primary" type="submit">{mode==='login'?'ログイン':'登録へ'}</button>
           </div>
         </form>
-        <p className="search-help" style={{ marginTop: 8 }}>
-          ※ 成功時：ログイン→ホーム、登録→/account（ユーザー情報編集）。
-        </p>
       </div>
     </main>
   );

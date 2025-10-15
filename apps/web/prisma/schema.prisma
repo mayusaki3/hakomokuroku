@@ -15,72 +15,132 @@ enum TagKind {
   SHARED
 }
 
+model User {
+  id            String   @id @default(cuid())
+  userId        String   @unique               // ログイン用ID
+  userName      String?
+  passwordHash  String                         // argon2id
+  iconDataUrl   String?
+  isActive      Boolean  @default(true)
+
+  // TOTP
+  totpEnabled   Boolean  @default(false)
+  totpSecretEnc String?
+  totpPendingSecretEnc String?
+  recoveryCodes Json?                          // ["hash1","hash2",...]
+  totpFailCount Int      @default(0)
+  lockUntil     DateTime?
+
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tokens        SyncToken[]
+  boxes         Box[]
+  items         Item[]
+  locations     BoxLocation[]
+  tags          Tag[]
+}
+
+model SyncToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique                 // 平文は返却のみ／DBはハッシュ
+  issuedAt  DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginChallenge {
+  id        String   @id @default(cuid())
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  used      Boolean  @default(false)
+
+  @@index([userId, expiresAt])
+}
+
 model Box {
-  id          String   @id
-  code        String   @unique       // 箱コード（QR）
-  name        String
-  location    String?                // 簡易な場所名（自由記述）
-  tags        Json?                  // string[] を想定（デフォルトは付与しない）
-  thumbs      Json?                  // string[] サムネ（dataURL or blob URL）
-  meta        Json?                  // 任意メタ（ai 状態や拡張なども可）
-  aiState     String?                // "pending" | "processing" | "done" | "error"
-  aiUpdatedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id                  // 既存クライアント生成IDを踏襲
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  items       Item[]
-  boxLocation BoxLocation?
+  code         String
+  name         String
+  location     String?
+  tags         Json?
+  thumbs       Json?
+  meta         Json?
+  aiState      String?
+  aiUpdatedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  @@index([updatedAt])
+  items        Item[]
+  boxLocation  BoxLocation?
+
+  @@unique([userId, code])                   // コードはユーザー内で一意（UNASSIGNED もここで制御）
+  @@index([userId, updatedAt])
   @@index([aiState, updatedAt])
 }
 
 model Item {
-  id          String   @id
-  boxId       String
-  box         Box      @relation(fields: [boxId], references: [id], onDelete:Restrict, onUpdate: Cascade)
+  id           String   @id
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  name        String
-  tags        Json?
-  note        String?
-  thumbs      Json?
-  meta        Json?
-  aiState     String?
-  aiUpdatedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  boxId        String
+  box          Box      @relation(fields: [boxId], references: [id], onDelete: Cascade)
 
+  name         String
+  tags         Json?
+  note         String?
+  thumbs       Json?
+  meta         Json?
+  aiState      String?
+  aiUpdatedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, updatedAt])
   @@index([boxId])
-  @@index([updatedAt])
-  @@index([aiState, updatedAt])
 }
 
 model BoxLocation {
-  id          String  @id
-  boxId       String  @unique
-  box         Box     @relation(fields: [boxId], references: [id], onDelete:Cascade, onUpdate:Cascade)
+  id           String   @id
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  thumbs      Json?               // 置き場所のサムネ（thumbs に統一）
-  note        String?             // 置き場所のメモ
-  meta        Json?
-  aiState     String?
-  aiUpdatedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  boxId        String   @unique             // 箱1つに1レコード
+  box          Box      @relation(fields: [boxId], references: [id], onDelete: Cascade)
 
-  @@index([boxId])
-  @@index([updatedAt])
-  @@index([aiState, updatedAt])
+  thumbs       Json?
+  note         String?
+  meta         Json?
+  aiState      String?
+  aiUpdatedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, updatedAt])
 }
 
 model Tag {
   id        String   @id
+  userId    String?                          // 共有タグは null、ユーザー専用は userId 指定
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   name      String
   kind      TagKind
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([name, kind])
+  @@unique([userId, name, kind])             // ユーザー内で一意（共有は userId=null 扱い）
   @@index([enabled, kind, name])
+  @@index([userId, name, kind])
 }
