@@ -62,52 +62,72 @@ export default function AccountPage() {
   }
 
   function TotpSection() {
-    const [svg, setSvg] = useState<string>(''); const [code, setCode] = useState(''); const [enabled, setEnabled] = useState<boolean>(false);
-    const [recovery, setRecovery] = useState<string[]|null>(null);
+    const [status, setStatus] = useState<{enabled:boolean; recoveryCount:number}>({enabled:false,recoveryCount:0});
+    const [svg, setSvg] = useState(''); const [code, setCode] = useState(''); const [recovery, setRecovery] = useState<string[]|null>(null);
+    const [msg, setMsg] = useState<string|undefined>();
+
+    async function refresh() {
+      const r = await fetch('/api/auth/me'); const j = await r.json();
+      if (r.ok) setStatus({ enabled: j.totpEnabled, recoveryCount: j.recoveryCount });
+    }
+    useEffect(()=>{ refresh(); },[]);
 
     async function setup() {
+      setMsg(undefined); setRecovery(null);
       const r = await fetch('/api/auth/totp/setup', { method:'POST' });
-      const j = await r.json(); setSvg(j.svg); setRecovery(null);
+      const j = await r.json(); if (!r.ok) { setMsg(j.error||'setup_failed'); return; }
+      setSvg(j.svg);
     }
     async function verify() {
+      setMsg(undefined);
       const r = await fetch('/api/auth/totp/verify', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ code })});
-      const j = await r.json();
-      if (r.ok) { setEnabled(true); setRecovery(j.recoveryCodes); }
+      const j = await r.json(); if (!r.ok) { setMsg(j.error||'verify_failed'); return; }
+      setRecovery(j.recoveryCodes); setSvg(''); setCode(''); await refresh();
     }
     async function disable() {
       const pw = prompt('パスワードを入力してください'); if (!pw) return;
       const r = await fetch('/api/auth/totp/disable', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ password: pw })});
-      if (r.ok) { setEnabled(false); setSvg(''); setRecovery(null); }
+      if (r.ok) { setSvg(''); setRecovery(null); setCode(''); await refresh(); }
+    }
+    // 再発行 = 無効化→セットアップ（確認UI）
+    async function reissue() {
+      if (!confirm('二段階認証を再発行します。現在の回復コードは無効になります。続行しますか？')) return;
+      await disable(); await setup();
     }
 
     return (
       <section className="card" style={{ padding:12 }}>
         <h2 style={{ margin:'4px 0 8px' }}>二段階認証</h2>
-        {!enabled && (
+        <div className="text-sm">状態：{status.enabled ? '有効' : '無効'}（回復コード残り: {status.recoveryCount}）</div>
+
+        {!status.enabled && (
           <>
-            <button className="btn" onClick={setup}>セットアップ開始（QR表示）</button>
-            {svg && <div dangerouslySetInnerHTML={{ __html: svg }} style={{ width:160, height:160, marginTop:8 }} />}
+            <button className="btn mt-2" onClick={setup}>セットアップ開始（QR表示）</button>
+            {svg && <div className="mt-2" dangerouslySetInnerHTML={{ __html: svg }} />}
             {svg && (
-              <div className="row" style={{ alignItems:'center', marginTop:8 }}>
+              <div className="row mt-2" style={{ alignItems:'center', gap:8 }}>
                 <span style={{ minWidth:120 }}>6桁コード</span>
-                <input value={code} onChange={e=>setCode(e.target.value)} maxLength={6} inputMode="numeric" />
+                <input value={code} onChange={e=>setCode(e.target.value)} inputMode="numeric" maxLength={6} />
                 <button className="btn btn-primary" onClick={verify}>有効化</button>
               </div>
             )}
           </>
         )}
-        {enabled && (
-          <>
-            <div className="text-sm">有効</div>
+
+        {status.enabled && (
+          <div className="row mt-2" style={{ gap:8 }}>
+            <button className="btn" onClick={reissue}>再発行（無効化→新規）</button>
             <button className="btn" onClick={disable}>無効化</button>
-          </>
+          </div>
         )}
+
         {recovery && (
-          <div className="mt-2">
-            <div className="text-sm">回復コード（必ず安全な場所に保存）：</div>
+          <div className="mt-3">
+            <div className="text-sm">回復コード（必ず安全に保管）</div>
             <pre className="p-2 border rounded text-sm">{recovery.join('\n')}</pre>
           </div>
         )}
+        {msg && <div className="text-destructive text-sm mt-2">{msg}</div>}
       </section>
     );
   }
