@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import * as argon2 from "argon2";
+import { NextResponse } from 'next/server';
 import { prisma } from "@/server/prisma";
 
 // ---- UserID ----
@@ -15,7 +16,7 @@ export async function requireUserId(req: Request): Promise<string> {
     const m2 = cookie.match(/(?:^|;\s*)hk_token=([^;]+)/);
     if (m2) token = decodeURIComponent(m2[1]);
   }
-  if (!token) throw new Response("Unauthorized", { status: 401 });
+  if (!token) throw new NextResponse("Unauthorized", { status: 401 });
 
   // 互換: SYNC_TOKEN
   if (process.env.SYNC_TOKEN && token === process.env.SYNC_TOKEN) {
@@ -29,7 +30,7 @@ export async function requireUserId(req: Request): Promise<string> {
 
   const tokenHash = crypto.createHash("sha256").update(token, "utf8").digest("hex");
   const t = await prisma.syncToken.findUnique({ where: { tokenHash } });
-  if (!t || t.expiresAt < new Date()) throw new Response("Unauthorized", { status: 401 });
+  if (!t || t.expiresAt < new Date()) throw new NextResponse("Unauthorized", { status: 401 });
 
   // 最終使用時刻を更新
   await prisma.syncToken.update({
@@ -87,4 +88,15 @@ export async function getLoginChallenge(loginId: string) {
 }
 export async function markLoginChallengeUsed(loginId: string) {
   await prisma.loginChallenge.update({ where: { id: loginId }, data: { used: true } });
+}
+export async function extractPlainTokenHash(req: Request) {
+  const auth = req.headers.get("authorization") || "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  let t = m?.[1]?.trim();
+  if (!t) {
+    const cookie = req.headers.get("cookie") || "";
+    const m2 = cookie.match(/(?:^|;\s*)hk_token=([^;]+)/);
+    if (m2) t = decodeURIComponent(m2[1]);
+  }
+  return t ? crypto.createHash("sha256").update(t, "utf8").digest("hex") : null;
 }
