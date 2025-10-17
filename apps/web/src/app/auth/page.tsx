@@ -50,12 +50,12 @@ export default function AuthPage() {
         try {
           const j = await r2.json();
           if (j?.requireTotp && j?.loginId) {
-            router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`);
+            router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent('/account')}`);
             return;
           }
         } catch {}
         window.dispatchEvent(new Event('hk:me:changed'));
-        router.replace(next);
+        router.replace('/account');
       } else {
         const r = await fetch('/api/auth/login', {
           method: 'POST',

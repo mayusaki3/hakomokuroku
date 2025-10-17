@@ -81,11 +81,16 @@ export async function POST(req: Request) {
       '';
     const deviceName = req.headers.get('x-hk-device') ?? null;
 
+    const now = new Date();
+    const ttlDays = Number(process.env.HK_TOKEN_TTL_DAYS ?? '30'); // 必要に応じて
+    const expiresAt = new Date(now.getTime() + ttlDays * 86400000); // ★常にDateで渡す
+
     await prisma.syncToken.create({
       data: {
         userId: user.id,
         tokenHash,
         issuedAt: new Date(),
+        expiresAt,
         userAgent: ua,
         ip,
         deviceName,
