@@ -46,7 +46,7 @@ export default function Header() {
   const sp = useSearchParams();
 
   async function loadMe() {
-    const r = await fetch('/api/auth/me', {
+    const r = await fetch('/api/auth/me?cb=' + Date.now(), {  // ← cache bust
       cache: 'no-store',
       credentials: 'include',
       headers: { accept: 'application/json' },
@@ -54,6 +54,7 @@ export default function Header() {
     setMe(r.ok ? await r.json() : null);
   }
 
+  // 初回＋同端末イベント
   useEffect(() => {
     loadMe();
     const onChanged = () => loadMe();
@@ -64,6 +65,22 @@ export default function Header() {
       window.removeEventListener('hk:me:changed', onChanged);
       window.removeEventListener('hk:logged-out', onLoggedOut);
     };
+  }, []);
+
+  // ① ルート変更時に再取得
+  useEffect(() => { loadMe(); }, [pathname]);
+
+  // ② タブがアクティブになったら再取得
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') loadMe(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  // ③ 定期ポーリング（30s）
+  useEffect(() => {
+    const id = setInterval(loadMe, 30000);
+    return () => clearInterval(id);
   }, []);
 
   const displayTitle = mapTitleFromPath(pathname);

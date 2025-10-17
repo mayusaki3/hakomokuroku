@@ -15,7 +15,10 @@ export async function POST(req: Request) {
   const out = await sharp(buf).resize(256, 256, { fit: "cover" }).jpeg({ quality: 80 }).toBuffer();
   const dataUrl = `data:image/jpeg;base64,${out.toString("base64")}`;
 
-  await prisma.user.update({ where: { id: uid }, data: { iconDataUrl: dataUrl } });
+  await prisma.user.update({
+    where: { id: uid },
+    data: { iconDataUrl: dataUrl, updatedAt: new Date() },
+  });
 
   // ヘッダに即反映してもらうためのイベントを返す
   return NextResponse.json({ ok: true, iconDataUrl: dataUrl });

@@ -347,7 +347,7 @@ input[type="text"], input[type="search"], textarea {
 /* --- Compact spacing scale --- */
 :root {
   --space-1: 0px;
-  --space-2: 0px;
+  --space-2: 2px;
   --space-3: 2px;
   --space-4: 0px;
 }

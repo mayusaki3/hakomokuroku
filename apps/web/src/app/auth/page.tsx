@@ -1,88 +1,167 @@
+// apps/web/src/app/auth/page.tsx
 'use client';
-import { useState } from 'react';
+
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 type Mode = 'login' | 'register';
 
 export default function AuthPage() {
+  const sp = useSearchParams();
+  const next = sp.get('next') || '/';
+  const router = useRouter();
+
   const [mode, setMode] = useState<Mode>('login');
   const [userId, setUserId] = useState('');
+  const [userName, setUserName] = useState(''); // 登録時のみ
   const [password, setPassword] = useState('');
-  const [userName, setUserName] = useState('');
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const next = typeof window !== 'undefined'
-    ? new URLSearchParams(window.location.search).get('next') || '/'
-    : '/';
+
+  useEffect(() => {
+    if (sp.get('mode') === 'register') setMode('register');
+  }, [sp]);
+
+  const toggleLabel = useMemo(
+    () => (mode === 'login' ? '新規登録へ' : 'ログインへ'),
+    [mode]
+  );
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setBusy(true);
     try {
       if (mode === 'register') {
-        const r = await fetch('/api/auth/register', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ userId, password, userName }),
+        const r1 = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId, password, userName: userName || userId }),
         });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          throw new Error(j.error || 'register_failed');
+        if (!r1.ok) throw new Error('ユーザー登録に失敗しました');
+
+        const r2 = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId, password }),
+        });
+
+        // TOTP 誘導（必要時）
+        try {
+          const j = await r2.json();
+          if (j?.requireTotp && j?.loginId) {
+            router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`);
+            return;
+          }
+        } catch {}
+        window.dispatchEvent(new Event('hk:me:changed'));
+        router.replace(next);
+      } else {
+        const r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId, password }),
+        });
+
+        let j: any = null;
+        try { j = await r.json(); } catch {}
+        if (j?.requireTotp && j?.loginId) {
+          router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`);
+          return;
         }
-        // 登録後はプロフィール編集へ
-        window.location.href = '/account';
-        return;
+        if (!r.ok) throw new Error('ログインに失敗しました');
+
+        window.dispatchEvent(new Event('hk:me:changed'));
+        router.replace(next);
       }
-
-      // login
-      const r = await fetch('/api/auth/login', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ userId, password }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'login_failed');
-
-      if (j.need_totp) {
-        // 次段で /auth/totp 実装予定（今は遷移のみ）
-        window.location.href = `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`;
-        return;
-      }
-
-      // トークンを localStorage に保存（middleware 用CookieはサーバがSet-Cookie済みだが、既存フローも維持）
-      const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
-      localStorage.setItem('hk.sync', JSON.stringify({ ...cur, token: j.token }));
-
-      window.location.href = next;
     } catch (e: any) {
-      setErr(e?.message || 'error');
+      setErr(e?.message || 'エラーが発生しました');
+    } finally {
+      setBusy(false);
     }
   }
 
+  // 共通枠（ユーザー情報ページに合わせる）
+  const frame: React.CSSProperties = {
+    border: '1px solid var(--hk-border,#e5e7eb)',
+    borderRadius: 12,
+    background: 'var(--hk-card,#fff)',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+    padding: 12,                 // ← account に合わせる
+  };
+  const hr: React.CSSProperties = { border: 0, borderTop: '1px solid var(--hk-border,#e5e7eb)', margin: '6px 0' }; // ← account に合わせる
+
   return (
-    <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
-      <div className="card" style={{ padding: 12 }}>
-        <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-          <button className={`btn ${mode==='login'?'btn-primary':''}`} onClick={()=>setMode('login')}>ログイン</button>
-          <button className={`btn ${mode==='register'?'btn-primary':''}`} onClick={()=>setMode('register')}>新規登録</button>
+    <main className="container" style={{ paddingTop: 4 /* ← account に合わせる */, maxWidth: 560, margin: '0 auto', paddingLeft: 8, paddingRight: 8 }}>
+      <section className="card" style={frame}>
+        {/* 行1：タイトル＋トグル */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h1 style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 18 }}>
+            {mode === 'login' ? 'ログイン' : '新規登録'}
+          </h1>
+          <button
+            type="button"
+            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+            className="btn"
+            style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
+          >
+            {toggleLabel}
+          </button>
         </div>
-        <form onSubmit={onSubmit} className="grid" style={{ gap: 8 }}>
-          <label className="row" style={{ alignItems:'center' }}>
-            <span style={{ minWidth: 120 }}>ユーザーID</span>
-            <input value={userId} onChange={e=>setUserId(e.target.value)} required />
+
+        <hr style={hr} />
+
+        {/* 行2：フォーム */}
+        <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
+          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
+            <span>ユーザーID</span>
+            <input
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              required
+              inputMode="text"
+              autoComplete="username"
+              className="input"
+              placeholder="例) alice"
+            />
           </label>
-          <label className="row" style={{ alignItems:'center' }}>
-            <span style={{ minWidth: 120 }}>パスワード</span>
-            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
-          </label>
+
           {mode === 'register' && (
-            <label className="row" style={{ alignItems:'center' }}>
-              <span style={{ minWidth: 120 }}>ユーザー名</span>
-              <input value={userName} onChange={e=>setUserName(e.target.value)} />
+            <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
+              <span>ユーザー名</span>
+              <input
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                className="input"
+                placeholder="未入力ならユーザーIDを使用"
+              />
             </label>
           )}
-          {err && <div className="text-destructive text-sm">{err}</div>}
-          <div className="row" style={{ justifyContent:'flex-end', marginTop:4 }}>
-            <button className="btn btn-primary" type="submit">{mode==='login'?'ログイン':'登録へ'}</button>
+
+          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
+            <span>パスワード</span>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              type="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              className="input"
+            />
+          </label>
+
+          <hr style={hr} />
+
+          {/* 行3：送信＋エラー */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+            <button type="submit" className="btn" disabled={busy} style={{ height: 40 }}>
+              {busy ? '送信中…' : mode === 'login' ? 'ログイン' : '登録してログイン'}
+            </button>
+
+            {err && <div style={{ color: '#b00' }}>{err}</div>}
           </div>
         </form>
-      </div>
+      </section>
     </main>
   );
 }
