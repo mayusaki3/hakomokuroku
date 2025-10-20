@@ -264,9 +264,9 @@ export default function AccountPage() {
           }}
         >
           {[
-            { href: '/account/security', label: 'MFA設定', Icon: Shield },
-            { href: '/account/tokens',   label: 'デバイス', Icon: Monitor },
-            { href: '/settings',         label: '設定', Icon: Settings },
+            { href: '/account/mfa', label: 'MFA設定', Icon: Shield },
+            { href: '/account/devices', label: 'デバイス', Icon: Monitor },
+            { href: '/settings', label: '設定', Icon: Settings },
           ].map(({ href, label, Icon }) => (
             <a
               key={href}

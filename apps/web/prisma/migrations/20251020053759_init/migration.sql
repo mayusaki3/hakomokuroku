@@ -8,6 +8,7 @@ CREATE TABLE "User" (
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "totpEnabled" BOOLEAN NOT NULL DEFAULT false,
     "totpSecretEnc" TEXT,
+    "totpPendingSecretEnc" TEXT,
     "recoveryCodes" JSONB,
     "totpFailCount" INTEGER NOT NULL DEFAULT 0,
     "lockUntil" DATETIME,
@@ -23,6 +24,10 @@ CREATE TABLE "SyncToken" (
     "tokenHash" TEXT NOT NULL,
     "issuedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "expiresAt" DATETIME NOT NULL,
+    "lastUsedAt" DATETIME,
+    "deviceName" TEXT,
+    "userAgent" TEXT,
+    "ip" TEXT,
     CONSTRAINT "SyncToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -98,8 +103,37 @@ CREATE TABLE "Tag" (
     CONSTRAINT "Tag_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- CreateTable
+CREATE TABLE "Theme" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "vars" JSONB,
+    "wallpaperThumb" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Theme_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "UserSetting" (
+    "userId" TEXT NOT NULL PRIMARY KEY,
+    "visionProvider" TEXT NOT NULL DEFAULT 'none',
+    "visionApiKeyEnc" TEXT,
+    "visionPromptName" TEXT,
+    "visionPromptTags" TEXT,
+    "visionPromptNote" TEXT,
+    "uiVars" JSONB,
+    "updatedAt" DATETIME NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "UserSetting_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_userId_key" ON "User"("userId");
+
+-- CreateIndex
+CREATE INDEX "User_userId_idx" ON "User"("userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "SyncToken_tokenHash_key" ON "SyncToken"("tokenHash");
@@ -112,6 +146,9 @@ CREATE INDEX "SyncToken_expiresAt_idx" ON "SyncToken"("expiresAt");
 
 -- CreateIndex
 CREATE INDEX "LoginChallenge_userId_expiresAt_idx" ON "LoginChallenge"("userId", "expiresAt");
+
+-- CreateIndex
+CREATE INDEX "LoginChallenge_userId_createdAt_idx" ON "LoginChallenge"("userId", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "Box_userId_updatedAt_idx" ON "Box"("userId", "updatedAt");
@@ -142,3 +179,6 @@ CREATE INDEX "Tag_userId_name_kind_idx" ON "Tag"("userId", "name", "kind");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Tag_userId_name_kind_key" ON "Tag"("userId", "name", "kind");
+
+-- CreateIndex
+CREATE INDEX "Theme_userId_updatedAt_idx" ON "Theme"("userId", "updatedAt");

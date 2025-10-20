@@ -55,6 +55,28 @@ async function main() {
       create: t,
     });
   }
+
+  // 4) 画像認識（LLM）初期設定：UserSetting
+  await prisma.userSetting.upsert({
+    where: { userId: devUser.id },
+    update: {
+      visionProvider: 'none',
+      visionPromptName: '画像中央に映っている物体の名前を[name:{名前}]形式で応答。',
+      visionPromptTags:
+        '次行に挙げるタグリストから、画像中央に映っている物体が該当するTagのみを[tag:{タグ1},{タグ2}...]形式で応答。\n' +
+        '[タグリスト:$tags]',
+      visionPromptNote: '画像中央に映っている物体の特徴を[memo:{メモ}]形式で応答。',
+    },
+    create: {
+      userId: devUser.id,
+      visionProvider: 'none',
+      visionPromptName: '画像中央に映っている物体の名前を[name:{名前}]形式で応答。',
+      visionPromptTags:
+        '次行に挙げるタグリストから、画像中央に映っている物体が該当するTagのみを[tag:{タグ1},{タグ2}...]形式で応答。\n' +
+        '[タグリスト:$tags]',
+      visionPromptNote: '画像中央に映っている物体の特徴を[memo:{メモ}]形式で応答。',
+    },
+  });
 }
 
 main()

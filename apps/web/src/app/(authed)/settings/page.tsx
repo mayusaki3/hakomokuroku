@@ -1,6 +1,9 @@
+// apps/web/src/app/settings/page.tsx
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, SlidersHorizontal } from 'lucide-react';
 import { useSettings } from '@/lib/settings';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -12,42 +15,103 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+type ThemeLite = { id: string; name: string };
+type VisionState = { provider: 'none'|'openai'|'claude'|'gemini' };
+
 export default function SettingsHomePage() {
   const { settings: s, update } = useSettings();
 
+  // ===== テーマ一覧（/api 経由） =====
+  const [themes, setThemes] = useState<ThemeLite[]>([]);
+  const [activeId, setActiveId] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      const r = await fetch('/api/settings/theme/list', { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        setThemes(j.themes as ThemeLite[]);
+      }
+      // 選択中IDはローカル保持（必要ならサーバ保持に変更可）
+      const aid = localStorage.getItem('hk.themeActiveId') || '';
+      setActiveId(aid);
+    })();
+  }, []);
+
+  const onChangeActive = (id: string) => {
+    setActiveId(id);
+    localStorage.setItem('hk.themeActiveId', id);
+  };
+
+  // ===== 画像認識（表示用の現在値）=====
+  const [vision, setVision] = useState<VisionState>({ provider: 'none' });
+  const providerLabel = useMemo(() => {
+    switch (vision.provider) {
+      case 'openai': return 'OpenAI';
+      case 'claude': return 'Claude';
+      case 'gemini': return 'Gemini';
+      default: return 'なし';
+    }
+  }, [vision.provider]);
+
+  useEffect(() => {
+    (async () => {
+      const r = await fetch('/api/settings/vision/get', { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        setVision({ provider: (j?.provider ?? 'none') });
+      }
+    })();
+  }, []);
+
+  const disableVision = async () => {
+    const r = await fetch('/api/settings/vision/disable', { method: 'POST' });
+    if (r.ok) setVision({ provider: 'none' });
+  };
+
   return (
     <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
-      {/* 先頭：アカウント動線（認証/登録 → /auth、ユーザー情報編集 → /account） */}
-      <Section title="アカウント">
-        <div className="row" style={{ gap: 12 }}>
-          <Link href="/auth" className="btn-link">ユーザー認証 / 登録へ</Link>
-          <Link href="/account" className="btn-link">ユーザー情報の編集へ</Link>
-        </div>
-        <p className="search-help" style={{ marginTop: 6 }}>
-          ※ 認証に成功するとホームへ遷移します。登録を選んだ場合はユーザー情報編集（/account）へ。
-        </p>
-      </Section>
-
-      {/* 表示（残す） */}
+      {/* 表示 → テーマ選択/追加/編集 */}
       <Section title="表示">
-        <div className="row" style={{ alignItems:'center' }}>
-          <label style={{ minWidth: 120 }}>テーマ</label>
-          <select value={s.theme} onChange={e=>update('theme', e.target.value as any)}>
-            <option value="system">システムに合わせる</option>
-            <option value="light">ライト</option>
-            <option value="dark">ダーク</option>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
+          <div style={{ fontWeight: 600 }}>テーマ選択</div>
+          <select
+            value={activeId}
+            onChange={(e)=>onChangeActive(e.target.value)}
+            style={{ minWidth:220, padding:'6px 8px', border:'1px solid var(--hk-border)', borderRadius:6 }}
+          >
+            <option value="">（デフォルト）</option>
+            {themes.map(t=>(
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
           </select>
-        </div>
-        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-          <label style={{ minWidth: 120 }}>密度</label>
-          <select value={s.density} onChange={e=>update('density', e.target.value as any)}>
-            <option value="comfortable">ふつう</option>
-            <option value="compact">コンパクト</option>
-          </select>
+          <div style={{ display:'flex', gap:8 }}>
+            <Link href="/settings/theme?mode=new" className="btn" title="テーマを追加">
+              <Plus size={16} style={{ marginRight:6 }} /> 追加
+            </Link>
+            <Link
+              href={`/settings/theme${activeId ? `?id=${encodeURIComponent(activeId)}` : ''}`}
+              className="btn"
+              title="選択中のテーマを編集"
+            >
+              <Pencil size={16} style={{ marginRight:6 }} /> 編集
+            </Link>
+          </div>
         </div>
       </Section>
 
-      {/* スキャン（残す） */}
+      {/* 画像認識 */}
+      <Section title="画像認識">
+        <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
+          <div><strong>連携LLM:</strong> {providerLabel}</div>
+          <Link href="/settings/vision" className="btn" title="設定">
+            <SlidersHorizontal size={16} style={{ marginRight:6 }} /> 設定
+          </Link>
+          <button className="btn" onClick={disableVision}>無効化</button>
+        </div>
+      </Section>
+
+      {/* 以下は元ページの他セクション：必要なら残す/調整 */}
       <Section title="スキャン">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.preferBackCamera} onChange={e=>update('preferBackCamera', e.target.checked)} />
@@ -57,13 +121,8 @@ export default function SettingsHomePage() {
           <input type="checkbox" checked={s.scanBeep} onChange={e=>update('scanBeep', e.target.checked)} />
           読み取り時に音/バイブ
         </label>
-        <label className="row" style={{ alignItems:'center', marginTop:6 }}>
-          <input type="checkbox" checked={s.scanContinuous} onChange={e=>update('scanContinuous', e.target.checked)} />
-          連続読み取り（将来用）
-        </label>
       </Section>
 
-      {/* 検索/絞り込み（残す） */}
       <Section title="検索/絞り込み">
         <label className="row" style={{ alignItems:'center' }}>
           <input type="checkbox" checked={s.keepFiltersOnNav} onChange={e=>update('keepFiltersOnNav', e.target.checked)} />
@@ -78,52 +137,18 @@ export default function SettingsHomePage() {
         </div>
       </Section>
 
-      {/* ラベル/QR 表示（残す） */}
       <Section title="ラベル/QR 表示">
-        <div className="row" style={{ alignItems:'center' }}>
-          <label style={{ minWidth: 120 }}>テープ幅</label>
-          <select value={String(s.labelTapeWidthMM)} onChange={e=>update('labelTapeWidthMM', Number(e.target.value) as any)}>
-            <option value="24">24mm</option>
-          </select>
-        </div>
-        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-          <label style={{ minWidth: 120 }}>QRサイズ</label>
-          <input type="number" min={8} max={48} value={s.labelQrSizeMM}
-            onChange={e=>update('labelQrSizeMM', Number(e.target.value))}
-            style={{ width: 96 }} /> <span style={{marginLeft:6}}>mm</span>
-        </div>
-        <label className="row" style={{ alignItems:'center', marginTop:6 }}>
-          <input type="checkbox" checked={s.labelShowText} onChange={e=>update('labelShowText', e.target.checked)} />
-          コード文字列を併記
-        </label>
-      </Section>
-
-      {/* QR ペイロード（残す） */}
-      <Section title="QR ペイロード">
-        <div className="row" style={{ alignItems:'center' }}>
-          <label style={{ minWidth: 120 }}>形式</label>
-          <select value={s.qrPayloadMode} onChange={e=>update('qrPayloadMode', e.target.value as any)}>
-            <option value="code">生コード（例: BK-XXXX）</option>
-            <option value="url">URL（prefix + /b/&lt;code&gt;）</option>
-          </select>
-        </div>
-        {s.qrPayloadMode === 'url' && (
-          <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-            <label style={{ minWidth: 120 }}>URLプレフィックス</label>
-            <input value={s.qrUrlPrefix} onChange={e=>update('qrUrlPrefix', e.target.value)} placeholder="例: https://your.host" />
-          </div>
-        )}
-        <p className="search-help">※ URL 形式にすると、ラベルのQRスキャンでブラウザ遷移が可能になります。</p>
-      </Section>
-
-      {/* バックアップ（残す） */}
-      <Section title="バックアップ（既定）">
-        <label className="row" style={{ alignItems:'center' }}>
-          <input type="checkbox" checked={s.backupIncludeThumbs} onChange={e=>update('backupIncludeThumbs', e.target.checked)} />
-          画像サムネも含める（サイズが大きくなります）
-        </label>
+        <p className="search-help" style={{ marginTop: 6 }}>
+          選択内容の登録・出力は別ページで行います。
+        </p>
         <div style={{ marginTop:8 }}>
-          <Link href="/settings/backup" className="btn-link">バックアップ/同期（手動）ページへ</Link>
+          <Link href="/labels" className="btn-link">ラベル出力ページへ</Link>
+        </div>
+      </Section>
+
+      <Section title="バックアップ/リストア">
+        <div>
+          <Link href="/settings/backup" className="btn-link">全データのバックアップ/リストアへ</Link>
         </div>
       </Section>
     </main>

@@ -88,7 +88,7 @@ export default function TotpPage() {
 
         {/* 入力行 */}
         <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
-          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
+          <label style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center', gap: 8 }}>
             <span>6桁コード</span>
             <input
               inputMode="numeric"
@@ -98,12 +98,13 @@ export default function TotpPage() {
               onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               className="input"
               placeholder="123456"
+              style={{ width: '8ch' }}
             />
           </label>
 
           <div style={{ color: '#666', fontSize: 12 }}>または</div>
 
-          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
+          <label style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center', gap: 8 }}>
             <span>回復コード</span>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center' }}>
               <input
@@ -111,6 +112,7 @@ export default function TotpPage() {
                 onChange={(e) => setRecovery(e.target.value)}
                 className="input"
                 placeholder="例) abcd-efgh-ijkl"
+                style={{ width: '18ch' }}
               />
               <span style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap' }}>
                 残り {remain ?? '—'} 件

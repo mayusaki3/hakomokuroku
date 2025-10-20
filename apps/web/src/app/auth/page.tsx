@@ -1,7 +1,7 @@
 // apps/web/src/app/auth/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 type Mode = 'login' | 'register';
@@ -10,6 +10,7 @@ export default function AuthPage() {
   const sp = useSearchParams();
   const next = sp.get('next') || '/';
   const router = useRouter();
+  const idRef = useRef<HTMLInputElement|null>(null);
 
   const [mode, setMode] = useState<Mode>('login');
   const [userId, setUserId] = useState('');
@@ -20,6 +21,8 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (sp.get('mode') === 'register') setMode('register');
+    const t = setTimeout(() => idRef.current?.focus(), 0);
+    return () => clearTimeout(t);
   }, [sp]);
 
   const toggleLabel = useMemo(
@@ -116,6 +119,7 @@ export default function AuthPage() {
           <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
             <span>ユーザーID</span>
             <input
+              ref={idRef}
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
               required
