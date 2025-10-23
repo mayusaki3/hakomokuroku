@@ -15,12 +15,38 @@
   --bottombar-h: 56px;   /* モバイル下タブ高さ */
   --avatar-size: 32px;   /* 👤 と タイトル行の基準サイズ（両者が連動） */
 
+
+/* ▼ 確認済み */
+
+  /* 入力欄と右側ボタンの“固定”間隔（Gridの第3列で確保）。非iOSの既定値 */
+  --form-gap: 2px;
+
+  /* 壁紙パラメータ（共通） */
+  --wallpaper-repeat: repeat;
+  --wallpaper-size: auto;
+  --wallpaper-position: 0 0;
+  --wallpaper-blend: normal; /* multiply / overlay なども可 */
+
+  /* 壁紙URLと6pxギャップ */
+  --content-wallpaper: var(--hk-wallpaper-image, none);
+  --gap-6: 6px;
+
+  /* 壁紙色を最優先。無ければ hk-content-bg、最後に白 */
+  --content-bg: var(--hk-wallpaper-color, var(--hk-content-bg, #ffffff));
+  --card-bg: var(--hk-card);
+  --card-border: var(--hk-border);
+  --card-radius: 12px;
+
+/* ▲ 確認済み */
+
+
   /* colors */
   --brand: #111827;
   --border: #4f4f50;
   --muted: #6b7280;
   --bg: #ffffff;         /* 画面全体の下地 */
-  --content-bg: #ffdabb; /* ヘッダー/下タブ以外の中面背景 */
+  /* デフォルトは hk 側に与える（テーマ未設定時の初期色） */
+  --hk-content-bg: #ffdabb; /* ヘッダー/下タブ以外の中面背景 */
 
   /* 検索カードの“画面端からの見た目距離” */
   --search-edge-mobile: 8px;   /* モバイル左右距離 */
@@ -37,6 +63,16 @@
   :root { --pad: 20px; --fs-h1: 22px; --fs-h2: 20px; }
 }
 
+
+/* ▼ 確認済み */
+
+/* 入力欄と右側ボタンの“固定”間隔（Gridの第3列で確保）。iOS系のみ上書き（WebKit + タッチ専用 = iOSブラウザ） */
+@supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
+  @media (hover: none) and (pointer: coarse) {
+    :root { --form-gap: 12px; }
+  }
+}
+
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -46,18 +82,85 @@ body {
   font-size: var(--fs-body);
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 中面（ヘッダー・下タブを除く領域）の背景 */
 .app-content {
-  min-height: calc(100vh - var(--topbar-h));
-  background: var(--content-bg);
+  flex: 1;
+  background-color: var(--content-bg);
+  background-image: var(--content-wallpaper);
+  background-repeat: repeat;   /* タイル表示 */
+  background-size: auto;       /* 拡大しない */
+  background-position: 0 0;
 }
 @media (max-width: 767px) {
   .app-content {
     min-height: calc(100vh - var(--topbar-h) - var(--bottombar-h));
   }
 }
+
+/* コンテンツ部内のスクロール/インセット制御 */
+.content-area {
+  /* 既定は 6px のみ。PCで余分にスクロールさせない */
+  padding: var(--gap-6) var(--gap-6) var(--gap-6);
+  overflow-y: auto;
+  /* 親(.app-content)が高さを担保。ここでは横断的な装飾は持たない */
+}
+@media (max-width: 767px) {
+  .content-area {
+    padding-bottom: calc(var(--gap-6) + var(--bottombar-h, 0px) + env(safe-area-inset-bottom));
+  }
+}
+
+/* 縦積みスタック（6pxの一定間隔） */
+.content-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-6);
+}
+
+/* コンテンツ枠の統一見た目 */
+.content-card {
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  box-shadow: var(--hk-shadow);
+  padding: var(--hk-frame-pad);
+}
+
+/* 壁紙プレビューはタイル固定（上書き防止のため !important） */
+.wallpaper-preview{
+  background-repeat: var(--wallpaper-repeat) !important;
+  background-size: var(--wallpaper-size) !important;
+  background-position: var(--wallpaper-position) !important;
+  background-blend-mode: var(--wallpaper-blend) !important;
+}
+
+/* 3列構成→[ラベル][入力][スペーサー(=--form-gap)][ボタン] */
+.form-row{
+  display: grid;
+  grid-template-columns: 84px minmax(0,1fr) var(--form-gap) max-content;
+  column-gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+.form-label{ min-width:84px; white-space:nowrap; }
+.form-input{ grid-column:2; width:100%; min-width:0; max-width:100%; }
+.form-actions{ grid-column:4; display:flex; gap:6px; white-space:nowrap; justify-self:end; }
+button.form-actions{ grid-column:4; justify-self:end; } /* 単一ボタンでも4列目へ */
+
+/* コンテンツ左右は常に6px相当（モバイルで広がらないよう固定） */
+@media (max-width: 767px){
+  .content-edge-6{ padding-left:2px; padding-right:2px; box-sizing:border-box; }
+}
+
+/* ▲ 確認済み */
+
+
 
 /* layout utils */
 .container { padding: var(--pad); max-width: var(--maxw); margin: 0 auto; }
@@ -431,3 +534,20 @@ input[type="text"], input[type="search"], textarea {
 
 /* フッター安全域の余白も少しだけ（任意） */
 .bottom-safe { padding-bottom: var(--space-3); }
+
+/* ---- Content background: source of truth ---- */
+.app-content{
+  /* 透過PNGは下地色と合成される。blendで合成方式を可変化 */
+  background-color: var(--content-bg) !important;
+  background-image: var(--content-wallpaper);
+  background-repeat: var(--wallpaper-repeat);
+  background-size: var(--wallpaper-size);
+  background-position: var(--wallpaper-position);
+  background-blend-mode: var(--wallpaper-blend);  
+}
+
+/* 子ラッパは常に透過（上書きガード） */
+.content-area,
+.content-stack{
+  background: transparent !important;
+}

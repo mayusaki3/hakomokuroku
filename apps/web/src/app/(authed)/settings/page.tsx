@@ -35,13 +35,73 @@ export default function SettingsHomePage() {
       // 選択中IDはローカル保持（必要ならサーバ保持に変更可）
       const aid = localStorage.getItem('hk.themeActiveId') || '';
       setActiveId(aid);
+      // 初期表示時に現在のテーマを適用
+      await loadAndApplyTheme(aid);
     })();
   }, []);
 
-  const onChangeActive = (id: string) => {
+  const onChangeActive = async (id: string) => {
     setActiveId(id);
     localStorage.setItem('hk.themeActiveId', id);
+    await loadAndApplyTheme(id);
   };
+
+  // ===== テーマ適用ユーティリティ =====
+  function persistActiveTheme(vars: Record<string, string> | null, id?: string) {
+    try {
+      if (vars && Object.keys(vars).length > 0) {
+        // 壁紙は url() で包む（未包時のみ）
+        const v = { ...vars };
+        const k = 'hk-wallpaper-image';
+        if (typeof v[k] === 'string') {
+          const raw = String(v[k] || '').trim();
+          v[k] = raw ? (raw.startsWith('url(') ? raw : `url(${raw})`) : 'none';
+        }
+        localStorage.setItem('hk.themeActiveVars', JSON.stringify(v));
+      } else {
+        // デフォルトへ戻す: 永続データを消し、<html> の hk系CSS変数も即時クリア
+        localStorage.removeItem('hk.themeActiveVars');
+        clearThemeVars();
+      }
+      if (id !== undefined) localStorage.setItem('hk.themeActiveId', id);
+      // layout 側の ThemeRuntimeApplier がこのイベントを監視して適用する
+      window.dispatchEvent(new Event('hk-theme-updated'));
+      // サーバへ反映（id 未指定やデフォルトは空扱い）
+      void fetch('/api/settings/theme/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id || '', vars })
+      });
+    } catch { /* no-op */ }
+  }
+
+  // <html> に残った hk系の CSS 変数を即時クリア
+  function clearThemeVars() {
+    const root = document.documentElement;
+    const keys = [
+      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
+      'hk-header-image','hk-header-fg',
+      'hk-toolbar-bg','hk-toolbar-fg',
+      'hk-input-bg','hk-input-fg','hk-input-border',
+      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+    ];
+    for (const k of keys) root.style.removeProperty(`--${k}`);
+    // 壁紙は none を明示（CSSのフォールバックが効くようにする）
+    root.style.setProperty('--hk-wallpaper-image', 'none');
+  }
+
+  async function loadAndApplyTheme(id: string) {
+    if (!id) { persistActiveTheme(null, ''); return; } // デフォルトへ戻す
+    try {
+      const r = await fetch(`/api/settings/theme/get?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+      if (!r.ok) { persistActiveTheme(null, id); return; }
+      const j = await r.json();
+      const vars = (j?.theme?.vars ?? {}) as Record<string, string>;
+      persistActiveTheme(vars, id);
+    } catch {
+      persistActiveTheme(null, id);
+    }
+  }
 
   // ===== 画像認識（表示用の現在値）=====
   const [vision, setVision] = useState<VisionState>({ provider: 'none' });
@@ -77,7 +137,7 @@ export default function SettingsHomePage() {
           <div style={{ fontWeight: 600 }}>テーマ選択</div>
           <select
             value={activeId}
-            onChange={(e)=>onChangeActive(e.target.value)}
+            onChange={(e)=>void onChangeActive(e.target.value)}
             style={{ minWidth:220, padding:'6px 8px', border:'1px solid var(--hk-border)', borderRadius:6 }}
           >
             <option value="">（デフォルト）</option>

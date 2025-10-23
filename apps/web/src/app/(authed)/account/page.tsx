@@ -128,12 +128,11 @@ export default function AccountPage() {
 
   if (!me) return <main className="container">Loading...</main>;
 
-  const row = { display:'flex', alignItems:'center', gap:8, flexWrap:'nowrap' as const };
-  const label = { minWidth:100, whiteSpace:'nowrap' as const };
-  const inputStyle = { flex:1, minWidth:0 };
+  const label = { } as const;
+  const inputStyle = { } as const;
 
   return (
-    <main className="container" style={{ paddingTop:4 }}>
+    <main className="content-edge-6" style={{ paddingTop:4, paddingBottom:0, overflowX:'hidden' }}>
       <section className="card" style={{ padding:12 }}>
         <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
 
@@ -204,22 +203,21 @@ export default function AccountPage() {
         <hr style={{ margin:'6px 0' }} />
 
         {/* 中段：ユーザー名 */}
-        <div style={{ ...row }}>
-          <span style={label}>ユーザー名</span>
+        <div className="form-row">
+          <span className="form-label">ユーザー名</span>
           <input
             value={userNameDraft}
             onChange={e=>setUserNameDraft(e.target.value)}
             maxLength={50}
             readOnly={!editingUserName}
             aria-readonly={!editingUserName}
-            className={!editingUserName ? 'opacity-70 pointer-events-none' : ''}
-            style={inputStyle}
+            className={`form-input ${!editingUserName ? 'opacity-70 pointer-events-none' : ''}`}
             onKeyDown={(e)=>{ if (!editingUserName) return; if (e.key==='Enter') saveUserName(); if (e.key==='Escape'){ setUserNameDraft(me.userName ?? ''); setEditingUserName(false);} }}
           />
           {!editingUserName ? (
-            <button className="btn" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
+            <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
           ) : (
-            <div style={{ display:'flex', gap:6 }}>
+            <div className="form-actions">
               <button className="btn btn-primary" aria-label="保存" disabled={savingUser || (me.userName ?? '')===userNameDraft} onClick={saveUserName}><Check size={16} /></button>
               <button className="btn" aria-label="キャンセル" onClick={()=>{ setUserNameDraft(me.userName ?? ''); setEditingUserName(false); }}><X size={16} /></button>
             </div>
@@ -227,23 +225,22 @@ export default function AccountPage() {
         </div>
 
         {/* 中段：デバイス名 */}
-        <div style={{ ...row, marginTop:8 }}>
-          <span style={label}>デバイス名</span>
+        <div className="form-row" style={{ marginTop:8 }}>
+          <span className="form-label">デバイス名</span>
           <input
             value={deviceNameDraft}
             onChange={e=>setDeviceNameDraft(e.target.value)}
             maxLength={80}
             readOnly={!editingDeviceName}
             aria-readonly={!editingDeviceName}
-            className={!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}
-            style={inputStyle}
+            className={`form-input ${!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}`}
             placeholder={deviceName ? '' : '未設定'}
             onKeyDown={(e)=>{ if (!editingDeviceName) return; if (e.key==='Enter') saveDeviceName(); if (e.key==='Escape'){ setDeviceNameDraft(deviceName); setEditingDeviceName(false);} }}
           />
           {!editingDeviceName ? (
-            <button className="btn" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
+            <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
           ) : (
-            <div style={{ display:'flex', gap:6 }}>
+            <div className="form-actions">
               <button className="btn btn-primary" aria-label="保存" disabled={savingDevice || deviceNameDraft===deviceName} onClick={saveDeviceName}><Check size={16} /></button>
               <button className="btn" aria-label="キャンセル" onClick={()=>{ setDeviceNameDraft(deviceName); setEditingDeviceName(false); }}><X size={16} /></button>
             </div>
@@ -256,7 +253,7 @@ export default function AccountPage() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(3, calc((100% - 16px) / 3))', // 各列=全体の1/3
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
             gap: 8,
             width: '100%',
             maxWidth: '100%',        // 親の幅いっぱい
@@ -279,6 +276,7 @@ export default function AccountPage() {
                 gap: 6,
                 height: 44,                // 任意の統一高さ
                 width: '100%',             // その列幅いっぱい＝1/3
+                minWidth: 0,
                 textDecoration: 'none',
                 whiteSpace: 'nowrap',
                 textAlign: 'center',
