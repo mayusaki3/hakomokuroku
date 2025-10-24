@@ -7,6 +7,25 @@ import { useRouter, useSearchParams } from 'next/navigation';
 type Mode = 'login' | 'register';
 
 export default function AuthPage() {
+  // 画面表示時にテーマをデフォルトへ戻す
+  useEffect(()=>{
+    try{
+      localStorage.removeItem('hk.themeActiveVars');
+      localStorage.setItem('hk.themeActiveId','');
+    }catch{}
+    const root = document.documentElement;
+    const keys = [
+      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
+      'hk-header-image','hk-header-fg',
+      'hk-toolbar-bg','hk-toolbar-fg',
+      'hk-input-bg','hk-input-fg','hk-input-border',
+      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+    ];
+    keys.forEach(k=>root.style.removeProperty(`--${k}`));
+    root.style.setProperty('--hk-wallpaper-image','none');
+    window.dispatchEvent(new Event('hk-theme-updated'));
+  },[]);
+  
   const sp = useSearchParams();
   const next = sp.get('next') || '/';
   const router = useRouter();
@@ -84,19 +103,9 @@ export default function AuthPage() {
     }
   }
 
-  // 共通枠（ユーザー情報ページに合わせる）
-  const frame: React.CSSProperties = {
-    border: '1px solid var(--hk-border,#e5e7eb)',
-    borderRadius: 12,
-    background: 'var(--hk-card,#fff)',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-    padding: 12,                 // ← account に合わせる
-  };
-  const hr: React.CSSProperties = { border: 0, borderTop: '1px solid var(--hk-border,#e5e7eb)', margin: '6px 0' }; // ← account に合わせる
-
   return (
-    <main className="container" style={{ paddingTop: 4 /* ← account に合わせる */, maxWidth: 560, margin: '0 auto', paddingLeft: 8, paddingRight: 8 }}>
-      <section className="card" style={frame}>
+    <main className="hk-page content-edge-6">
+      <section className="hk-frame" style={{ maxWidth:560, margin:'0 auto' }}>
         {/* 行1：タイトル＋トグル */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h1 style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 18 }}>
@@ -112,12 +121,12 @@ export default function AuthPage() {
           </button>
         </div>
 
-        <hr style={hr} />
+        <hr className="hk-frame__hr" />
 
-        {/* 行2：フォーム */}
-        <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
-          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
-            <span>ユーザーID</span>
+        {/* 行2：フォーム（form-rowで統一） */}
+        <form onSubmit={onSubmit} className="content-stack">
+          <div className="form-row">
+            <span className="form-label">ユーザーID</span>
             <input
               ref={idRef}
               value={userId}
@@ -125,39 +134,39 @@ export default function AuthPage() {
               required
               inputMode="text"
               autoComplete="username"
-              className="input"
+              className="form-input"
               placeholder="例) alice"
             />
-          </label>
+          </div>
 
           {mode === 'register' && (
-            <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
-              <span>ユーザー名</span>
+            <div className="form-row">
+              <span className="form-label">ユーザー名</span>
               <input
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
-                className="input"
+                className="form-input"
                 placeholder="未入力ならユーザーIDを使用"
               />
-            </label>
+            </div>
           )}
 
-          <label style={{ display: 'grid', gridTemplateColumns: '100px 1fr', alignItems: 'center', gap: 8 }}>
-            <span>パスワード</span>
+          <div className="form-row">
+            <span className="form-label">パスワード</span>
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               type="password"
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              className="input"
+              className="form-input"
             />
-          </label>
+          </div>
 
-          <hr style={hr} />
+          <hr className="hk-frame__hr" />
 
           {/* 行3：送信＋エラー */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+          <div className="content-stack">
             <button type="submit" className="btn" disabled={busy} style={{ height: 40 }}>
               {busy ? '送信中…' : mode === 'login' ? 'ログイン' : '登録してログイン'}
             </button>

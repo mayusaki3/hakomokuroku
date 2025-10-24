@@ -116,6 +116,14 @@ CREATE TABLE "Theme" (
 );
 
 -- CreateTable
+CREATE TABLE "ThemeActive" (
+    "userId" TEXT NOT NULL PRIMARY KEY,
+    "themeId" TEXT,
+    "vars" JSONB,
+    "updatedAt" DATETIME NOT NULL
+);
+
+-- CreateTable
 CREATE TABLE "UserSetting" (
     "userId" TEXT NOT NULL PRIMARY KEY,
     "visionProvider" TEXT NOT NULL DEFAULT 'none',

@@ -1,145 +1,255 @@
-:root {
-  /* spacing / layout */
-  --pad: 16px;
-  --maxw: 1080px;
-  --card-min-mobile: 160px;
-  --card-min-desktop: 220px;
-
-  /* typography */
-  --fs-body: 16px;
-  --fs-h1: 20px;
-  --fs-h2: 18px;
-
-  /* header / footer */
-  --topbar-h: 48px;      /* ヘッダー高さ */
-  --bottombar-h: 56px;   /* モバイル下タブ高さ */
-  --avatar-size: 32px;   /* 👤 と タイトル行の基準サイズ（両者が連動） */
-
-
-/* ▼ 確認済み */
-
-  /* 入力欄と右側ボタンの“固定”間隔（Gridの第3列で確保）。非iOSの既定値 */
-  --form-gap: 2px;
-
-  /* 壁紙パラメータ（共通） */
-  --wallpaper-repeat: repeat;
-  --wallpaper-size: auto;
-  --wallpaper-position: 0 0;
-  --wallpaper-blend: normal; /* multiply / overlay なども可 */
-
-  /* 壁紙URLと6pxギャップ */
-  --content-wallpaper: var(--hk-wallpaper-image, none);
-  --gap-6: 6px;
-
-  /* 壁紙色を最優先。無ければ hk-content-bg、最後に白 */
-  --content-bg: var(--hk-wallpaper-color, var(--hk-content-bg, #ffffff));
-  --card-bg: var(--hk-card);
-  --card-border: var(--hk-border);
-  --card-radius: 12px;
-
-/* ▲ 確認済み */
-
-
-  /* colors */
-  --brand: #111827;
-  --border: #4f4f50;
-  --muted: #6b7280;
-  --bg: #ffffff;         /* 画面全体の下地 */
-  /* デフォルトは hk 側に与える（テーマ未設定時の初期色） */
-  --hk-content-bg: #ffdabb; /* ヘッダー/下タブ以外の中面背景 */
-
-  /* 検索カードの“画面端からの見た目距離” */
-  --search-edge-mobile: 8px;   /* モバイル左右距離 */
-  --search-edge-desktop: 0px;  /* PC左右距離（0=container既定に揃える） */
-
-  --hk-border:#e5e7eb;        /* 枠線 */
-  --hk-card:#fff;             /* 背景 */
-  --hk-shadow:0 1px 2px rgba(0,0,0,.04);
-  --hk-frame-pad:12px;        /* 枠内余白 */
-  --hk-bottom-bar-height:56px;/* モバイル下部タブの高さ（必要に応じて調整） */
-}
-
-@media (min-width: 768px) {
-  :root { --pad: 20px; --fs-h1: 22px; --fs-h2: 20px; }
-}
-
-
-/* ▼ 確認済み */
-
-/* 入力欄と右側ボタンの“固定”間隔（Gridの第3列で確保）。iOS系のみ上書き（WebKit + タッチ専用 = iOSブラウザ） */
-@supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
-  @media (hover: none) and (pointer: coarse) {
-    :root { --form-gap: 12px; }
-  }
-}
-
+/* =========================================================
+   0) 基本リセットと土台
+   =======================================================*/
+*,
+*::before,
+*::after { box-sizing: border-box; }
 html, body { height: 100%; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--brand);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Helvetica Neue", Arial, sans-serif;
-  font-size: var(--fs-body);
-  -webkit-text-size-adjust: 100%;
-  -webkit-tap-highlight-color: transparent;
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+body{
+  min-height: 100dvh;
+  overflow: hidden;
+  display:flex;
+  flex-direction:column;
+  margin:0;
+  color: var(--hk-text);
 }
 
-/* 中面（ヘッダー・下タブを除く領域）の背景 */
-.app-content {
-  flex: 1;
-  background-color: var(--content-bg);
-  background-image: var(--content-wallpaper);
-  background-repeat: repeat;   /* タイル表示 */
-  background-size: auto;       /* 拡大しない */
-  background-position: 0 0;
+/* =========================================================
+   1) パラメータ（レイアウト／壁紙・配色）
+   =======================================================*/
+/* レイアウト共通 */
+:root{
+  /* === サイズ・余白 === */
+  --edge-x: 6px;                 /* 画面左右の基本ガター幅(px) */
+  --gap-2: 2px;                  /* 微小ギャップ */
+  --gap-4: 4px;                  /* 小ギャップ */
+  --gap-6: 6px;                  /* 既定ギャップ（枠間/上下左右の標準） */
+  --gap-8: 8px;                  /* 大きめギャップ */
+  --radius-6: 6px;               /* 小角丸 */
+  --radius-12: 12px;             /* 大角丸 */
+  --topbar-h: 48px;              /* ヘッダー高さ */
+  --bottombar-h: 56px;           /* 下タブ高さ（モバイル） */
+  --content-max-w: 740px;        /* PC時の枠の最大幅 */
+  --form-gap: 6px;               /* 入力とボタンの固定間隔（.form-row 第3列） 非iOS既定 */
 }
-@media (max-width: 767px) {
-  .app-content {
-    min-height: calc(100vh - var(--topbar-h) - var(--bottombar-h));
+/* iOS専用: ルートに壁紙を敷く + 画面全体のスクロール禁止 + コンテンツだけスクロール */
+@supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
+  :root{ --form-gap: 12px; }
+  html, body{
+    background-color: var(--hk-wallpaper-color);
+    background-image: var(--hk-wallpaper-image);
+    background-repeat: repeat;
+    background-size: auto;
+    background-position: 0 0;
+  }
+  body{ overflow: hidden; overscroll-behavior-y: none; }
+}
+
+/* 小画面：ヘッダー＋下タブを控除した“ちょうどの高さ”にしてスクロールは中身だけ */
+@media (max-width: 767px){
+  .app-content{
+    height: calc(
+      100dvh - var(--topbar-h)
+      - (var(--bottombar-h) + env(safe-area-inset-bottom))
+    );
+    bottom: auto;  /* 高さ指定に切替 */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 }
 
-/* コンテンツ部内のスクロール/インセット制御 */
-.content-area {
-  /* 既定は 6px のみ。PCで余分にスクロールさせない */
-  padding: var(--gap-6) var(--gap-6) var(--gap-6);
-  overflow-y: auto;
-  /* 親(.app-content)が高さを担保。ここでは横断的な装飾は持たない */
+/* 壁紙・配色（テーマ変数） */
+:root{
+  --hk-wallpaper-image: none;
+  --hk-wallpaper-color: #cccccc; /* 壁紙が無い時の下地色 */
+
+  /* ページ地（枠の外側）＝コンテンツ枠の外側の背景色 */
+  --hk-page-bg: #cccccc;
+
+  /* コンテンツ枠（カード）の塗り＝枠の背景 */
+  --hk-card-bg: #ffffff;  
+
+  /* 既定の文字色（全体） */
+  --hk-text: #111827;
+
+  /* 枠内の文字色（未指定なら --hk-text） */
+  --hk-card-fg: var(--hk-text);
+
+  --hk-header-image: none;
+  --hk-header-fg: #111827;       /* ヘッダ内テキスト色 */
+
+  --hk-toolbar-bg: #111827;      /* 下タブ背景 */
+  --hk-toolbar-fg: #e5e7eb;      /* 下タブ文字色 */
+
+  --hk-input-bg: #ffffff;        /* 入力背景 */
+  --hk-input-fg: #111827;        /* 入力文字色 */
+  --hk-input-border: #cbd5e1;    /* 入力枠線 */
+
+  --hk-btn-bg: #ffffff;          /* ボタン背景 */
+  --hk-btn-fg: #111827;          /* ボタン文字色 */
+  --hk-btn-border: #94a3b8;      /* ボタン枠線 */
 }
-@media (max-width: 767px) {
-  .content-area {
-    padding-bottom: calc(var(--gap-6) + var(--bottombar-h, 0px) + env(safe-area-inset-bottom));
+
+/* =========================================================
+   2) ページ全体 → ヘッダ部 / コンテンツ部 / 下タブ
+   =======================================================*/
+/* ページ（土台）。paddingは持たない＝ガターはユーティリティで付与 */
+.hk-page{ padding:0; min-height:100dvh; display:flex; flex-direction:column; }
+
+/* 画面左右ガター（モバイルで6px固定。iOSはセーフエリア加味） */
+@media (max-width: 767px){
+  .content-edge-6{
+    padding-left:  calc(var(--edge-x) + env(safe-area-inset-left));
+    padding-right: calc(var(--edge-x) + env(safe-area-inset-right));
   }
 }
 
-/* 縦積みスタック（6pxの一定間隔） */
-.content-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-6);
+/* コンテンツ部（ヘッダー＋下タブを除いた領域） */
+.app-content{
+  position: fixed;               /* ← 画面に対して固定 */
+  top: var(--topbar-h);          /* ヘッダーの直下から */
+  left: 0; right: 0;
+  /* PC/タブレット：高さはヘッダー控除ぶんで固定 */
+  height: calc(100dvh - var(--topbar-h));
+  background-color: var(--hk-page-bg);
+  padding-top: var(--gap-6);     /* 先頭枠の上 6px だけ */
+  overflow: auto;                /* 中身だけスクロール */
 }
 
-/* コンテンツ枠の統一見た目 */
-.content-card {
-  border: 1px solid var(--card-border);
-  border-radius: var(--card-radius);
-  background: var(--card-bg);
-  box-shadow: var(--hk-shadow);
-  padding: var(--hk-frame-pad);
+/* PC時：コンテンツ枠の最大幅を中央で制限 */
+@media (min-width: 768px){
+  .app-content > .hk-frame{
+    max-width: var(--content-max-w);
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 
-/* 壁紙プレビューはタイル固定（上書き防止のため !important） */
-.wallpaper-preview{
-  background-repeat: var(--wallpaper-repeat) !important;
-  background-size: var(--wallpaper-size) !important;
-  background-position: var(--wallpaper-position) !important;
-  background-blend-mode: var(--wallpaper-blend) !important;
+/* iOSでコンテンツだけスクロールさせたい領域に付与 */
+.content-scroll{
+  height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-/* 3列構成→[ラベル][入力][スペーサー(=--form-gap)][ボタン] */
+/* ヘッダ部 */
+.header{
+  position: fixed; inset: 0 0 auto 0; z-index:20;   /* 画面上に固定 */
+  height: var(--topbar-h);
+  display:flex; align-items:center;
+  margin:0;
+  background: var(--hk-btn-bg);
+  border-bottom: 1px solid var(--hk-btn-border);
+}
+.nav-horizontal { display: flex; gap: 6px; }
+
+/* 中央タイトル行を“高さ=ヘッダー”で厳密センタリング */
+.header-mid{ display:flex; align-items:center; height: var(--topbar-h); }
+.title-row{ display:flex; align-items:center; gap:6px; height:100%; line-height:1; }
+.title-text{ line-height:1; }
+
+@media (min-width: 768px){
+  .only-mobile{ display: none !important; }
+  nav.only-desktop{ display: block !important; }
+  /* PC時：右ナビの間隔と高さを統一 */
+  .header-right.nav-horizontal{
+    display:flex !important;
+    align-items:center !important;
+    gap:8px !important;
+  }
+  /* ボタンの縦センターを数式で固定 */
+  .header-right.nav-horizontal a.btn{
+    place-items:center !important;
+    text-align:center !important;
+    /* ヘッダー高に合わせて“確実に”上書き */
+    height: calc(var(--topbar-h) - 8px) !important;   /* 例: 48px → 40px */
+    min-height: calc(var(--topbar-h) - 8px) !important;
+    padding-block: 0 !important;
+    padding-inline: 12px !important;
+    line-height: 1 !important;
+  }
+  .header-right.nav-horizontal a.btn > *{
+    line-height:1;
+    transform: translateY(-0.0px);
+  }
+}
+
+/* ヘッダーの3カラム配置 [左][中央=伸長][右] */
+.header-grid{
+  display:grid;
+  grid-template-columns: auto 1fr auto;
+  align-items:center;
+  gap:8px;
+}
+.header-left{ padding-left: var(--edge-x); }
+.header-right{ padding-right: calc(var(--edge-x) + env(safe-area-inset-right)); }
+.header-mid{ justify-self:center; }                 /* (1) 中央を常にセンタリング */
+
+/* モバイル時は左右を対称にして中央を“画面に対し”センタリング */
+@media (max-width: 767px){
+  .header-left, .header-spacer{ width:44px; }       /* (1)(2)(3) 左右バランス＋左余白 */
+}
+
+/* 下タブ（モバイル） */
+.mobile-tabbar{
+  position: fixed; left:0; right:0; bottom:0; z-index: 50;
+  height: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--hk-btn-bg); color: var(--hk-btn-fg);
+  border-top: 1px solid var(--hk-btn-border);
+}
+@media (min-width: 768px){
+  /* PCでは常に非表示（表示が残ると高さ計算でわずかにはみ出す） */
+  .mobile-tabbar{ display:none !important; }
+  .app-content{ min-height: auto; overflow-y: visible; }
+}
+.hk-page{ display:flex; flex-direction:column; min-height:100dvh; }
+.pattern-one-fixed .content-root{ flex:1 1 auto; overflow:hidden; }
+.pattern-one-scroll .content-root{ flex:1 1 auto; overflow:auto; -webkit-overflow-scrolling:touch; }
+.pattern-fixed-and-scroll .content-root{ display:flex; flex-direction:column; flex:1 1 auto; }
+.pattern-fixed-and-scroll .content-fixed{ flex:0 0 auto; }
+.pattern-fixed-and-scroll .content-scroll{ flex:1 1 auto; overflow:auto; -webkit-overflow-scrolling:touch; }
+
+/* ボトムタブの中身 */
+.tabbar-grid{
+  list-style:none; display:grid;
+  grid-template-columns: repeat(6, 1fr);
+  align-items:center; margin:0; padding:0; height:100%;
+}
+.tab-link{ display:grid; place-items:center; text-decoration:none; height:100%; }
+.tab-label{ font-size: 10px; line-height: 1.2; }
+
+/* =========================================================
+   3) コンテンツ枠（カード）
+   =======================================================*/
+.hk-frame{
+  background: var(--hk-card-bg);   /* ← 枠の前景（塗り） */
+  color: var(--hk-card-fg);        /* ← 枠内の文字色。未指定なら --hk-text が効く */
+  border: 1px solid var(--hk-btn-border); /* 境界線は流用でOK。必要なら専用変数に */
+  border-radius: var(--radius-12);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  padding: 12px;                 /* 内側だけ */
+  box-sizing: border-box;
+}
+/* ガターをフレーム側で確保したい画面向け（上・左右6px） */
+.hk-frame--gutter{ margin: 6px 6px 0; }
+/* フレーム間の縦間隔 */
+.hk-frame + .hk-frame{ margin-top: 6px; }
+
+/* 先頭枠側のマージンは不要（親で逃げを確保済み） */
+.app-content > .hk-frame:first-child{ margin-top: 0; }
+
+/* 枠内の区切り線 */
+.hk-frame__hr{
+  border: 0;
+  border-top: 1px solid var(--hk-btn-border);
+  margin: 6px 0;
+}
+
+/* =========================================================
+   4) フォーム行（ユーザー情報／ログイン等で共通）
+   [ラベル][入力][スペーサー(--form-gap)][ボタン]
+   =======================================================*/
 .form-row{
   display: grid;
   grid-template-columns: 84px minmax(0,1fr) var(--form-gap) max-content;
@@ -149,405 +259,57 @@ body {
   min-width: 0;
 }
 .form-label{ min-width:84px; white-space:nowrap; }
-.form-input{ grid-column:2; width:100%; min-width:0; max-width:100%; }
-.form-actions{ grid-column:4; display:flex; gap:6px; white-space:nowrap; justify-self:end; }
-button.form-actions{ grid-column:4; justify-self:end; } /* 単一ボタンでも4列目へ */
-
-/* コンテンツ左右は常に6px相当（モバイルで広がらないよう固定） */
-@media (max-width: 767px){
-  .content-edge-6{ padding-left:2px; padding-right:2px; box-sizing:border-box; }
-}
-
-/* ▲ 確認済み */
-
-
-
-/* layout utils */
-.container { padding: var(--pad); max-width: var(--maxw); margin: 0 auto; }
-.card { border: 1px solid #eee; border-radius: 8px; background: #fff; }
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-a, button { min-height: 44px; min-width: 44px; }
-input, button, select, textarea { font: inherit; }
-
-/* モバイル固定ボトムナビに隠れないための下余白 */
-.bottom-safe {
-  padding-bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom, 0px));
-}
-@media (min-width: 768px) {
-  .bottom-safe { padding-bottom: 0; }
-}
-
-/* 表示切替（PC=上メニュー / モバイル=下タブ） */
-.only-mobile { display: block !important; }
-nav.only-desktop { display: none !important; }
-@media (min-width: 768px) {
-  .only-mobile { display: none !important; }
-  nav.only-desktop { display: block !important; }
-}
-
-/* cards grid */
-.grid-cards {
-  display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-min-mobile), 1fr));
-}
-@media (min-width: 768px) {
-  .grid-cards {
-    grid-template-columns: repeat(auto-fill, minmax(var(--card-min-desktop), 1fr));
-  }
-}
-
-/* ページ共通の左右ガター＆最大幅 */
-.hk-page {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 4px 8px 0; /* 上・左右 */
-}
-
-/* モバイルで下部タブに隠れないようにボトム余白を確保 */
-.hk-page--safe-bottom {
-  padding-bottom: calc(
-    var(--hk-frame-pad)
-    + env(safe-area-inset-bottom, 0px)
-    + var(--hk-bottom-bar-height)
-  );
-}
-@media (min-width: 768px){
-  .hk-page--safe-bottom { padding-bottom: var(--hk-frame-pad); } /* PCは通常余白 */
-}
-
-/* コンテンツ枠（ユーザー情報と同じ見た目） */
-.hk-frame {
-  border: 1px solid var(--hk-border);
-  border-radius: 12px;
-  background: var(--hk-card);
-  box-shadow: var(--hk-shadow);
-  padding: var(--hk-frame-pad);
-}
-.hk-frame__head {
-  display:flex; align-items:center; gap:8px;
-  margin: 2px 0 8px;
-}
-.hk-frame__title { font-weight:700; font-size:18px; }
-.hk-frame__hr { border:0; border-top:1px solid var(--hk-border); margin:6px 0; }
-
-
-/* table (PC想定) */
-.table {
+.form-input{
+  grid-column: 2;
   width: 100%;
-  border-collapse: collapse;
-  background: #fff;
-  border: 1px solid #eee;
-  border-radius: 8px;
-}
-.table th, .table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; text-align: left; }
-.table th { background: #fafafa; font-weight: 600; }
-
-/* headings */
-h1 { font-size: var(--fs-h1); margin: 0 0 10px; }
-h2 { font-size: var(--fs-h2); margin: 0 0 8px; }
-
-/* inputs */
-input[type="text"], input[type="search"], textarea {
-  font-size: 16px; padding: 12px;
-}
-
-/* ===== Header ===== */
-.header {
-  position: sticky; top: 0; z-index: 40;
-  background: rgba(255,255,255,0.9);
-  backdrop-filter: saturate(180%) blur(8px);
-  border-bottom: 1px solid #eee;
-}
-
-/* ===== Header ===== */
-
-/* PC：左=auto（👤の実寸）、中央=1fr、右=auto（メニュー実寸）。
-   → 中央セルの center が、左アイコンと右メニューの“間”の中点になる */
-.header-grid {
-  display: grid;
-  grid-template-columns: auto 1fr auto;  /* ← PCでのセンタリング条件 */
-  align-items: center;
-  gap: 8px;
-  height: var(--topbar-h);
-}
-
-.header-left  { justify-self: start; }
-.header-mid   { justify-self: center; }  /* ← 中央セルを常にセンター */
-.header-right { justify-self: end; }
-
-/* モバイル：右メニューはhiddenなので、画面の絶対中心でセンタリング */
-@media (max-width: 767px) {
-  .header-grid {
-    grid-template-columns: 1fr auto 1fr; /* ← 絶対センター（左右対称） */
-  }
-  .header-right { display: none !important; } /* 念のための保険（既に only-desktop でも非表示） */
-}
-
-/* ヘッダーの左右ガターを固定（container の詰め設定を上書き） */
-.header .container {
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-.avatar {
-  width: var(--avatar-size);
-  height: var(--avatar-size);
-  border-radius: 50%;
-  background: #e5e7eb;
-  color: var(--muted);
-  border: 1px solid #d1d5db;
-  display: grid;
-  place-items: center;
-}
-
-.title-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--avatar-size);           /* 👤 と同じ高さに */
-}
-
-.brandmark {
-  width: calc(var(--avatar-size) * 0.8);
-  height: calc(var(--avatar-size) * 0.8);
-  display: block;                       /* Safari baseline差異回避 */
-  object-fit: contain;
-}
-
-.title-text {
-  font-weight: 700;
-  font-size: calc(var(--avatar-size) * 0.56); /* 32px時 ≈18px */
-  line-height: var(--avatar-size);            /* 行高で縦中央揃え */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.nav-horizontal { display: flex; gap: 6px; }
-.btn-link {
+  min-width: 0;
+  max-width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--hk-input-border);
+  border-radius: var(--radius-6);
+  background: var(--hk-input-bg);
+  color: var(--hk-input-fg);
+}
+.form-actions{
+  grid-column: 4;
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+  justify-self: end;
+}
+
+/* =========================================================
+   5) ユーティリティ
+   =======================================================*/
+.only-desktop{ display: none; }
+@media (min-width: 768px){ .only-desktop{ display: block; } }
+
+.hidden{ display: none !important; }
+.opacity-70{ opacity: .7; }
+.pointer-events-none{ pointer-events: none; }
+
+/* ボタンのベース（必要に応じて既存の .btn をここへ揃える） */
+.btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--hk-btn-border);
+  background: var(--hk-btn-bg);
+  color: var(--hk-btn-fg);
+  border-radius: var(--radius-12);
+  padding: 6px 10px;
+  height: 36px;
   text-decoration: none;
-  color: var(--brand);
-  background: #fff;
-}
-
-/* ===== Search (Home) ===== */
-
-/* 検索カード：containerの左右padを相殺して“画面端からの距離”を実効化 */
-.search-card {
-  padding: 12px;
-  margin-inline: calc(var(--search-edge-mobile) - var(--pad));
-}
-@media (min-width: 768px) {
-  .search-card {
-    margin-inline: calc(var(--search-edge-desktop) - var(--pad));
-  }
-}
-
-/* 検索バーをグリッドで1行固定（入力 1fr / 検索ボタン / カメラ） */
-.searchbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
-}
-.searchbar input { min-width: 0; }
-
-/* ボタン */
-.btn {
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--brand);
-}
-
-/* クリア（×）ボタン：アイコンボタンと同サイズ */
-.clear-btn {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-}
-.clear-btn:disabled {
-  opacity: .5;
-  cursor: not-allowed;
-}
-
-/* QR読み込み（📷）ボタン */
-.icon-btn {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  display: grid;
-  place-items: center;
-}
-
-/* 検索ヘルプ（検索枠の内側に表示する説明） */
-.search-help {
-  margin: 8px 2px 0;
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-@media (max-width: 360px) {
-  .searchbar { gap: 6px; }
-  .btn { padding: 8px 12px; }
-}
-
-/* モバイル下部タブの装飾 */
-.tabbar a.tab-link { text-decoration: none; color: var(--brand); display: inline-grid; place-items: center; }
-.tabbar .tab-label { font-size: 11px; line-height: 1.1; }
-.tabbar a.tab-link[aria-current="page"] { font-weight: 700; } /* 下線ではなく太字などに */
-
-/* ---- Register stepper ---- */
-.stepper {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.stepbtn {
-  --tip: 14px; /* 右側の矢先サイズ */
-  position: relative;
-  padding: 10px 12px 10px calc(12px);
-  border: 1px solid #ddd;
-  background: #fff;
-  color: #111;
-  border-radius: 6px;
-  /* 左は直線、右だけ矢先 */
-  clip-path: polygon(
-    0 0,
-    calc(100% - var(--tip)) 0,
-    100% 50%,
-    calc(100% - var(--tip)) 100%,
-    0 100%
-  );
-}
-.stepbtn[aria-current="step"] {
-  background: #eef6ff;
-  border-color: #9ecbff;
-}
-.stepbtn[aria-disabled="true"] {
-  background: #f6f6f6;
-  color: #aaa;
-  border-color: #eee;
-  pointer-events: none;
-  cursor: not-allowed;
-}
-
-.page-title { font-size: 1.125rem; font-weight: 600; margin: 12px 0 8px; }
-
-.box-list { display: flex; flex-direction: column; gap: 8px; }
-
-.box-row {
-  display: grid;
-  grid-template-columns: 1fr auto; /* 行本体 / 右アイコン */
-  gap: 8px;
-  border: 1px solid #eee;
-  border-radius: 12px;
-  background: #fff;
-  padding: 8px;
-}
-
-.row-main {
-  display: grid;
-  grid-template-columns: 48px 1fr; /* サムネ / テキスト */
-  gap: 12px;
-  align-items: center;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: 0;
   cursor: pointer;
 }
-
-.thumb { width: 48px; height: 48px; border-radius: 8px; overflow: hidden; background: #f3f4f6; display: grid; place-items: center; }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-
-.box-meta .name { font-weight: 600; line-height: 1.2; }
-.box-meta .sub { font-size: 12px; color: #6b7280; margin-top: 2px; display: flex; align-items: center; gap: 6px; }
-.box-meta .sub .sep { opacity: .6; }
-.box-meta .sub .code { letter-spacing: .2px; }
-.box-meta .sub .location { color: #374151; }
-
-.edit-btn {
-  align-self: center;
-  justify-self: end;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  padding: 6px 10px;
-  line-height: 1;
-  background: #fff;
-  text-decoration: none;
-}
-.edit-btn:active { transform: translateY(1px); }
-
-/* --- Compact spacing scale --- */
-:root {
-  --space-1: 0px;
-  --space-2: 2px;
-  --space-3: 2px;
-  --space-4: 0px;
+.btn-primary{
+  background: var(--hk-toolbar-fg);
+  color: #111;
 }
 
-/* 画面の左右/上下マージンを詰める */
-.container {
-  padding: var(--space-2) var(--space-3);
-}
-@media (min-width: 768px) {
-  .container {
-    padding: var(--space-3) var(--space-4);
-  }
-}
-
-/* 枠（カード）の内側余白を詰める */
-.card {
-  padding: var(--space-2);
-  border-radius: 10px; /* 角丸は控えめに（任意） */
-}
-
-/* セクション見出しの上下マージンを詰める */
-.card h2 {
-  margin: 2px 0 var(--space-2);
-}
-
-/* 行・列のデフォルト隙間をやや狭める */
-.row, .col {
-  gap: var(--space-2);
-}
-
-/* 入力群の上下マージンを統一して詰める */
-.mt-2 { margin-top: var(--space-2); }
-.mt-3 { margin-top: var(--space-3); }
-
-/* フッター安全域の余白も少しだけ（任意） */
-.bottom-safe { padding-bottom: var(--space-3); }
-
-/* ---- Content background: source of truth ---- */
-.app-content{
-  /* 透過PNGは下地色と合成される。blendで合成方式を可変化 */
-  background-color: var(--content-bg) !important;
-  background-image: var(--content-wallpaper);
-  background-repeat: var(--wallpaper-repeat);
-  background-size: var(--wallpaper-size);
-  background-position: var(--wallpaper-position);
-  background-blend-mode: var(--wallpaper-blend);  
-}
-
-/* 子ラッパは常に透過（上書きガード） */
-.content-area,
-.content-stack{
-  background: transparent !important;
-}
+/* =========================================================
+   6) 既知のはみ出し対策
+   =======================================================*/
+main, .container{ width: 100%; }
+img, video{ max-width: 100%; height: auto; display: block; }

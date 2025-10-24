@@ -168,6 +168,13 @@ model Theme {
   @@index([userId, updatedAt])
 }
 
+model ThemeActive {
+  userId   String   @id
+  themeId  String?  // 空=デフォルト
+  vars     Json?    // テーマの CSS 変数一式（null/空でデフォルト扱い）
+  updatedAt DateTime @updatedAt
+}
+
 enum VisionProvider {
   none
   openai

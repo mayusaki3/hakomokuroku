@@ -5,6 +5,22 @@ export default function ThemeRuntimeApplier() {
   useEffect(() => {
     const root = document.documentElement;
 
+    const clearTheme = () => {
+      // CSS変数を即時クリア
+      const keys = [
+        'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
+        'hk-header-image','hk-header-fg',
+        'hk-toolbar-bg','hk-toolbar-fg',
+        'hk-input-bg','hk-input-fg','hk-input-border',
+        'hk-btn-bg','hk-btn-fg','hk-btn-border'
+      ];
+      for (const k of keys) root.style.removeProperty(`--${k}`);
+      root.style.setProperty('--hk-wallpaper-image','none');
+      // ローカル状態も初期化
+      localStorage.removeItem('hk.themeActiveVars');
+      localStorage.setItem('hk.themeActiveId','');
+    };
+
     const setVars = (vars: Record<string, string> | null | undefined) => {
       if (!vars) return;
       root.style.removeProperty('--hk-wallpaper-image');
@@ -32,18 +48,23 @@ export default function ThemeRuntimeApplier() {
     const loadFromServer = async () => {
       try {
         const r = await fetch('/api/settings/theme/active', { cache: 'no-store' });
+        if (r.status === 401) { clearTheme(); return; } // 未ログイン→デフォルト
         if (!r.ok) return;
+
         const j = await r.json();              // { id, vars }
         setVars(j?.vars || {});
       } catch { /* no-op */ }
     };
 
-    loadFromLocal();   // まず即時にローカル適用
-    void loadFromServer(); // その後サーバの最新を上書き適用
+    // 空IDは即デフォルト化。そうでなければローカル→サーバの順に適用
+    const aid = localStorage.getItem('hk.themeActiveId') || '';
+    if (aid === '') { clearTheme(); }
+    else { loadFromLocal(); }
+    void loadFromServer();
 
     const onUpdate = () => { loadFromLocal(); void loadFromServer(); };
     window.addEventListener('hk-theme-updated', onUpdate);
-    window.addEventListener('storage', onUpdate);
+    window.addEventListener('hk:logout', onUpdate);    window.addEventListener('storage', onUpdate);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void loadFromServer();
     });
@@ -51,6 +72,7 @@ export default function ThemeRuntimeApplier() {
     return () => {
       window.removeEventListener('hk-theme-updated', onUpdate);
       window.removeEventListener('storage', onUpdate);
+      window.removeEventListener('hk:logout', onUpdate);
     };
   }, []);
 

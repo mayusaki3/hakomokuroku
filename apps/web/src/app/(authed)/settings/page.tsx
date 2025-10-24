@@ -44,6 +44,14 @@ export default function SettingsHomePage() {
     setActiveId(id);
     localStorage.setItem('hk.themeActiveId', id);
     await loadAndApplyTheme(id);
+    // サーバの「現在のテーマ」を更新（他端末用）
+    const vars = id ? (await fetch(`/api/settings/theme/get?id=${encodeURIComponent(id)}`, {cache:'no-store'}).then(r=>r.json()).then(j=>j?.theme?.vars||{})) : {};
+    await fetch('/api/settings/theme/activate', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ id, vars })
+    });
+    // 他タブへ通知
+    window.dispatchEvent(new Event('hk-theme-updated'));
   };
 
   // ===== テーマ適用ユーティリティ =====

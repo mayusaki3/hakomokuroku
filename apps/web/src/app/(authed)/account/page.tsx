@@ -121,7 +121,24 @@ export default function AccountPage() {
 
   async function logout() {
     await fetch('/api/auth/logout', { method:'POST' });
-    try { localStorage.removeItem('hk.sync'); } catch {}
+    try {
+      localStorage.removeItem('hk.sync');
+      localStorage.removeItem('hk.themeActiveVars');
+      localStorage.setItem('hk.themeActiveId','');
+    } catch {}
+    // CSS変数も即時クリア
+    const root = document.documentElement;
+    const keys = [
+      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
+      'hk-header-image','hk-header-fg',
+      'hk-toolbar-bg','hk-toolbar-fg',
+      'hk-input-bg','hk-input-fg','hk-input-border',
+      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+    ];
+    for (const k of keys) root.style.removeProperty(`--${k}`);
+    root.style.setProperty('--hk-wallpaper-image','none');
+    // 他タブへも通知
+    window.dispatchEvent(new Event('hk-theme-updated'));
     document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
     location.href = '/auth';
   }
@@ -132,172 +149,174 @@ export default function AccountPage() {
   const inputStyle = { } as const;
 
   return (
-    <main className="content-edge-6" style={{ paddingTop:4, paddingBottom:0, overflowX:'hidden' }}>
-      <section className="card" style={{ padding:12 }}>
-        <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
+    <main className="hk-page">
+      <div className="app-content content-edge-6">
+        <section className="hk-frame">
+          <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
 
-        <hr style={{ margin:'6px 0' }} />
+          <hr className="hk-frame__hr" />
 
-        {/* 上段ブロック：左＝アイコン／右＝(上)ID・(下)操作ボタン（各行を上下中央に） */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr',
-            columnGap: 12,
-            alignItems: 'center', // 左右行を縦中央揃え
-          }}
-        >
-          {/* 左：アイコン */}
-          <div>
-            <img
-              src={me.iconDataUrl || '/icons/user-default.svg'}
-              alt="user"
-              width={96}
-              height={96}
-              className="rounded-full"
-              style={{ objectFit: 'cover' }}
-            />
-          </div>
-
-          {/* 右：上下2段（各行コンテンツを上下中央に） */}
+          {/* 上段ブロック：左＝アイコン／右＝(上)ID・(下)操作ボタン（各行を上下中央に） */}
           <div
             style={{
               display: 'grid',
-              gridTemplateRows: 'auto auto',
-              rowGap: 8,
-              alignItems: 'center', // ← 各行の内容を縦中央
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 12,
+              alignItems: 'center', // 左右行を縦中央揃え
             }}
           >
-            {/* 右上：ID（左端寄せ） */}
-            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'nowrap', justifyContent:'flex-start' }}>
-              <span style={{ minWidth:30, whiteSpace:'nowrap' }}>ID :</span>
-              <div style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                <b>{me.userId}</b>
-              </div>
-            </div>
-
-            {/* 右下：カメラ / 画像 / 回転（縦中央・左寄せ） */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start' }}>
-              <input
-                ref={fileRefCamera}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+            {/* 左：アイコン */}
+            <div>
+              <img
+                src={me.iconDataUrl || '/icons/user-default.svg'}
+                alt="user"
+                width={96}
+                height={96}
+                className="rounded-full"
+                style={{ objectFit: 'cover' }}
               />
-              <input
-                ref={fileRefPicker}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
-              />
-              <button className="btn" aria-label="カメラで撮影" onClick={() => fileRefCamera.current?.click()}><Camera size={16} /></button>
-              <button className="btn" aria-label="画像を選択" onClick={() => fileRefPicker.current?.click()}><ImageIcon size={16} /></button>
-              <button className="btn" aria-label="90度回転" onClick={rotateIcon90}><RotateCwSquare size={16} /></button>
             </div>
-          </div>
-        </div>
 
-        <hr style={{ margin:'6px 0' }} />
-
-        {/* 中段：ユーザー名 */}
-        <div className="form-row">
-          <span className="form-label">ユーザー名</span>
-          <input
-            value={userNameDraft}
-            onChange={e=>setUserNameDraft(e.target.value)}
-            maxLength={50}
-            readOnly={!editingUserName}
-            aria-readonly={!editingUserName}
-            className={`form-input ${!editingUserName ? 'opacity-70 pointer-events-none' : ''}`}
-            onKeyDown={(e)=>{ if (!editingUserName) return; if (e.key==='Enter') saveUserName(); if (e.key==='Escape'){ setUserNameDraft(me.userName ?? ''); setEditingUserName(false);} }}
-          />
-          {!editingUserName ? (
-            <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
-          ) : (
-            <div className="form-actions">
-              <button className="btn btn-primary" aria-label="保存" disabled={savingUser || (me.userName ?? '')===userNameDraft} onClick={saveUserName}><Check size={16} /></button>
-              <button className="btn" aria-label="キャンセル" onClick={()=>{ setUserNameDraft(me.userName ?? ''); setEditingUserName(false); }}><X size={16} /></button>
-            </div>
-          )}
-        </div>
-
-        {/* 中段：デバイス名 */}
-        <div className="form-row" style={{ marginTop:8 }}>
-          <span className="form-label">デバイス名</span>
-          <input
-            value={deviceNameDraft}
-            onChange={e=>setDeviceNameDraft(e.target.value)}
-            maxLength={80}
-            readOnly={!editingDeviceName}
-            aria-readonly={!editingDeviceName}
-            className={`form-input ${!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}`}
-            placeholder={deviceName ? '' : '未設定'}
-            onKeyDown={(e)=>{ if (!editingDeviceName) return; if (e.key==='Enter') saveDeviceName(); if (e.key==='Escape'){ setDeviceNameDraft(deviceName); setEditingDeviceName(false);} }}
-          />
-          {!editingDeviceName ? (
-            <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
-          ) : (
-            <div className="form-actions">
-              <button className="btn btn-primary" aria-label="保存" disabled={savingDevice || deviceNameDraft===deviceName} onClick={saveDeviceName}><Check size={16} /></button>
-              <button className="btn" aria-label="キャンセル" onClick={()=>{ setDeviceNameDraft(deviceName); setEditingDeviceName(false); }}><X size={16} /></button>
-            </div>
-          )}
-        </div>
-
-        <hr style={{ margin:'6px 0' }} />
-
-        {/* 下段：MFA/デバイス管理/設定（各ボタン＝幅の1/3） */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: 8,
-            width: '100%',
-            maxWidth: '100%',        // 親の幅いっぱい
-            margin: '0 auto',        // 中央寄せ（親が狭い場合に備え）
-          }}
-        >
-          {[
-            { href: '/account/mfa', label: 'MFA設定', Icon: Shield },
-            { href: '/account/devices', label: 'デバイス', Icon: Monitor },
-            { href: '/settings', label: '設定', Icon: Settings },
-          ].map(({ href, label, Icon }) => (
-            <a
-              key={href}
-              href={href}
-              className="btn"
+            {/* 右：上下2段（各行コンテンツを上下中央に） */}
+            <div
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',      // 上下中央
-                justifyContent: 'center',  // 左右中央
-                gap: 6,
-                height: 44,                // 任意の統一高さ
-                width: '100%',             // その列幅いっぱい＝1/3
-                minWidth: 0,
-                textDecoration: 'none',
-                whiteSpace: 'nowrap',
-                textAlign: 'center',
-                boxSizing: 'border-box',
+                display: 'grid',
+                gridTemplateRows: 'auto auto',
+                rowGap: 8,
+                alignItems: 'center', // ← 各行の内容を縦中央
               }}
             >
-              <Icon size={16} />
-              {label}
-            </a>
-          ))}
-        </div>
+              {/* 右上：ID（左端寄せ） */}
+              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'nowrap', justifyContent:'flex-start' }}>
+                <span style={{ minWidth:30, whiteSpace:'nowrap' }}>ID :</span>
+                <div style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  <b>{me.userId}</b>
+                </div>
+              </div>
 
-        <hr style={{ margin:'6px 0' }} />
+              {/* 右下：カメラ / 画像 / 回転（縦中央・左寄せ） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start' }}>
+                <input
+                  ref={fileRefCamera}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                />
+                <input
+                  ref={fileRefPicker}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                />
+                <button className="btn" aria-label="カメラで撮影" onClick={() => fileRefCamera.current?.click()}><Camera size={16} /></button>
+                <button className="btn" aria-label="画像を選択" onClick={() => fileRefPicker.current?.click()}><ImageIcon size={16} /></button>
+                <button className="btn" aria-label="90度回転" onClick={rotateIcon90}><RotateCwSquare size={16} /></button>
+              </div>
+            </div>
+          </div>
 
-        {/* 最下段：ログアウト（横いっぱい） */}
-        <div>
-          <button className="btn" style={{ width:'100%', justifyContent:'center' }} onClick={logout}>
-            <LogOut size={16} style={{ marginRight:6 }} /> ログアウト
-          </button>
-        </div>
-      </section>
+          <hr className="hk-frame__hr" />
+
+          {/* 中段：ユーザー名 */}
+          <div className="form-row">
+            <span className="form-label">ユーザー名</span>
+            <input
+              value={userNameDraft}
+              onChange={e=>setUserNameDraft(e.target.value)}
+              maxLength={50}
+              readOnly={!editingUserName}
+              aria-readonly={!editingUserName}
+              className={`form-input ${!editingUserName ? 'opacity-70 pointer-events-none' : ''}`}
+              onKeyDown={(e)=>{ if (!editingUserName) return; if (e.key==='Enter') saveUserName(); if (e.key==='Escape'){ setUserNameDraft(me.userName ?? ''); setEditingUserName(false);} }}
+            />
+            {!editingUserName ? (
+              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
+            ) : (
+              <div className="form-actions">
+                <button className="btn btn-primary" aria-label="保存" disabled={savingUser || (me.userName ?? '')===userNameDraft} onClick={saveUserName}><Check size={16} /></button>
+                <button className="btn" aria-label="キャンセル" onClick={()=>{ setUserNameDraft(me.userName ?? ''); setEditingUserName(false); }}><X size={16} /></button>
+              </div>
+            )}
+          </div>
+
+          {/* 中段：デバイス名 */}
+          <div className="form-row" style={{ marginTop:8 }}>
+            <span className="form-label">デバイス名</span>
+            <input
+              value={deviceNameDraft}
+              onChange={e=>setDeviceNameDraft(e.target.value)}
+              maxLength={80}
+              readOnly={!editingDeviceName}
+              aria-readonly={!editingDeviceName}
+              className={`form-input ${!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}`}
+              placeholder={deviceName ? '' : '未設定'}
+              onKeyDown={(e)=>{ if (!editingDeviceName) return; if (e.key==='Enter') saveDeviceName(); if (e.key==='Escape'){ setDeviceNameDraft(deviceName); setEditingDeviceName(false);} }}
+            />
+            {!editingDeviceName ? (
+              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
+            ) : (
+              <div className="form-actions">
+                <button className="btn btn-primary" aria-label="保存" disabled={savingDevice || deviceNameDraft===deviceName} onClick={saveDeviceName}><Check size={16} /></button>
+                <button className="btn" aria-label="キャンセル" onClick={()=>{ setDeviceNameDraft(deviceName); setEditingDeviceName(false); }}><X size={16} /></button>
+              </div>
+            )}
+          </div>
+
+          <hr className="hk-frame__hr" />
+
+          {/* 下段：MFA/デバイス管理/設定（各ボタン＝幅の1/3） */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gap: 8,
+              width: '100%',
+              maxWidth: '100%',        // 親の幅いっぱい
+              margin: '0 auto',        // 中央寄せ（親が狭い場合に備え）
+            }}
+          >
+            {[
+              { href: '/account/mfa', label: 'MFA設定', Icon: Shield },
+              { href: '/account/devices', label: 'デバイス', Icon: Monitor },
+              { href: '/settings', label: '設定', Icon: Settings },
+            ].map(({ href, label, Icon }) => (
+              <a
+                key={href}
+                href={href}
+                className="btn"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',      // 上下中央
+                  justifyContent: 'center',  // 左右中央
+                  gap: 6,
+                  height: 44,                // 任意の統一高さ
+                  width: '100%',             // その列幅いっぱい＝1/3
+                  minWidth: 0,
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                  textAlign: 'center',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <Icon size={16} />
+                {label}
+              </a>
+            ))}
+          </div>
+
+          <hr className="hk-frame__hr" />
+
+          {/* 最下段：ログアウト（横いっぱい） */}
+          <div>
+            <button className="btn" style={{ width:'100%', justifyContent:'center' }} onClick={logout}>
+              <LogOut size={16} style={{ marginRight:6 }} /> ログアウト
+            </button>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

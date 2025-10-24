@@ -2,6 +2,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useCurrentHeaderTitle } from './HeaderTitleContext';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
@@ -22,10 +23,7 @@ const DEFAULT_USER_ICON_DATAURL =
 
 function preserveParams(sp: ReadonlyURLSearchParams, href: string, keys = ['q', 'qr']) {
   const params = new URLSearchParams();
-  for (const k of keys) {
-    const v = sp.get(k);
-    if (v) params.set(k, v);
-  }
+  for (const k of keys) { const v = sp.get(k); if (v) params.set(k, v); }
   const qs = params.toString();
   return qs ? `${href}?${qs}` : href;
 }
@@ -44,17 +42,12 @@ export default function Header() {
   const [me, setMe] = useState<Me | null>(null);
   const pathname = usePathname() || '/';
   const sp = useSearchParams();
+  const injectedTitle = useCurrentHeaderTitle();
 
   async function loadMe() {
-    const r = await fetch('/api/auth/me?cb=' + Date.now(), {  // ← cache bust
-      cache: 'no-store',
-      credentials: 'include',
-      headers: { accept: 'application/json' },
-    });
+    const r = await fetch('/api/auth/me?cb=' + Date.now(), { cache: 'no-store', credentials: 'include', headers: { accept: 'application/json' } });
     setMe(r.ok ? await r.json() : null);
   }
-
-  // 初回＋同端末イベント
   useEffect(() => {
     loadMe();
     const onChanged = () => loadMe();
@@ -66,31 +59,20 @@ export default function Header() {
       window.removeEventListener('hk:logged-out', onLoggedOut);
     };
   }, []);
-
-  // ① ルート変更時に再取得
   useEffect(() => { loadMe(); }, [pathname]);
-
-  // ② タブがアクティブになったら再取得
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible') loadMe(); };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
-
-  // ③ 定期ポーリング（30s）
   useEffect(() => {
     const id = setInterval(loadMe, 30000);
     return () => clearInterval(id);
   }, []);
 
-  const displayTitle = mapTitleFromPath(pathname);
+  const displayTitle = injectedTitle ?? mapTitleFromPath(pathname);
   const Btn = (p: { href: string; label: string; preserve?: boolean }) => (
-    <Link
-      href={p.preserve ? preserveParams(sp, p.href) : p.href}
-      className="btn-link"
-      prefetch
-      style={{ textDecoration: 'none' }}
-    >
+    <Link href={p.preserve ? preserveParams(sp, p.href) : p.href} className="btn" prefetch>
       {p.label}
     </Link>
   );
@@ -104,37 +86,25 @@ export default function Header() {
             <img
               src={me?.iconDataUrl || DEFAULT_USER_ICON}
               alt="user"
-              width={28}
-              height={28}
+              width={36}
+              height={36}
               className="rounded-full"
               style={{ objectFit: 'cover', display: 'block' }}
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = DEFAULT_USER_ICON_DATAURL;
-              }}
+              onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_USER_ICON_DATAURL; }}
             />
           </Link>
         </div>
 
-        {/* 中央：ブランド＋タイトル（モバイル中央／PCも中央） */}
+        {/* 中央：タイトル（常にセンタリング */}
         <div className="header-mid">
           <div className="title-row" aria-label="アプリタイトル" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <img
-              src={BRAND_ICON}
-              alt=""
-              width={20}
-              height={20}
-              style={{ display: 'block' }}
-              onError={(e) => {
-                e.currentTarget.onerror = null;
-                e.currentTarget.src = '/favicon.ico';
-              }}
-            />
+            <img src={BRAND_ICON} alt="" width={24} height={24} style={{ display: 'block' }}
+              onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = '/favicon.ico'; }} />
             <div className="title-text">{displayTitle}</div>
           </div>
         </div>
 
-        {/* 右：PCメニュー（箱/アイテムは q/qr を引き継ぐ） */}
+        {/* 右：PCメニュー */}
         <nav className="header-right only-desktop nav-horizontal" aria-label="トップメニュー">
           <Btn href="/" label="ホーム" />
           <Btn href="/register" label="登録" />
@@ -143,6 +113,8 @@ export default function Header() {
           <Btn href="/help" label="ヘルプ" />
           <Btn href="/settings" label="設定" />
         </nav>
+        {/* モバイル用スペーサー（右側の見かけ幅を作り中央を画面基準に） */}
+        <div className="header-spacer only-mobile" aria-hidden />
       </div>
     </header>
   );
