@@ -8,8 +8,8 @@ import { useSettings } from '@/lib/settings';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="card" style={{ padding: 12 }}>
-      <h2 style={{ margin: '4px 0 8px', fontSize: 16 }}>{title}</h2>
+    <section className="hk-frame hk-frame--gutter">
+      <h2 style={{ margin: '2px 0 8px' }}>{title}</h2>
       {children}
     </section>
   );
@@ -138,87 +138,89 @@ export default function SettingsHomePage() {
   };
 
   return (
-    <main className="container bottom-safe" style={{ display:'grid', gap:12, paddingTop:8 }}>
-      {/* 表示 → テーマ選択/追加/編集 */}
-      <Section title="表示">
-        <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
-          <div style={{ fontWeight: 600 }}>テーマ選択</div>
-          <select
-            value={activeId}
-            onChange={(e)=>void onChangeActive(e.target.value)}
-            style={{ minWidth:220, padding:'6px 8px', border:'1px solid var(--hk-border)', borderRadius:6 }}
-          >
-            <option value="">（デフォルト）</option>
-            {themes.map(t=>(
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-          <div style={{ display:'flex', gap:8 }}>
-            <Link href="/settings/theme?mode=new" className="btn" title="テーマを追加">
-              <Plus size={16} style={{ marginRight:6 }} /> 追加
-            </Link>
-            <Link
-              href={`/settings/theme${activeId ? `?id=${encodeURIComponent(activeId)}` : ''}`}
-              className="btn"
-              title="選択中のテーマを編集"
+    <div className="app-content content-edge-6">
+      <div className="app-scroll">
+        {/* 表示 → テーマ選択/追加/編集 */}
+        <Section title="表示">
+          <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
+            <div style={{ fontWeight: 600 }}>テーマ選択</div>
+            <select
+              value={activeId}
+              onChange={(e)=>void onChangeActive(e.target.value)}
+              style={{ minWidth:220, padding:'6px 8px', border:'1px solid var(--hk-border)', borderRadius:6 }}
             >
-              <Pencil size={16} style={{ marginRight:6 }} /> 編集
-            </Link>
+              <option value="">（デフォルト）</option>
+              {themes.map(t=>(
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            <div style={{ display:'flex', gap:8 }}>
+              <Link href="/settings/theme?mode=new" className="btn" title="テーマを追加">
+                <Plus size={16} style={{ marginRight:6 }} /> 追加
+              </Link>
+              <Link
+                href={`/settings/theme${activeId ? `?id=${encodeURIComponent(activeId)}` : ''}`}
+                className="btn"
+                title="選択中のテーマを編集"
+              >
+                <Pencil size={16} style={{ marginRight:6 }} /> 編集
+              </Link>
+            </div>
           </div>
-        </div>
-      </Section>
+        </Section>
 
-      {/* 画像認識 */}
-      <Section title="画像認識">
-        <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
-          <div><strong>連携LLM:</strong> {providerLabel}</div>
-          <Link href="/settings/vision" className="btn" title="設定">
-            <SlidersHorizontal size={16} style={{ marginRight:6 }} /> 設定
-          </Link>
-          <button className="btn" onClick={disableVision}>無効化</button>
-        </div>
-      </Section>
+        {/* 画像認識 */}
+        <Section title="画像認識">
+          <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto', gap:8, alignItems:'center' }}>
+            <div><strong>連携LLM:</strong> {providerLabel}</div>
+            <Link href="/settings/vision" className="btn" title="設定">
+              <SlidersHorizontal size={16} style={{ marginRight:6 }} /> 設定
+            </Link>
+            <button className="btn" onClick={disableVision}>無効化</button>
+          </div>
+        </Section>
 
-      {/* 以下は元ページの他セクション：必要なら残す/調整 */}
-      <Section title="スキャン">
-        <label className="row" style={{ alignItems:'center' }}>
-          <input type="checkbox" checked={s.preferBackCamera} onChange={e=>update('preferBackCamera', e.target.checked)} />
-          背面カメラを優先する
-        </label>
-        <label className="row" style={{ alignItems:'center', marginTop:6 }}>
-          <input type="checkbox" checked={s.scanBeep} onChange={e=>update('scanBeep', e.target.checked)} />
-          読み取り時に音/バイブ
-        </label>
-      </Section>
+        {/* 以下は元ページの他セクション：必要なら残す/調整 */}
+        <Section title="スキャン">
+          <label className="row" style={{ alignItems:'center' }}>
+            <input type="checkbox" checked={s.preferBackCamera} onChange={e=>update('preferBackCamera', e.target.checked)} />
+            背面カメラを優先する
+          </label>
+          <label className="row" style={{ alignItems:'center', marginTop:6 }}>
+            <input type="checkbox" checked={s.scanBeep} onChange={e=>update('scanBeep', e.target.checked)} />
+            読み取り時に音/バイブ
+          </label>
+        </Section>
 
-      <Section title="検索/絞り込み">
-        <label className="row" style={{ alignItems:'center' }}>
-          <input type="checkbox" checked={s.keepFiltersOnNav} onChange={e=>update('keepFiltersOnNav', e.target.checked)} />
-          ルーティング時に絞り込み（q/qr）を引き継ぐ
-        </label>
-        <div className="row" style={{ alignItems:'center', marginTop:8 }}>
-          <label style={{ minWidth: 120 }}>既定の並び順</label>
-          <select value={s.sortDefault} onChange={e=>update('sortDefault', e.target.value as any)}>
-            <option value="updatedDesc">更新日時（新しい順）</option>
-            <option value="nameAsc">名前（昇順）</option>
-          </select>
-        </div>
-      </Section>
+        <Section title="検索/絞り込み">
+          <label className="row" style={{ alignItems:'center' }}>
+            <input type="checkbox" checked={s.keepFiltersOnNav} onChange={e=>update('keepFiltersOnNav', e.target.checked)} />
+            ルーティング時に絞り込み（q/qr）を引き継ぐ
+          </label>
+          <div className="row" style={{ alignItems:'center', marginTop:8 }}>
+            <label style={{ minWidth: 120 }}>既定の並び順</label>
+            <select value={s.sortDefault} onChange={e=>update('sortDefault', e.target.value as any)}>
+              <option value="updatedDesc">更新日時（新しい順）</option>
+              <option value="nameAsc">名前（昇順）</option>
+            </select>
+          </div>
+        </Section>
 
-      <Section title="ラベル/QR 表示">
-        <p className="search-help" style={{ marginTop: 6 }}>
-          選択内容の登録・出力は別ページで行います。
-        </p>
-        <div style={{ marginTop:8 }}>
-          <Link href="/labels" className="btn-link">ラベル出力ページへ</Link>
-        </div>
-      </Section>
+        <Section title="ラベル/QR 表示">
+          <p className="search-help" style={{ marginTop: 6 }}>
+            選択内容の登録・出力は別ページで行います。
+          </p>
+          <div style={{ marginTop:8 }}>
+            <Link href="/labels" className="btn-link">ラベル出力ページへ</Link>
+          </div>
+        </Section>
 
-      <Section title="バックアップ/リストア">
-        <div>
-          <Link href="/settings/backup" className="btn-link">全データのバックアップ/リストアへ</Link>
-        </div>
-      </Section>
-    </main>
+        <Section title="バックアップ/リストア">
+          <div>
+            <Link href="/settings/backup" className="btn-link">全データのバックアップ/リストアへ</Link>
+          </div>
+        </Section>
+      </div>
+    </div>
   );
 }

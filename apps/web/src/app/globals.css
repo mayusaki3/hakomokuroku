@@ -29,7 +29,7 @@ body{
   --radius-12: 12px;             /* 大角丸 */
   --topbar-h: 48px;              /* ヘッダー高さ */
   --bottombar-h: 56px;           /* 下タブ高さ（モバイル） */
-  --content-max-w: 740px;        /* PC時の枠の最大幅 */
+  --content-max-w: 754px;        /* PC時の枠の最大幅 */
   --form-gap: 6px;               /* 入力とボタンの固定間隔（.form-row 第3列） 非iOS既定 */
 }
 /* iOS専用: ルートに壁紙を敷く + 画面全体のスクロール禁止 + コンテンツだけスクロール */
@@ -105,20 +105,26 @@ body{
 }
 
 /* コンテンツ部（ヘッダー＋下タブを除いた領域） */
-.app-content{
-  position: fixed;               /* ← 画面に対して固定 */
-  top: var(--topbar-h);          /* ヘッダーの直下から */
-  left: 0; right: 0;
-  /* PC/タブレット：高さはヘッダー控除ぶんで固定 */
-  height: calc(100dvh - var(--topbar-h));
-  background-color: var(--hk-page-bg);
-  padding-top: var(--gap-6);     /* 先頭枠の上 6px だけ */
-  overflow: auto;                /* 中身だけスクロール */
+.app-content{ position: fixed; top: var(--topbar-h); left:0; right:0; background: var(--hk-page-bg); }
+@media (min-width:768px){
+  .app-content{ bottom: 0; }                            /* PC: 下端まで */
+}
+@media (max-width:767px){
+  .app-content{                                         /* SP: 下タブぶん控除 */
+    bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
+  }
+}
+/* 実際にスクロールさせる中身 */
+.app-scroll{
+  height: 100%;
+  overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding-top: var(--gap-6);                            /* 先頭枠の上6px */
+  padding-bottom: var(--gap-6);                         /* 末尾も6px確保 */
 }
 
 /* PC時：コンテンツ枠の最大幅を中央で制限 */
 @media (min-width: 768px){
-  .app-content > .hk-frame{
+  .app-scroll > .hk-frame{
     max-width: var(--content-max-w);
     margin-left: auto;
     margin-right: auto;

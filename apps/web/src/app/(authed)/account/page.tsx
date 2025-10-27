@@ -149,8 +149,8 @@ export default function AccountPage() {
   const inputStyle = { } as const;
 
   return (
-    <main className="hk-page">
-      <div className="app-content content-edge-6">
+    <div className="app-content content-edge-6">
+      <div className="app-scroll">
         <section className="hk-frame">
           <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
 
@@ -317,6 +317,6 @@ export default function AccountPage() {
           </div>
         </section>
       </div>
-    </main>
+    </div>
   );
 }

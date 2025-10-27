@@ -104,77 +104,79 @@ export default function AuthPage() {
   }
 
   return (
-    <main className="hk-page content-edge-6">
-      <section className="hk-frame" style={{ maxWidth:560, margin:'0 auto' }}>
-        {/* 行1：タイトル＋トグル */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <h1 style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 18 }}>
-            {mode === 'login' ? 'ログイン' : '新規登録'}
-          </h1>
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-            className="btn"
-            style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
-          >
-            {toggleLabel}
-          </button>
-        </div>
-
-        <hr className="hk-frame__hr" />
-
-        {/* 行2：フォーム（form-rowで統一） */}
-        <form onSubmit={onSubmit} className="content-stack">
-          <div className="form-row">
-            <span className="form-label">ユーザーID</span>
-            <input
-              ref={idRef}
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              required
-              inputMode="text"
-              autoComplete="username"
-              className="form-input"
-              placeholder="例) alice"
-            />
-          </div>
-
-          {mode === 'register' && (
-            <div className="form-row">
-              <span className="form-label">ユーザー名</span>
-              <input
-                value={userName}
-                onChange={(e) => setUserName(e.target.value)}
-                className="form-input"
-                placeholder="未入力ならユーザーIDを使用"
-              />
-            </div>
-          )}
-
-          <div className="form-row">
-            <span className="form-label">パスワード</span>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              type="password"
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              className="form-input"
-            />
+    <div className="app-content content-edge-6">
+      <div className="app-scroll">
+        <section className="hk-frame">
+          {/* 行1：タイトル＋トグル */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h1 style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 18 }}>
+              {mode === 'login' ? 'ログイン' : '新規登録'}
+            </h1>
+            <button
+              type="button"
+              onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+              className="btn"
+              style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
+            >
+              {toggleLabel}
+            </button>
           </div>
 
           <hr className="hk-frame__hr" />
 
-          {/* 行3：送信＋エラー */}
-          <div className="content-stack">
-            <button type="submit" className="btn" disabled={busy} style={{ height: 40 }}>
-              {busy ? '送信中…' : mode === 'login' ? 'ログイン' : '登録してログイン'}
-            </button>
+          {/* 行2：フォーム（form-rowで統一） */}
+          <form onSubmit={onSubmit} className="content-stack">
+            <div className="form-row">
+              <span className="form-label">ユーザーID</span>
+              <input
+                ref={idRef}
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                required
+                inputMode="text"
+                autoComplete="username"
+                className="form-input"
+                placeholder="例) alice"
+              />
+            </div>
 
-            {err && <div style={{ color: '#b00' }}>{err}</div>}
-          </div>
-        </form>
-      </section>
-    </main>
+            {mode === 'register' && (
+              <div className="form-row">
+                <span className="form-label">ユーザー名</span>
+                <input
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  className="form-input"
+                  placeholder="未入力ならユーザーIDを使用"
+                />
+              </div>
+            )}
+
+            <div className="form-row">
+              <span className="form-label">パスワード</span>
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                type="password"
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                className="form-input"
+              />
+            </div>
+
+            <hr className="hk-frame__hr" />
+
+            {/* 行3：送信＋エラー */}
+            <div className="content-stack">
+              <button type="submit" className="btn" disabled={busy} style={{ width:'100%', height: 40 }}>
+                {busy ? '送信中…' : mode === 'login' ? 'ログイン' : '登録してログイン'}
+              </button>
+
+              {err && <div style={{ color: '#b00' }}>{err}</div>}
+            </div>
+          </form>
+        </section>
+      </div>
+    </div>
   );
 }
