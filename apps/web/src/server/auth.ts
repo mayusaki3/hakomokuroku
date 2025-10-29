@@ -61,3 +61,21 @@ export async function requireUserId(): Promise<string> {
 
 // 互換用のエイリアス（既存コードが getUser を想定しているケースに対応）
 export const getCurrentUser = getUser;
+
+// パスワード関連をこのモジュール名で再公開して、既存 import '@/server/auth' を壊さない
+export { hashPassword, verifyPassword } from './password';
+
+/** 認証トークン（hash）を Cookie から取得。st 単体 または hk_sync 内の st= を許容 */
+export function readAuthTokenFromCookies(): string | null {
+  const jar = cookies();
+  const st = jar.get('st')?.value;
+  if (st) return st;
+
+  const hk = jar.get('hk_sync')?.value;
+  if (!hk) return null;
+
+  // 例: "osOrd2F...; st=eNZt9p..." / "st=eNZt9p..." / "k=v&st=..." などを大雑把に抽出
+  // セミコロンや空白区切りも考慮
+  const m = hk.match(/(?:^|[;\s])st=([^;,\s]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}

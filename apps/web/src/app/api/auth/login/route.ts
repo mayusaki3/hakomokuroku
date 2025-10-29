@@ -73,7 +73,20 @@ export async function POST(req: Request) {
 
     // 4) Cookie発行
     const res = NextResponse.json({ ok: true }, { status: 200 });
+
+    console.log('[login] set-cookie sent', res.headers.get('set-cookie'));
+
     res.cookies.set(COOKIE_NAME, raw, cookieAttrsFor(req));
+
+    console.log('[login] about to set cookie', {
+      cookieName: 'st',
+      // 実トークンは漏らさない
+      tokenPreview: token?.slice(0, 8),
+      expiresAt,
+      ua: req.headers.get('user-agent'),
+      ip: getClientIp(req) // 既存 util
+    });
+
     return res;
   } catch (e) {
     // 想定外は 500

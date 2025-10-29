@@ -4,7 +4,23 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 import { requireUserId } from '@/server/auth';
 
+import { cookies } from 'next/headers';
+
 export async function GET(req: Request) {
+
+  const c = cookies();
+  const st = c.get('st')?.value;
+  console.log('[me] cookie st length', st?.length, 'present?', !!st);
+
+  // DB照合直前にも追加
+  console.log('[me] will lookup tokenHash', st ? 'yes' : 'no');
+
+  // …既存の tokenHash = sha256hex(st) → SELECT …
+  // 検索結果の有無を必ず出力
+  console.log('[me] prisma syncToken found?', !!row, row?.userId);
+  // …
+
+
   const uid = await requireUserId(req).catch(() => null);
   if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
