@@ -1,112 +1,82 @@
-// apps/web/src/app/api/auth/login/route.ts
-export const runtime = 'nodejs';
+// ログインAPI：成功時に Cookie "st" を発行
+// ・Cookie値は「生トークン（URLセーフ）」
+// ・DBには sha256(hex) でハッシュ保存
+// ・Cloudflaredトンネル配下は Secure+SameSite=None、localhostは Lax で運用
 
 import { NextResponse } from 'next/server';
-import { prisma } from '@/server/prisma';
-import argon2 from 'argon2'; 
-import { randomBytes, createHash } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { prisma } from '@/lib/prisma';
+import { randomUrlSafe, sha256hex } from '@/server/crypto';
+import { getClientIp } from '@/server/ip'; // 既に作成済み想定
+import { verifyPassword } from '@/server/password'; // 既存のパスワード検証関数を想定（なければ差し替え）
 
-function bad(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
-}
+const COOKIE_NAME = 'st';
 
-function setLoginCookie(token: string) {
-  const res = NextResponse.json({ ok: true });
-  res.headers.append(
-    'Set-Cookie',
-    [
-      `hk_token=${encodeURIComponent(token)}`,
-      'Path=/',
-      'HttpOnly',
-      'SameSite=Lax',
-      // 本番 https 運用時は Secure を付ける: 'Secure'
-    ].join('; ')
-  );
-  return res;
+// Cookie属性をURL/ヘッダから決定（cloudflared経由: https）
+function cookieAttrsFor(req: Request): Parameters<NextResponse['cookies']['set']>[2] {
+  const url = new URL(req.url);
+  // proxy配下で X-Forwarded-Proto を尊重（本番/トンネルで https 判定）
+  const forwardedProto = req.headers.get('x-forwarded-proto');
+  const isHttps = (forwardedProto ?? url.protocol.replace(':', '')) === 'https';
+
+  return {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? 'none' : 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30, // 30日
+  };
 }
 
 export async function POST(req: Request) {
   try {
-    const { userId, password } = await req.json().catch(() => ({} as any));
-    if (!userId || !password) return bad('userId と password は必須です', 400);
+    const { userId, password, deviceName } = await req.json();
 
-    // ユーザー取得
-    const user = await prisma.user.findUnique({
-      where: { userId },
-      select: {
-        id: true,
-        isActive: true,
-        passwordHash: true,
-        totpEnabled: true,
-        lockUntil: true,
-      },
+    // 1) ユーザー取得
+    const u = await prisma.user.findFirst({
+      where: { userId, isActive: true },
+      select: { id: true, passwordHash: true, lockUntil: true },
     });
-    if (!user || !user.isActive) return bad('認証に失敗しました', 401);
-
-    // ロック中判定
-    if (user.lockUntil && user.lockUntil > new Date()) {
-      return bad('アカウントが一時ロックされています', 423);
+    if (!u) {
+      return NextResponse.json({ ok: false, reason: 'invalid-credential' }, { status: 401 });
+    }
+    if (u.lockUntil && u.lockUntil > new Date()) {
+      return NextResponse.json({ ok: false, reason: 'locked' }, { status: 401 });
     }
 
-    // パスワード検証
-    const ok = await argon2.verify(user.passwordHash, password);
-    if (!ok) return bad('認証に失敗しました', 401);
-
-    // TOTP 必須なら LoginChallenge を発行して誘導
-    if (user.totpEnabled) {
-      const loginId = uuidv4();
-      const now = new Date();
-      await prisma.loginChallenge.create({
-        data: {
-          id: loginId,
-          userId: user.id,
-          createdAt: now,
-          expiresAt: new Date(now.getTime() + 5 * 60 * 1000), // 5分
-          used: false,
-        },
-      });
-      return NextResponse.json({ requireTotp: true, loginId }, { status: 200 });
+    // 2) パスワード検証（argon2idなど）
+    const ok = await verifyPassword(password, u.passwordHash);
+    if (!ok) {
+      return NextResponse.json({ ok: false, reason: 'invalid-credential' }, { status: 401 });
     }
 
-    // セッショントークン発行（SyncToken）
-    const raw = randomBytes(32).toString('hex'); // Cookie に載せるプレーントークン
-    const tokenHash = createHash('sha256').update(raw).digest('hex');
-
-    const ua = req.headers.get('user-agent') ?? '';
-    const ip =
-      req.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
-      // @ts-ignore
-      (req as any).ip ||
-      '';
-    const deviceName = req.headers.get('x-hk-device') ?? null;
+    // 3) 生トークン生成 → hexでハッシュ化しDB保存
+    const raw = randomUrlSafe(32); // Cookieに入れる値
+    const tokenHash = sha256hex(raw); // DB保存値
 
     const now = new Date();
-    const ttlDays = Number(process.env.HK_TOKEN_TTL_DAYS ?? '30'); // 必要に応じて
-    const expiresAt = new Date(now.getTime() + ttlDays * 86400000); // ★常にDateで渡す
+    const exp = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const ua = req.headers.get('user-agent') ?? undefined;
+    const ip = getClientIp(req) ?? undefined;
 
     await prisma.syncToken.create({
       data: {
-        userId: user.id,
+        userId: u.id,
         tokenHash,
-        issuedAt: new Date(),
-        expiresAt,
+        issuedAt: now,
+        expiresAt: exp,
+        deviceName: deviceName ?? undefined,
         userAgent: ua,
         ip,
-        deviceName,
       },
     });
 
-    // 最終ログイン更新（別要件で分けたい場合は削除可）
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-
-    // Cookie セットして返す
-    const res = setLoginCookie(raw);
+    // 4) Cookie発行
+    const res = NextResponse.json({ ok: true }, { status: 200 });
+    res.cookies.set(COOKIE_NAME, raw, cookieAttrsFor(req));
     return res;
   } catch (e) {
-    return bad('サーバーエラー', 500);
+    // 想定外は 500
+    return NextResponse.json({ ok: false, reason: 'error' }, { status: 500 });
   }
 }

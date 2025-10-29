@@ -56,15 +56,12 @@ export default function AccountMfaPage() {
     <div className="app-content content-edge-6">
       <div className="app-scroll">
         <section className="hk-frame">
-
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <h1 style={{ margin:'2px 0 8px', fontWeight:700, fontSize:18 }}>
-              MFA（二段階認証）設定
-            </h1>
+            <h2 style={{ margin:'2px 0 8px' }}>MFA（二段階認証）設定</h2>
             <button className="btn" style={{ marginLeft:'auto' }} onClick={()=>router.back()}>戻る</button>
           </div>
 
-          <hr style={hr} />
+          <hr className="hk-frame__hr" />
 
           <div style={{ display:'grid', gap:8 }}>
             <button className="btn" onClick={onSetup}>TOTP をセットアップ</button>

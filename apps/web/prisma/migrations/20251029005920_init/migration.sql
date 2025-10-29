@@ -9,6 +9,7 @@ CREATE TABLE "User" (
     "totpEnabled" BOOLEAN NOT NULL DEFAULT false,
     "totpSecretEnc" TEXT,
     "totpPendingSecretEnc" TEXT,
+    "totpPendingAt" DATETIME,
     "recoveryCodes" JSONB,
     "totpFailCount" INTEGER NOT NULL DEFAULT 0,
     "lockUntil" DATETIME,

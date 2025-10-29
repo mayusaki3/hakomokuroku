@@ -1,22 +1,31 @@
-import { webcrypto } from "crypto";
-const enc = new TextEncoder(); const dec = new TextDecoder();
+// 共通のハッシュ/ユーティリティを集約
+// 目的：発行時と照合時のハッシュ表現の不一致を防ぐ（hexで統一）
 
-async function getKey() {
-  const b64 = process.env.TOTP_ENC_KEY!;
-  const raw = Buffer.from(b64, "base64");
-  return await webcrypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
+import crypto from 'node:crypto';
+
+/** 任意文字列 → SHA-256(hex) */
+export function sha256hex(input: string): string {
+  return crypto.createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
-export async function encryptStr(plain: string) {
-  const iv = webcrypto.getRandomValues(new Uint8Array(12));
-  const key = await getKey();
-  const ct = await webcrypto.subtle.encrypt({ name:"AES-GCM", iv }, key, enc.encode(plain));
-  return Buffer.concat([Buffer.from(iv), Buffer.from(new Uint8Array(ct))]).toString("base64");
+/** URLセーフな乱数文字列を生成（Cookieにそのまま入れる生トークン用） */
+export function randomUrlSafe(len: number): string {
+  return crypto
+    .randomBytes(len)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 }
 
-export async function decryptStr(b64: string) {
-  const buf = Buffer.from(b64, "base64"); const iv = buf.subarray(0,12); const data = buf.subarray(12);
-  const key = await getKey();
-  const pt = await webcrypto.subtle.decrypt({ name:"AES-GCM", iv:new Uint8Array(iv) }, key, data);
-  return dec.decode(pt);
+/** デバッグ補助：生トークンから hex / base64url の両方を得る */
+export function bothHashes(input: string) {
+  const buf = crypto.createHash('sha256').update(input, 'utf8').digest();
+  const hex = buf.toString('hex');
+  const b64url = buf
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+  return { hex, b64url };
 }

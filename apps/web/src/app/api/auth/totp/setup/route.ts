@@ -1,40 +1,76 @@
-// apps/web/src/app/api/auth/totp/setup/route.ts
-export const runtime = 'nodejs';
+// Next.js App Router (route handler)
+// 目的: TOTP セットアップ開始API（POST専用）
+// 動作: ランダムなTOTP秘密鍵を生成 → DBに pending として暗号保存 → otpauth URL を返す
+// 注意: GET は 405
 
-import { NextResponse } from "next/server";
-import { prisma } from "@/server/prisma";
-import { requireUserId } from "@/server/auth";
-import { authenticator } from "otplib";
-import QRCode from "qrcode";
-import { encryptStr } from "@/server/crypto";
+import { NextResponse } from 'next/server';
+import { authenticator } from 'otplib';
+import crypto from 'crypto';
 
-export async function POST(req: Request) {
-  try {
-    const uid = await requireUserId(req);
+// あなたの実装に合わせて調整（例：getCurrentUser はログインユーザーの {id, userId} を返す想定）
+import { getCurrentUser } from '@/server/auth';
+import { prisma } from '@/server/prisma';
 
-    // TOTP_ENC_KEY チェック（未設定だと500になるのを回避）
-    if (!process.env.TOTP_ENC_KEY) {
-      return NextResponse.json({ error: "server_misconfig: TOTP_ENC_KEY" }, { status: 500 });
-    }
+// ---------- 暗号ユーティリティ ----------
+// .env に Base64 の 32バイト鍵を設定: TOTP_SECRET_KEY=xxxxxxxx(base64)
+const ENC_KEY_B64 = process.env.TOTP_SECRET_KEY ?? '';
+function getKey(): Buffer {
+  if (!ENC_KEY_B64) throw new Error('TOTP_SECRET_KEY is not set');
+  const key = Buffer.from(ENC_KEY_B64, 'base64');
+  if (key.length !== 32) throw new Error('TOTP_SECRET_KEY must be 32 bytes (Base64)');
+  return key;
+}
 
-    const user = await prisma.user.findUnique({ where: { id: uid }, select: { id: true, userId: true } });
-    if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+function encryptWithEnvKey(plain: string): string {
+  const key = getKey();
+  const iv = crypto.randomBytes(12); // AES-GCM 標準
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // 保存は iv|tag|data を Base64 結合
+  return Buffer.concat([iv, tag, enc]).toString('base64');
+}
 
-    // 新しい候補シークレットを生成（検証完了まで本番鍵は触らない）
-    const secret = authenticator.generateSecret(); // base32
-    const otpauth = authenticator.keyuri(user.userId, "hakomokuroku", secret);
-    const svg = await QRCode.toString(otpauth, { type: "svg", margin: 1 });
+// ---------- 405（未対応メソッド） ----------
+export async function GET() {
+  return new NextResponse('Method Not Allowed', { status: 405 });
+}
 
-    // pending に保存
-    const enc = await encryptStr(secret);
-    await prisma.user.update({
-      where: { id: uid },
-      data: { totpPendingSecretEnc: enc }, // ← ここだけ更新
-    });
+// ---------- セットアップ開始 ----------
+export async function POST() {
+  // 1) ログインユーザー取得
+  const me = await getCurrentUser();
+  if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
-    return NextResponse.json({ otpauth, svg });
-  } catch (e) {
-    if (e instanceof Response) return e;
-    return NextResponse.json({ error: "server_error" }, { status: 500 });
+  // 2) 既に有効なら拒否（運用方針により許可して上書きでも可）
+  const user = await prisma.user.findUnique({ where: { id: me.id } });
+  if (!user) return NextResponse.json({ ok: false, error: 'not found' }, { status: 404 });
+  if (user.totpEnabled) {
+    return NextResponse.json({ ok: false, error: 'already enabled' }, { status: 400 });
   }
+
+  // 3) 秘密鍵生成 → 暗号化して pending 保存
+  const pendingSecret = authenticator.generateSecret();
+  const pendingEnc = encryptWithEnvKey(pendingSecret);
+
+  await prisma.user.update({
+    where: { id: me.id },
+    data: {
+      totpPendingSecretEnc: pendingEnc,   // ← スキーマ名に合わせる
+      totpPendingAt: new Date(),
+      // 失敗カウントはリセットしておくと親切
+      totpFailCount: 0,
+    },
+  });
+
+  // 4) otpauth URL 生成
+  // 表示ラベルは "Hakomokuroku: <userId>"
+  const issuer = 'Hakomokuroku';
+  const labelUserId = user.userId ?? 'user';
+  const label = `${issuer}: ${labelUserId}`;
+  // otplib の keyuri(accountName, issuer, secret)
+  const otpauthUrl = authenticator.keyuri(label, issuer, pendingSecret);
+
+  // 5) クライアントへ返却（QR生成はクライアントで実施）
+  return NextResponse.json({ ok: true, otpauthUrl });
 }

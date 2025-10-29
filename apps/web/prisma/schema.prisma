@@ -27,6 +27,7 @@ model User {
   totpEnabled   Boolean  @default(false)
   totpSecretEnc String?
   totpPendingSecretEnc String?
+  totpPendingAt DateTime?
   recoveryCodes Json?                          // ["hash1","hash2",...]
   totpFailCount Int      @default(0)
   lockUntil     DateTime?

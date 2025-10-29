@@ -31,6 +31,9 @@ body{
   --bottombar-h: 56px;           /* 下タブ高さ（モバイル） */
   --content-max-w: 754px;        /* PC時の枠の最大幅 */
   --form-gap: 6px;               /* 入力とボタンの固定間隔（.form-row 第3列） 非iOS既定 */
+  /* === タイポグラフィ === */
+  --btn-font-size: 14px;         /* ボタン文字サイズ（全画面で統一） */
+  --input-font-size: 14px;       /* 入力欄の文字サイズ */
 }
 /* iOS専用: ルートに壁紙を敷く + 画面全体のスクロール禁止 + コンテンツだけスクロール */
 @supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
@@ -173,6 +176,7 @@ body{
     padding-block: 0 !important;
     padding-inline: 12px !important;
     line-height: 1 !important;
+    font-size: var(--btn-font-size); /* ヘッダー右側も同一サイズ */
   }
   .header-right.nav-horizontal a.btn > *{
     line-height:1;
@@ -275,6 +279,7 @@ body{
   border-radius: var(--radius-6);
   background: var(--hk-input-bg);
   color: var(--hk-input-fg);
+  font-size: var(--input-font-size);
 }
 .form-actions{
   grid-column: 4;
@@ -308,7 +313,11 @@ body{
   height: 36px;
   text-decoration: none;
   cursor: pointer;
+  font-size: var(--btn-font-size);
+  line-height: 1.2;
 }
+.btn *{ font-size: inherit; }        /* 子要素(svgやspan)もサイズ継承 */
+.btn svg{ flex-shrink: 0; }          /* アイコンでの窮屈さ防止 */
 .btn-primary{
   background: var(--hk-toolbar-fg);
   color: #111;
