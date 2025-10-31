@@ -1,19 +1,50 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/server/prisma';          // 既存の Prisma クライアントに合わせる
-import { getUser } from '@/server/auth';           // 既存の認証取得に合わせる
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/server/prisma';
 
-export async function POST(req: Request) {
-  const me = await getUser();                      // 未ログインなら null を返す想定
-  if (!me) return new NextResponse('unauthorized', { status: 401 });
+// 既定テーマ（必要に応じて既存名に合わせる）
+const DEFAULT_THEME = { name: 'default', dark: false };
 
-  const { id, vars } = await req.json().catch(() => ({}));
-  // id: string | '' | null, vars: Record<string,string> | null | undefined
+async function resolveUser(req: NextRequest): Promise<{ id: string } | null> {
+  const host = req.headers.get('host') ?? 'localhost:3000';
+  const proto = (req.headers.get('x-forwarded-proto') || 'http').replace(/[^a-z]/gi, '');
+  const meUrl = `${proto}://${host}/api/settings/user`;
+  try {
+    const r = await fetch(meUrl, {
+      headers: { cookie: req.headers.get('cookie') ?? '' , accept: 'application/json' },
+      cache: 'no-store',
+      credentials: 'include',
+    });
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null as any);
+    return j?.user?.id ? { id: j.user.id } : null;
+  } catch {
+    return null;
+  }
+}
 
-  await prisma.themeActive.upsert({
-    where: { userId: me.id },
-    update: { themeId: id || null, vars: vars ?? null },
-    create: { userId: me.id, themeId: id || null, vars: vars ?? null },
-  });
+export async function GET(req: NextRequest) {
+  try {
+    const user = await resolveUser(req);
 
-  return NextResponse.json({ ok: true });
+    // 未ログインでも 200 + 既定テーマ
+    if (!user) {
+      return NextResponse.json({ ok: true, theme: DEFAULT_THEME }, { status: 200 });
+    }
+
+    // ログイン時は DB のユーザ設定を参照（なければ既定）
+    const setting = await prisma.userSetting.findUnique({
+      where: { userId: user.id },
+      select: { activeThemeName: true, dark: true },
+    });
+
+    const theme = setting
+      ? { name: setting.activeThemeName ?? DEFAULT_THEME.name, dark: !!setting.dark }
+      : DEFAULT_THEME;
+
+    return NextResponse.json({ ok: true, theme }, { status: 200 });
+  } catch (e) {
+    console.error('GET /api/settings/theme/active failed:', e);
+    // 失敗でも 200 + 既定（UI を止めない）
+    return NextResponse.json({ ok: true, theme: DEFAULT_THEME }, { status: 200 });
+  }
 }
