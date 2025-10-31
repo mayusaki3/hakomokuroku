@@ -1,130 +1,395 @@
-// スクショ準拠のUIを維持しつつ、/settings/user 用の単一ページ。
-// 役割: 表示 → /api/auth/me の結果で初期化。更新 → /api/user/profile, /api/user/icon を叩く。
-// ポイント:
-// - 送信中はボタン無効化し「送信中」表示のまま遷移させない（登録時の違和感を回避）
-// - 更新成功時に 'me:updated' を window.dispatchEvent してヘッダーが再取得できるようにする
-"use client";
+// apps/web/src/app/(authed)/settings/user/page.tsx
+'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  Camera, Image as ImageIcon, RotateCwSquare, Pencil, Check, X,
+  Shield, Monitor, Settings as SettingsIcon, LogOut
+} from 'lucide-react';
+import { mutate as globalMutate } from 'swr';
 
-type Me = { id: string; userId: string; userName: string | null; iconDataUrl: string | null };
+// 現行APIの user 形
+type Me = {
+  id: string;
+  userId: string;
+  userName: string | null;
+  iconDataUrl: string | null;
+  totpEnabled: boolean;
+};
+
+function handleUnauthed() {
+  try { localStorage.removeItem('hk.sync'); } catch {}
+  document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
+  // 設定画面に一本化
+  location.replace('/settings/user?login=1');
+}
 
 export default function SettingsUserPage() {
   const [me, setMe] = useState<Me | null>(null);
-  const [userName, setUserName] = useState('');
-  const [deviceName, setDeviceName] = useState('');
-  const [busy, setBusy] = useState(false);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
-
   const loadMe = useCallback(async () => {
-    const r = await fetch(`/api/auth/me?cb=${Date.now()}`, { cache: 'no-store' });
-    if (!r.ok) { setMe(null); return; }
-    const j = await r.json();
-    const m: Me = j.me;
-    setMe(m);
-    setUserName(m.userName ?? '');
-    setIconPreview(m.iconDataUrl ?? null);
+    const r = await fetch('/api/settings/user', {
+      cache:'no-store',
+      credentials:'include',
+      headers:{ accept:'application/json' }
+    });
+    if (!r.ok) return handleUnauthed();
+    const body = await r.json();
+    if (!body?.user) return handleUnauthed();
+
+    const u: Me = body.user;
+    setMe(u);
+    setUserNameDraft(u.userName ?? '');
+    setIconPreview(u.iconDataUrl ?? null);
+
+    // 端末ラベル（トークン名）
+    try {
+      const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
+      const token: string = cur?.token || '';
+      if (!token) return;
+      const enc = new TextEncoder().encode(token);
+      const h = await crypto.subtle.digest('SHA-256', enc);
+      const hash = Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      const rt = await fetch('/api/auth/tokens', { cache:'no-store', credentials:'include' });
+      if (!rt.ok) return;
+      const jt = await rt.json();
+      const self = (jt.tokens || []).find((t: any) => t.tokenHash === hash);
+      const name = self?.deviceName ?? '';
+      setDeviceName(name);
+      setDeviceNameDraft(name);
+    } catch {}
   }, []);
 
-  useEffect(() => {
-    loadMe();
-    // ヘッダー等からの更新通知で再読込
-    const onUpdated = () => loadMe();
-    window.addEventListener('me:updated', onUpdated);
-    return () => window.removeEventListener('me:updated', onUpdated);
-  }, [loadMe]);
+  // ユーザー名編集
+  const [editingUserName, setEditingUserName] = useState(false);
+  const [userNameDraft, setUserNameDraft] = useState('');
+  const [savingUser, setSavingUser] = useState(false);
 
-  const onChangeIcon = async (file: File) => {
-    const buf = await file.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    const dataUrl = `data:${file.type};base64,${b64}`;
-    setBusy(true);
-    try {
-      const r = await fetch('/api/user/icon', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ iconDataUrl: dataUrl }),
-      });
-      if (r.ok) {
-        setIconPreview(dataUrl);
-        window.dispatchEvent(new Event('me:updated')); // ヘッダー再読込
-      }
-    } finally {
-      setBusy(false);
+  // デバイス名（ローカル連携）
+  const [deviceName, setDeviceName] = useState('');
+  const [deviceNameDraft, setDeviceNameDraft] = useState('');
+  const [editingDeviceName, setEditingDeviceName] = useState(false);
+  const [savingDevice, setSavingDevice] = useState(false);
+
+  // アイコン入力ref
+  const fileRefCamera = useRef<HTMLInputElement>(null);
+  const fileRefPicker  = useRef<HTMLInputElement>(null);
+  
+  // 初期ロード：/api/settings/user から取得（{ok,user}）
+  useEffect(() => { loadMe(); }, [loadMe]);
+
+  // 画像送信：現行は PUT JSON {iconDataUrl}
+  async function uploadIconDataUrl(dataUrl: string) {
+    const r = await fetch('/api/user/icon', {
+      method:'PUT',
+      credentials:'include',
+      headers:{ 'content-type':'application/json', accept:'application/json' },
+      body: JSON.stringify({ iconDataUrl: dataUrl, dataUrl }),
+    });
+    if (r.status === 401) return handleUnauthed();
+    // サーバが何も返さないケースに備え、jsonは必須にしない
+    try { await r.json(); } catch {}
+    if (!r.ok) {
+      // 失敗時は軽い通知だけ出してプレビューは残す（ユーザーに保存失敗を知らせる）
+      console.error('icon upload failed', r.status);
+      alert('アイコンの保存に失敗しました。（サーバーエラー）');
+      return;
     }
-  };
+    // 自画面（ローカル状態）を即時更新
+    setMe(m => m ? ({ ...m, iconDataUrl: dataUrl }) : m);
+    setIconPreview(prev => prev ?? dataUrl);
+    // SWRキャッシュを「再フェッチなし」で上書き（ヘッダー即反映）
+    await globalMutate('/api/auth/me', (prev: any) => {
+      if (!prev?.ok) return { ok: true, user: { ...(me ?? {}), iconDataUrl: dataUrl } };
+      return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
+    }, false);
+    await globalMutate('/api/settings/user', (prev: any) => {
+      if (!prev?.user) return { user: { ...(me ?? {}), iconDataUrl: dataUrl } };
+      return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
+    }, false);
+    // Header.tsx が購読しているイベントで念押し更新
+    window.dispatchEvent(new Event('hk:me:changed'));
+  }
+  // DataURLへ変換してからPUT
+  async function uploadIcon(file: File) {
+    // File → <img> → Canvas → 256x256 PNG DataURL
+    const blobUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = (e) => rej(e as any);
+      img.src = blobUrl;
+    });
 
-  const onSave = async () => {
-    setBusy(true);
-    try {
-      const r = await fetch('/api/user/profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName, deviceName }),
-      });
-      if (r.ok) {
-        window.dispatchEvent(new Event('me:updated')); // ヘッダー再読込
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const scale = Math.min(size / img.width, size / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+    URL.revokeObjectURL(blobUrl);
 
-  if (!me) {
-    return <div className="p-4">ユーザー情報の取得に失敗しました。</div>;
+    const dataUrl = canvas.toDataURL('image/png', 0.92); // PNGに統一
+    setIconPreview(dataUrl);           // 楽観プレビュー
+    await uploadIconDataUrl(dataUrl);  // サーバ保存
   }
 
+  // 回転→256x256で書き出して送信
+  async function rotateIcon90() {
+    // 未設定（プレビューもDBも無い）なら何もしない
+    if (!iconPreview && !me?.iconDataUrl) return;
+    const src = iconPreview || me!.iconDataUrl!;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = async () => {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d')!;
+      ctx.clearRect(0,0,size,size);
+      ctx.translate(size/2, size/2);
+      ctx.rotate(90 * Math.PI / 180);
+      ctx.drawImage(img, -size/2, -size/2, size, size);
+      const dataUrl = canvas.toDataURL('image/png', 0.92);  // 直接 DataURL を得る
+      setIconPreview(dataUrl);                               // 即プレビュー更新
+      await uploadIconDataUrl(dataUrl);                      // サーバ保存
+    };
+    img.onerror = () => {};
+    img.src = src;
+  }
+
+  // ユーザー名保存：現行は /api/user/profile に PUT JSON
+  async function saveUserName() {
+    setSavingUser(true);
+    const r = await fetch('/api/user/profile', {
+      method:'PUT',
+      credentials:'include',
+      headers:{ 'content-type':'application/json', accept:'application/json' },
+      body: JSON.stringify({ userName: userNameDraft }),
+    });
+    setSavingUser(false);
+    if (r.status === 401) return handleUnauthed();
+    if (r.ok) {
+      const j = await r.json().catch(()=>({}));
+      setMe(m => m ? ({ ...m, userName: j.userName ?? userNameDraft }) : m);
+      setEditingUserName(false);
+      window.dispatchEvent(new Event('hk:me:changed'));
+    }
+  }
+
+  // デバイス名保存：旧APIのまま（/api/auth/tokens/label）
+  async function saveDeviceName() {
+    setSavingDevice(true);
+    const r = await fetch('/api/auth/tokens/label', {
+      method:'POST',
+      credentials:'include',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ deviceName: deviceNameDraft }),
+    });
+    setSavingDevice(false);
+    if (r.status === 401) return handleUnauthed();
+    if (r.ok) { setDeviceName(deviceNameDraft); setEditingDeviceName(false); }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' }).catch(()=>{});
+    await fetch('/api/auth/logout', { method:'GET', credentials:'include', cache:'no-store' }).catch(()=>{});
+    try {
+      localStorage.removeItem('hk.sync');
+      localStorage.removeItem('hk.themeActiveVars');
+      localStorage.setItem('hk.themeActiveId','');
+    } catch {}
+    const root = document.documentElement;
+    const keys = [
+      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
+      'hk-header-image','hk-header-fg',
+      'hk-toolbar-bg','hk-toolbar-fg',
+      'hk-input-bg','hk-input-fg','hk-input-border',
+      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+    ];
+    for (const k of keys) root.style.removeProperty(`--${k}`);
+    root.style.setProperty('--hk-wallpaper-image','none');
+    window.dispatchEvent(new Event('hk-theme-updated'));
+    document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
+    location.replace('/login');
+  }
+
+  if (!me) return <main className="container">Loading...</main>;
+
   return (
-    <div className="p-4 space-y-4">
-      <h1 className="text-xl font-bold">ユーザー情報</h1>
+    <div className="app-content content-edge-6">
+      <div className="app-scroll">
+        <section className="hk-frame">
+          <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
 
-      {/* アイコンとID行 */}
-      <div className="flex items-center gap-4">
-        <img
-          src={iconPreview ?? '/icons/user-default.svg'}
-          alt="icon"
-          className="w-16 h-16 rounded-full object-cover border"
-        />
-        <div className="text-sm">ID：<span className="font-mono">{me.userId}</span></div>
+          <hr className="hk-frame__hr" />
 
-        <label className="ml-4">
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) onChangeIcon(f); }}
-            disabled={busy}
-          />
-          <span className="btn">画像選択</span>
-        </label>
-      </div>
+          {/* 上段：左アイコン／右：ID と 操作ボタン */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 12,
+              alignItems: 'center',
+            }}
+          >
+            {/* 左：アイコン（96×96・丸・object-fit） */}
+            <div>
+              <img
+                src={iconPreview || me.iconDataUrl || '/icons/user-default.svg'}
+                alt="user"
+                width={96}
+                height={96}
+                className="rounded-full"
+                style={{ objectFit: 'cover' }}
+                onError={(e)=>{ (e.currentTarget as HTMLImageElement).src = '/icons/user-default.svg'; }}
+              />
+            </div>
 
-      {/* フォーム */}
-      <div className="space-y-3 max-w-xl">
-        <div>
-          <label className="block text-sm mb-1">ユーザー名</label>
-          <input
-            className="w-full input"
-            value={userName}
-            onChange={(e) => setUserName(e.target.value)}
-            disabled={busy}
-          />
-        </div>
-        <div>
-          <label className="block text-sm mb-1">デバイス名</label>
-          <input
-            className="w-full input"
-            placeholder="未設定"
-            value={deviceName}
-            onChange={(e) => setDeviceName(e.target.value)}
-            disabled={busy}
-          />
-        </div>
-        <div className="pt-2">
-          <button className="btn-primary" onClick={onSave} disabled={busy}>
-            {busy ? '送信中' : '保存'}
-          </button>
-        </div>
+            {/* 右：ID行 と 操作ボタン行 */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateRows: 'auto auto',
+                rowGap: 8,
+                alignItems: 'center',
+              }}
+            >
+              {/* ID */}
+              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'nowrap', justifyContent:'flex-start' }}>
+                <span style={{ minWidth:30, whiteSpace:'nowrap' }}>ID :</span>
+                <div style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  <b>{me.userId}</b>
+                </div>
+              </div>
+
+              {/* カメラ／画像／回転 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start' }}>
+                <input
+                  ref={fileRefCamera}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                />
+                <input
+                  ref={fileRefPicker}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                />
+                <button className="btn" aria-label="カメラで撮影" onClick={() => fileRefCamera.current?.click()}><Camera size={16} /></button>
+                <button className="btn" aria-label="画像を選択" onClick={() => fileRefPicker.current?.click()}><ImageIcon size={16} /></button>
+                <button className="btn" aria-label="90度回転" onClick={rotateIcon90}><RotateCwSquare size={16} /></button>
+              </div>
+            </div>
+          </div>
+
+          <hr className="hk-frame__hr" />
+
+          {/* 中段：ユーザー名（編集↔保存/キャンセル） */}
+          <div className="form-row">
+            <span className="form-label">ユーザー名</span>
+            <input
+              value={userNameDraft}
+              onChange={e=>setUserNameDraft(e.target.value)}
+              maxLength={50}
+              readOnly={!editingUserName}
+              aria-readonly={!editingUserName}
+              className={`form-input ${!editingUserName ? 'opacity-70 pointer-events-none' : ''}`}
+              onKeyDown={(e)=>{ if (!editingUserName) return; if (e.key==='Enter') saveUserName(); if (e.key==='Escape'){ setUserNameDraft(me.userName ?? ''); setEditingUserName(false);} }}
+            />
+            {!editingUserName ? (
+              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
+            ) : (
+              <div className="form-actions">
+                <button className="btn btn-primary" aria-label="保存" disabled={savingUser || !editingUserName} onClick={saveUserName}><Check size={16} /></button>
+                <button className="btn" aria-label="キャンセル" onClick={()=>{ setUserNameDraft(me.userName ?? ''); setEditingUserName(false); }}><X size={16} /></button>
+              </div>
+            )}
+          </div>
+
+          {/* 中段：デバイス名（ローカル管理のまま） */}
+          <div className="form-row" style={{ marginTop:8 }}>
+            <span className="form-label">デバイス名</span>
+            <input
+              value={deviceNameDraft}
+              onChange={e=>setDeviceNameDraft(e.target.value)}
+              maxLength={80}
+              readOnly={!editingDeviceName}
+              aria-readonly={!editingDeviceName}
+              className={`form-input ${!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}`}
+              placeholder={deviceName ? '' : '未設定'}
+              onKeyDown={(e)=>{ if (!editingDeviceName) return; if (e.key==='Enter') saveDeviceName(); if (e.key==='Escape'){ setDeviceNameDraft(deviceName); setEditingDeviceName(false);} }}
+            />
+            {!editingDeviceName ? (
+              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
+            ) : (
+              <div className="form-actions">
+                <button className="btn btn-primary" aria-label="保存" disabled={savingDevice || !editingDeviceName} onClick={saveDeviceName}><Check size={16} /></button>
+                <button className="btn" aria-label="キャンセル" onClick={()=>{ setDeviceNameDraft(deviceName); setEditingDeviceName(false); }}><X size={16} /></button>
+              </div>
+            )}
+          </div>
+
+          <hr className="hk-frame__hr" />
+
+          {/* 下段：MFA / デバイス / 設定 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gap: 8,
+              width: '100%',
+              maxWidth: '100%',
+              margin: '0 auto',
+            }}
+          >
+            {[
+              { href: '/settings/mfa', label: 'MFA設定', Icon: Shield },
+              { href: '/settings/device', label: 'デバイス', Icon: Monitor },
+              { href: '/settings', label: '設定', Icon: SettingsIcon },
+            ].map(({ href, label, Icon }) => (
+              <a
+                key={href}
+                href={href}
+                className="btn"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  height: 44,
+                  width: '100%',
+                  minWidth: 0,
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                  textAlign: 'center',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <Icon size={16} />
+                {label}
+              </a>
+            ))}
+          </div>
+
+          <hr className="hk-frame__hr" />
+
+          {/* 最下段：ログアウト（横いっぱい） */}
+          <div>
+            <button className="btn" style={{ width:'100%', justifyContent:'center' }} onClick={logout}>
+              <LogOut size={16} style={{ marginRight:6 }} /> ログアウト
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   );
