@@ -197,12 +197,18 @@ export default function SettingsUserPage() {
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', { method:'POST', credentials:'include' }).catch(()=>{});
-    await fetch('/api/auth/logout', { method:'GET', credentials:'include', cache:'no-store' }).catch(()=>{});
+    // 1) サーバ側セッション終了（POSTのみ）
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (e) {
+      console.error('logout post failed:', e);
+    }
+
+    // 2) クライアント側の状態クリア（ローカルとCSS変数）
     try {
       localStorage.removeItem('hk.sync');
       localStorage.removeItem('hk.themeActiveVars');
-      localStorage.setItem('hk.themeActiveId','');
+      localStorage.setItem('hk.themeActiveId', '');
     } catch {}
     const root = document.documentElement;
     const keys = [
@@ -213,11 +219,17 @@ export default function SettingsUserPage() {
       'hk-btn-bg','hk-btn-fg','hk-btn-border'
     ];
     for (const k of keys) root.style.removeProperty(`--${k}`);
-    root.style.setProperty('--hk-wallpaper-image','none');
+    root.style.setProperty('--hk-wallpaper-image', 'none');
     window.dispatchEvent(new Event('hk-theme-updated'));
-    document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
-    location.replace('/login');
-  }
+
+    // 3) SWRキャッシュを未ログインへ即時反映（ヘッダー反映を速くする）
+    await globalMutate('/api/auth/me', { ok: false, user: null }, false);
+    await globalMutate('/api/settings/user', { user: null }, false);
+    window.dispatchEvent(new Event('hk:logged-out'));
+
+    // 4) 404 の /login を使わず、運用済みの誘導先へ
+    location.replace('/settings/user?login=1');
+  } 
 
   if (!me) return <main className="container">Loading...</main>;
 
