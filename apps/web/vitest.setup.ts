@@ -1,8 +1,11 @@
-// Vitest のグローバル設定
+// apps/web/vitest.setup.ts
 import { afterEach } from 'vitest';
 
-// 各テストケース後にモック呼び出しを自動クリア
+// 重要：グローバル Prisma モックを事前ロード
+// ※ setup.prisma.mock.ts の配置場所を tests/ 配下に統一
+import './tests/setup.prisma.mock';
+
 afterEach(() => {
   vi.clearAllMocks();
-  vi.resetModules(); // import キャッシュをクリアし、毎回新鮮なモック状態に
+  vi.resetModules(); // 各テストでクリーンなモック状態に
 });

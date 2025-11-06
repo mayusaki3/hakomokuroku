@@ -1,24 +1,39 @@
+// apps/web/vitest.config.ts
 import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
   resolve: {
     alias: {
-      // 「@」→ apps/web/src 配下に解決。tests からも同一解決にする
+      // 「@」 → apps/web/src
       '@': path.resolve(__dirname, 'src'),
     },
   },
   test: {
-    environment: 'node',       // API ルートは Node で十分（jsdom 不要）
-    setupFiles: ['./vitest.setup.ts'],
+    environment: 'node',
     globals: true,
     clearMocks: true,
-    // 失敗時の差分が見やすくなる
     bail: false,
-  },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, 'src'),
-    },
+    // 重要：下のセットアップを必ず読み込む
+    setupFiles: ['./vitest.setup.ts'],
+    include: ['tests/**/*.spec.ts'],
+
+    coverage: {
+      provider: 'v8',                  // デフォルト。node v8 インストゥルメント
+      reportsDirectory: './coverage',  // 出力先（相対: apps/web/coverage）
+      reporter: ['text', 'html', 'lcov'],
+      all: true,                       // 未テストのファイルも対象に含める
+      include: [
+        'src/app/api/auth/me/route.ts',
+        'src/app/api/settings/theme/active/route.ts',
+        'src/app/api/user/icon/route.ts',
+      ],                               // 対象
+      exclude: [
+        '**/*.d.ts',
+        '**/__mocks__/**',
+        'node_modules/**',
+        '.next/**',
+      ],
+    },    
   },
 });
