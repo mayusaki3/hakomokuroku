@@ -17,48 +17,64 @@ type Me = {
   totpEnabled: boolean;
 };
 
-function handleUnauthed() {
-  try { localStorage.removeItem('hk.sync'); } catch {}
-  document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
-  // 設定画面に一本化
-  location.replace('/settings/user?login=1');
-}
-
 export default function SettingsUserPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const loadMe = useCallback(async () => {
-    const r = await fetch('/api/settings/user', {
-      cache:'no-store',
-      credentials:'include',
-      headers:{ accept:'application/json' }
-    });
-    if (!r.ok) return handleUnauthed();
-    const body = await r.json();
-    if (!body?.user) return handleUnauthed();
-
-    const u: Me = body.user;
-    setMe(u);
-    setUserNameDraft(u.userName ?? '');
-    setIconPreview(u.iconDataUrl ?? null);
-
-    // 端末ラベル（トークン名）
     try {
-      const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
-      const token: string = cur?.token || '';
-      if (!token) return;
-      const enc = new TextEncoder().encode(token);
-      const h = await crypto.subtle.digest('SHA-256', enc);
-      const hash = Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
-      const rt = await fetch('/api/auth/tokens', { cache:'no-store', credentials:'include' });
-      if (!rt.ok) return;
-      const jt = await rt.json();
-      const self = (jt.tokens || []).find((t: any) => t.tokenHash === hash);
-      const name = self?.deviceName ?? '';
-      setDeviceName(name);
-      setDeviceNameDraft(name);
-    } catch {}
+      const r = await fetch('/api/auth/me?cb=' + Date.now(), {
+        cache:'no-store',
+        credentials:'include',
+        headers:{ accept:'application/json' }
+      });
+      if (!r.ok) return handleUnauthed();
+      const body = await r.json().catch(() => ({} as any));
+
+      // /api/auth/me が {ok:true, user:{...}} か {ok:true, me:{...}} の両対応
+      const u: Me | null = (body && (body.user ?? body.me)) ?? null;
+      if (!u) return handleUnauthed();
+
+      setMe(u);
+      setUserNameDraft(u.userName ?? '');
+      setIconPreview(u.iconDataUrl ?? null);
+      
+      // 端末ラベル（トークン名）
+      try {
+        const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
+        const token: string = cur?.token || '';
+        if (!token) return;
+        const enc = new TextEncoder().encode(token);
+        const h = await crypto.subtle.digest('SHA-256', enc);
+        const hash = Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
+        const rt = await fetch('/api/auth/tokens', { cache:'no-store', credentials:'include' });
+        if (!rt.ok) return;
+        const jt = await rt.json();
+        const self = (jt.tokens || []).find((t: any) => t.tokenHash === hash);
+        const name = self?.deviceName ?? '';
+        setDeviceName(name);
+        setDeviceNameDraft(name);
+      } catch {}
+    } catch {
+      handleUnauthed();
+    }
   }, []);
+
+  function handleUnauthed() {
+    try { localStorage.removeItem('hk.sync'); } catch {}
+    document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
+
+    const u = new URL(location.href);
+    // 既に誘導先に居るなら、リダイレクトせずに未ログイン表示へ切り替え
+    if (u.pathname === '/settings/user' && u.searchParams.get('login') === '1') {
+      setUnauth(true);   // ★ここで確実に表示を下ろす
+      return;
+    }
+    // まだなら誘導（既存運用に合わせて一本化）
+    location.replace('/settings/user?login=1');
+  }
+
+  // ログイン状態
+  const [unauth, setUnauth] = useState(false);
 
   // ユーザー名編集
   const [editingUserName, setEditingUserName] = useState(false);
@@ -231,6 +247,17 @@ export default function SettingsUserPage() {
     location.replace('/settings/user?login=1');
   } 
 
+  // 1) 未ログインUIを最優先で降ろす
+  if (unauth) {
+    return (
+      <main className="container">
+        <h2>ユーザー情報</h2>
+        <p>ログインが必要です。右上のユーザーアイコンからログインしてください。</p>
+      </main>
+    );
+  }
+
+  // 2) ユーザー情報未取得中
   if (!me) return <main className="container">Loading...</main>;
 
   return (

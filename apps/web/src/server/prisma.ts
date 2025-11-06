@@ -1,12 +1,12 @@
-// apps/web/src/server/prisma.ts
+// 実ランタイム用 Prisma クライアント。
+// ※ テストでは必ず vi.mock('@/server/prisma') で差し替えること。
 import { PrismaClient } from '@prisma/client';
 
-const g = globalThis as unknown as { prisma?: PrismaClient };
+declare global {
+  // 開発中の HMR で多重生成を避けるためのキャッシュ
+  // eslint-disable-next-line no-var
+  var __prisma__: PrismaClient | undefined;
+}
 
 export const prisma =
-  g.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query','warn','error'] : ['error'],
-  });
-
-if (process.env.NODE_ENV !== 'production') g.prisma = prisma;
+  globalThis.__prisma__ ?? (globalThis.__prisma__ = new PrismaClient());
