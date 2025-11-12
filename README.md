@@ -11,8 +11,17 @@
 ## 使い方（開発）
 ```bash
 pnpm i
-pnpm dev
+pnpm -C apps/web dev
 # http://localhost:3000
 
 # HTTPSトンネルで公開 → 表示されたURLにアクセス
 cloudflared tunnel --url http://localhost:3000
+
+# Prisma Studio 起動
+pnpm -C apps/web exec prisma studio --schema=prisma/schema.prisma
+# http://localhost:5555
+
+
+
+
+

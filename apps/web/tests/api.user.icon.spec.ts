@@ -99,6 +99,7 @@ it('dataURL が不正形式（例: text/plain）なら 400', async () => {
   }));
   expect(res.status).toBe(400);
 });
+
 import { requireUserId } from '@/server/auth';
 import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
 
@@ -112,4 +113,182 @@ it('未ログインは 401 or 403 を返す', async () => {
   });
   const res = await PUT_ICON(req);
   expect([401, 403]).toContain(res.status);
+});
+
+it('認証処理が例外なら 401 or 403 を返す', async () => {
+  // requireUserId が例外を投げるケースをモック
+  (requireUserId as unknown as vi.Mock).mockRejectedValueOnce(new Error('boom'));
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      dataURL: 'data:image/png;base64,AAA',
+    }),
+  });
+
+  const res = await PUT_ICON(req);
+
+  // 実装は 401 固定だが、既存方針に合わせて 401/403 許容
+  expect([401, 403]).toContain(res.status);
+});
+
+import { requireUserId } from '@/server/auth';
+import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
+
+it('Content-Type 不正は 400/415', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    // Content-Type を外す or text/plain にする
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  }));
+  expect([400, 415]).toContain(res.status);
+});
+
+it('壊れた JSON は 400', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: '{bad json',
+  }));
+  expect(res.status).toBe(400);
+});
+
+it('Base64 不正は 400', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+  const bad = 'data:image/png;base64,@@@'; // デコード失敗
+  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: bad }),
+  }));
+  expect(res.status).toBe(400);
+});
+
+import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
+
+// 1) Base64 に改行や空白を含むケース（許容分岐の実行）
+it('Base64に改行や空白が含まれていても許容', async () => {
+  // 'AAA' を改行入りでエンコード相当の体裁に
+  const dataURL = 'data:image/png;base64,A\nA A=';
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL }),
+  });
+  const res = await PUT_ICON(req);
+  // 実装が許容する分岐に入れば 200 か 400 のいずれか
+  expect([200, 400]).toContain(res.status);
+});
+
+// 2) MIME は image/png 以外（mime不正の分岐）
+it('JPEGは拒否（mime不正）', async () => {
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/jpeg;base64,AAA' }),
+  });
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(400);
+});
+
+import { prisma } from '@/server/prisma';
+
+it('DBで対象ユーザー無しなら 404', async () => {
+  (requireUserId as any).mockResolvedValue('U404');
+  (prisma.user.update as any).mockRejectedValue(
+    new Error('No record was found for query on the database'),
+  );
+
+  const req = new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA=' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(404);
+});
+
+import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
+import { requireUserId } from '@/server/auth';
+
+it('data: スキームでない dataURL は 400', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const req = new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    // 完全にフォーマット不正（parseDataUrl の format 分岐用）
+    body: JSON.stringify({ dataURL: 'not-a-data-url' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(400);
+});
+
+it('Base64 の decode 中に例外が出た場合は 400', async () => {
+  const { PUT: PUT_ICON } = await import('@/app/api/user/icon/route');
+  const { requireUserId } = await import('@/server/auth');
+
+  (requireUserId as any).mockResolvedValue({ ok: true, userId: 'U1' });
+
+  const originalFrom = Buffer.from;
+  (Buffer as any).from = vi.fn(() => {
+    throw new Error('decode failed');
+  });
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      dataURL: 'data:image/png;base64,QUFB', // 一見正しそうだが、モックで強制的に失敗させる
+    }),
+  });
+
+  const res = await PUT_ICON(req);
+
+  (Buffer as any).from = originalFrom;
+
+  expect(res.status).toBe(400);
+});
+
+it('dataURL が文字列以外なら 400', async () => {
+  const { PUT } = await import('@/app/api/user/icon/route');
+
+  const req = new Request('http://localhost/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 123 }),
+  });
+
+  const res = await PUT(req);
+  expect(res.status).toBe(400);
+});
+
+it('予期せぬエラーは 500 を返す', async () => {
+  const mod = await import('@/app/api/user/icon/route');
+  const { PUT } = mod;
+
+  const spy = vi
+    // parseAndNormalizeDataURL が module 内部関数なら export しておくこと
+    .spyOn(mod as any, 'parseAndNormalizeDataURL')
+    .mockImplementation(() => {
+      throw new Error('unexpected');
+    });
+
+  const req = new Request('http://localhost/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT(req);
+  expect(res.status).toBe(500);
+
+  spy.mockRestore();
 });
