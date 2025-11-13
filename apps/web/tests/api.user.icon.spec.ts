@@ -275,8 +275,8 @@ it('予期せぬエラーは 500 を返す', async () => {
   const { PUT } = mod;
 
   const spy = vi
-    // parseAndNormalizeDataURL が module 内部関数なら export しておくこと
-    .spyOn(mod as any, 'parseAndNormalizeDataURL')
+    // 経由点フックに対してスパイする
+    .spyOn((mod as any).__hooks, 'parseAndNormalizeDataURL')
     .mockImplementation(() => {
       throw new Error('unexpected');
     });
@@ -291,4 +291,43 @@ it('予期せぬエラーは 500 を返す', async () => {
   expect(res.status).toBe(500);
 
   spy.mockRestore();
+});
+
+it('dataURL のbase64部が空なら 400', async () => {
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,' }), // 空
+  });
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(400);
+});
+
+it('DBで対象ユーザーが存在せず更新0件なら 404', async () => {
+  (requireUserId as any).mockResolvedValue('U404');
+  vi.spyOn(prisma.user, 'update').mockResolvedValueOnce(null as any);
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(404);
+});
+
+import * as mod from '@/app/api/user/icon/route';
+
+it('内部で予期せぬ例外なら 500', async () => {
+  const spy = vi.spyOn(mod as any, 'parseAndNormalizeDataURL').mockImplementation(() => {
+    throw new Error('unexpected');
+  });
+  (requireUserId as any).mockResolvedValue('U1');
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+  const res = await PUT_ICON(req);
+  spy.mockRestore();
+  expect(res.status).toBe(500);
 });

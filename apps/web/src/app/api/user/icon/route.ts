@@ -1,198 +1,180 @@
 // apps/web/src/app/api/user/icon/route.ts
+/**
+ * 役割:
+ * - /api/user/icon (PUT): ユーザーのアイコン(PNG base64)を保存し、{ ok:true, me } を返す
+ *
+ * テスト期待（apps/web/tests/api.user.icon.spec.ts 準拠）:
+ * - 成功: 200 { ok:true, me }
+ * - 未ログイン: 401 または 403
+ * - Content-Type 不正/壊れJSON: 400（または 415）
+ * - dataURL: "data:image/png;base64," のみ許可
+ *   - JPEG など MIME 不正: 400（または 415）
+ *   - base64 空・不正・decode 例外: 400
+ *   - base64 の空白/改行は許容（除去）
+ * - DB 更新失敗（例外）: 500（または 503）
+ * - 対象ユーザー無/更新0件: 404
+ */
 import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 import { requireUserId } from '@/server/auth';
 
-/**
- * ランタイムで識別可能な HTTP エラー型。
- * httpError(...) でのみ生成されることを保証し、
- * __isHttpError フラグで「自前のHTTPエラー」か判定する。
- */
-type HttpError = Error & {
-  status: number;
-  __isHttpError: true;
-};
+const JSON_TYPE = /application\/json/i;
+const DATAURL_PREFIX = 'data:image/png;base64,';
 
-/**
- * 指定ステータス付きの自前 HTTP エラーを生成して投げる。
- */
-function httpError(status: number, message: string): never {
-  const err = new Error(message) as HttpError;
-  err.status = status;
-  err.__isHttpError = true;
-  throw err;
-}
-
-/**
- * Prisma の「対象レコードなし」エラー判定。
- * tests/api.user.icon.spec.ts の 404 ケースに対応。
- */
-function isUserNotFoundError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as any;
-
-  if (
-    typeof e.message === 'string' &&
-    e.message.includes('No record was found for query on the database')
-  ) {
-    return true;
+export async function PUT(req: Request) {
+  // Content-Type
+  const ct = req.headers.get('content-type') || '';
+  if (!JSON_TYPE.test(ct)) {
+    // 仕様上 400/415 どちらでも可 → 400 に寄せる
+    return new NextResponse(JSON.stringify({ ok: false, error: 'invalid_content_type' }), { status: 400 });
   }
 
-  if (e.code === 'P2025') return true;
-  if (e.name === 'NotFoundError') return true;
-
-  return false;
-}
-
-/**
- * dataURL を検証し、「入力された dataURL 文字列そのもの」を返す。
- *
- * テスト要件:
- * - 正常ケースでは "data:image/png;base64,AAA" をそのまま DB に保存する。
- * - data: スキーム不正 / MIME 不正 / Base64 不正 などは 400。
- * - Base64 内の空白・改行は許容（検証時のみ除去して decode）。
- * - 想定外の例外はここでは握りつぶさずそのまま throw（外側で 500 にする）。
- */
-export function parseAndNormalizeDataURL(dataURL: unknown): string {
-  if (typeof dataURL !== 'string') {
-    httpError(400, 'dataURL must be string');
-  }
-
-  if (!dataURL.startsWith('data:')) {
-    httpError(400, 'invalid dataURL scheme');
-  }
-
-  const match = /^data:([^;,]+);base64,(.*)$/i.exec(dataURL);
-  if (!match) {
-    httpError(400, 'invalid dataURL format');
-  }
-
-  const mime = match[1].toLowerCase();
-  const base64Raw = match[2];
-
-  if (mime !== 'image/png') {
-    httpError(400, 'unsupported mime type');
-  }
-
-  const base64Cleaned = base64Raw.replace(/\s+/g, '');
-  if (!base64Cleaned) {
-    httpError(400, 'empty data payload');
-  }
-
-  let buf: Buffer;
-  try {
-    buf = Buffer.from(base64Cleaned, 'base64');
-  } catch {
-    httpError(400, 'failed to decode base64');
-  }
-
-  if (!buf.length) {
-    httpError(400, 'failed to decode base64 (empty result)');
-  }
-
-  // 正常時は入力そのまま返す（テストはこの値を toHaveBeenCalledWith で検証）
-  return dataURL;
-}
-
-/**
- * requireUserId の戻り値から userId を抽出。
- */
-function extractUserId(value: unknown): string | null {
-  if (!value) return null;
-
-  if (typeof value === 'string') {
-    return value || null;
-  }
-
-  if (typeof value === 'object') {
-    const v = value as any;
-    if (v.ok && typeof v.userId === 'string') {
-      return v.userId || null;
-    }
-  }
-
-  return null;
-}
-
-/**
- * PUT /api/user/icon
- *
- * テスト仕様準拠:
- * - 未ログイン / 認証例外: 401 or 403 (実装は 401 固定)
- * - Content-Type 不正: 400/415 許容 (実装は 415)
- * - JSON 不正: 400
- * - dataURL 不正一式: 400
- * - Base64 改行・空白含む: 許容
- * - JPEG 等: 400
- * - DB 対象ユーザー無し: 404
- * - 予期せぬエラー: 500
- */
-export async function PUT(req: Request): Promise<Response> {
-  // 1. 認証
+  // 認証
   let userId: string | null = null;
   try {
-    const auth = await requireUserId();
-    userId = extractUserId(auth);
-  } catch (e: any) {
-    const err = e as Partial<HttpError>;
-    const status =
-      err.__isHttpError && typeof err.status === 'number'
-        ? err.status
-        : 401;
-    return NextResponse.json({ ok: false }, { status });
+    userId = await requireUserId();
+    if (!userId) {
+      return new NextResponse(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401 });
+    }
+  } catch {
+    // テストでは 401/403 どちらでも可 → 401 に寄せる
+    return new NextResponse(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401 });
   }
 
-  if (!userId) {
-    return NextResponse.json({ ok: false }, { status: 401 });
-  }
-
-  // 2. 本体処理
+  // JSON parse
+  let body: any;
   try {
-    const contentType = req.headers.get('content-type') || '';
-    if (!contentType.toLowerCase().includes('application/json')) {
-      httpError(415, 'unsupported content-type');
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch {
-      httpError(400, 'invalid json');
-    }
-
-    // ここはテストで spy 対象: export していることが重要
-    const iconDataUrl = parseAndNormalizeDataURL(body?.dataURL);
-
-    // 3. DB 更新
-    let me;
-    try {
-      me = await prisma.user.update({
-        where: { id: userId },
-        data: { iconDataUrl },
-        select: {
-          id: true,
-          displayName: true,
-          iconDataUrl: true,
-        },
-      });
-    } catch (e: any) {
-      if (isUserNotFoundError(e)) {
-        httpError(404, 'user not found');
-      }
-      // 404 以外の DB 例外は予期せぬエラーとして外側へ
-      throw e;
-    }
-
-    return NextResponse.json({ ok: true, me }, { status: 200 });
-  } catch (e: any) {
-    const err = e as Partial<HttpError>;
-
-    // 自前 httpError のみ指定ステータスを採用
-    if (err.__isHttpError && typeof err.status === 'number') {
-      return NextResponse.json({ ok: false }, { status: err.status });
-    }
-
-    // それ以外は全て「予期せぬエラー」として 500
-    return NextResponse.json({ ok: false }, { status: 500 });
+    body = await req.json();
+  } catch {
+    return new NextResponse(JSON.stringify({ ok: false, error: 'bad_json' }), { status: 400 });
   }
+
+  const dataURL = body?.dataURL;
+  if (typeof dataURL !== 'string') {
+    return new NextResponse(JSON.stringify({ ok: false, error: 'dataURL_required' }), { status: 400 });
+  }
+
+  // MIME と prefix 厳格チェック
+  if (!dataURL.startsWith('data:')) {
+    return new NextResponse(JSON.stringify({ ok: false, error: 'invalid_scheme' }), { status: 400 });
+  }
+  if (!dataURL.startsWith(DATAURL_PREFIX)) {
+    // JPEG 等はここで弾く（テストは 400/415 どちらでもOK）
+    return new NextResponse(JSON.stringify({ ok: false, error: 'invalid_mime' }), { status: 400 });
+  }
+
+  // base64 部抽出
+  const base64 = dataURL.slice(DATAURL_PREFIX.length).replace(/\s+/g, ''); // 改行・空白を許容
+  if (!base64) {
+    return new NextResponse(JSON.stringify({ ok: false, error: 'empty_base64' }), { status: 400 });
+  }
+
+  // decode（例外は 400）
+  let pngBuffer: Buffer;
+  try {
+    pngBuffer = Buffer.from(base64, 'base64');
+    // 明らかに不正（長さ0や非base64結果）チェック
+    if (!pngBuffer.length) throw new Error('decode_failed');
+  } catch {
+    return new NextResponse(JSON.stringify({ ok: false, error: 'invalid_base64' }), { status: 400 });
+  }
+
+  // DB 更新
+  try {
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { iconPng: pngBuffer },
+      select: { id: true, name: true, iconPng: true },
+    });
+    if (!updated) {
+      return new NextResponse(JSON.stringify({ ok: false, error: 'not_found' }), { status: 404 });
+    }
+    // 正常
+    return NextResponse.json({ ok: true, me: updated }, { status: 200 });
+  } catch (e: any) {
+    // P2025 (Record not found) 等は 404
+    const code = e?.code ?? e?.meta?.cause;
+    if (code === 'P2025') {
+      return new NextResponse(JSON.stringify({ ok: false, error: 'not_found' }), { status: 404 });
+    }
+    // その他は 500 系
+    return new NextResponse(JSON.stringify({ ok: false, error: 'db_error' }), { status: 500 });
+  }
+}
+
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import { prisma } from '@/src/lib/prisma';
+import { requireUserId } from '@/src/lib/auth/session';
+
+/** 業務エラー: 400 を返すための軽量例外 */
+class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BadRequestError';
+  }
+}
+
+/**
+ * dataURL を検証・正規化してデコード済みバイナリを返す
+ * @param dataURL data:image/png;base64,.... 形式の文字列
+ * @returns Uint8Array（PNGのバイト列）
+ * @throws BadRequestError 入力不正（400系）
+ * @throws Error 想定外の障害（500系）
+ */
+export function parseAndNormalizeDataURL(dataURL: string): Uint8Array {
+  if (typeof dataURL !== 'string') {
+    throw new BadRequestError('dataURL must be string');
+  }
+  if (!dataURL.startsWith('data:')) {
+    throw new BadRequestError('scheme must be data:');
+  }
+
+  // data:[mime];base64,XXXX
+  const comma = dataURL.indexOf(',');
+  if (comma < 0) {
+    throw new BadRequestError('dataURL missing comma');
+  }
+  const header = dataURL.substring(5, comma); // "image/png;base64" 等
+  const payloadRaw = dataURL.substring(comma + 1);
+
+  // MIME確認（image/png のみ許可）
+  const mime = header.split(';')[0]?.trim().toLowerCase();
+  if (mime !== 'image/png') {
+    // テスト要件: text/plain / image/jpeg などは 400 とする
+    throw new BadRequestError('unsupported mime');
+  }
+
+  // base64指定確認
+  const isBase64 = header.toLowerCase().includes('base64');
+  if (!isBase64) {
+    throw new BadRequestError('must be base64');
+  }
+
+  // 改行や空白を除去して許容
+  const payload = payloadRaw.replace(/\s+/g, '');
+  if (!payload.length) {
+    throw new BadRequestError('empty base64 payload');
+  }
+
+  try {
+    // atob は Node では Buffer で代替
+    const buf = Buffer.from(payload, 'base64');
+    // base64 不正は長さ0や不正変換で判定（完全判定は再エンコード一致で担保）
+    if (buf.length === 0 || Buffer.from(buf).toString('base64') !== payload) {
+      throw new BadRequestError('invalid base64');
+    }
+    return new Uint8Array(buf);
+  } catch (e: any) {
+    if (e instanceof BadRequestError) throw e;
+    // 予期せぬエラーは 500
+    throw new Error('decode error');
+  }
+}
+
+/**
+ * 共通: JSONエラー応答
+ */
+function json(status: number, body: any) {
+  return NextResponse.json(body, { status });
 }
