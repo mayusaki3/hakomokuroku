@@ -1,11 +1,22 @@
 // apps/web/vitest.setup.ts
-import { afterEach, vi } from 'vitest';
+import { vi, afterEach } from 'vitest';
 
-// 重要：グローバル Prisma モックを事前ロード
-// ※ setup.prisma.mock.ts の配置場所を tests/ 配下に統一
-import './tests/setup.prisma.mock';
+// 動的 import で“同一インスタンス”を取得
+const mod = await import('./__mocks__/@/lib/prisma');
+const prisma = mod.prisma;
+const reset = mod.__resetPrismaMocks;
+
+// 実装が import される前に alias をモックへ差し替え
+vi.mock('@/lib/prisma', () => ({
+  default: prisma,
+  prisma,                 // named import にも対応
+}));
+
+// グローバルに露出（万一の参照ずれ検出・デバッグ用）
+(globalThis as any).__PRISMA_MOCK__ = prisma;
 
 afterEach(() => {
+  reset();
   vi.clearAllMocks();
-  vi.resetModules(); // 各テストでクリーンなモック状態に
+  vi.restoreAllMocks();
 });

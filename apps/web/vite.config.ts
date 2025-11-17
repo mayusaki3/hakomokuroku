@@ -1,15 +1,23 @@
-// apps/web/vite.config.ts
-import { defineConfig } from 'vite';
-import tsconfigPaths from 'vite-tsconfig-paths';
+// apps/web/src/__mocks__/prisma.ts
+import { vi } from 'vitest'
 
-export default defineConfig({
-  plugins: [
-    tsconfigPaths(),
-    // 既存のプラグイン（例：react() など）があればここに並べる
-  ],
-  test: {
-    // v8 カバレッジで Windows/Node 環境の ERR_INSPECTOR 対策（任意）
-    threads: false, // = --threads=false と同じ
-    coverage: { provider: 'v8' },
+export const prisma = {
+  user: {
+    // vi.fn() にすることで mockResolvedValue / mockRejectedValue が使える
+    update: vi.fn(),
   },
-});
+  themeActive: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  },
+} as const
+
+export function __resetPrismaMocks() {
+  for (const model of Object.values(prisma) as any[]) {
+    for (const fn of Object.values(model)) {
+      if (fn && typeof fn.mockReset === 'function') fn.mockReset()
+    }
+  }
+}
+
+export default prisma
