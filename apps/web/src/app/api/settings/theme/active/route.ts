@@ -1,35 +1,33 @@
-// apps/web/src/app/api/settings/theme/active/route.ts
-import prisma from '@/server/prisma'
-import { getUser } from '@/app/api/auth/auth'
+import { prisma } from '@/server/prisma';
+import { getUser } from '@/server/auth';
 
-function defaultThemePayload() {
-  // 既定テーマの戻り値。テストは主に status を見ているため最小形でOK
-  return { ok: true, theme: { id: 'default' } }
+function json(body: any, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
 }
+
+const DEFAULT_THEME_ID = 'default';
 
 export async function GET() {
   try {
-    const { user } = await getUser()
+    const { user } = await getUser();
 
-    // 未ログイン → 既定テーマ
+    // 未ログインは既定テーマ（「実装に合わせる」）
     if (!user) {
-      return new Response(JSON.stringify(defaultThemePayload()), { status: 200 })
+      return json({ ok: true, active: { themeId: DEFAULT_THEME_ID } }, 200);
     }
 
-    // ログイン済みは DB を参照
-    const active = await prisma.themeActive.findUnique({
+    // ログイン済みは DB 参照。なければ既定
+    const row = await prisma.themeActive.findUnique({
       where: { userId: user.id },
-    })
-
-    if (!active?.themeId) {
-      // DB なし → 既定テーマ
-      return new Response(JSON.stringify(defaultThemePayload()), { status: 200 })
-    }
-
-    // 実装簡略化：theme の中身は最低限
-    return new Response(JSON.stringify({ ok: true, theme: { id: active.themeId } }), { status: 200 })
+      select: { themeId: true },
+    });
+    const themeId = row?.themeId ?? DEFAULT_THEME_ID;
+    return json({ ok: true, active: { themeId } }, 200);
   } catch {
-    // DB 例外などは 500/503 相当（ここでは 500）
-    return new Response(JSON.stringify({ ok: false, error: 'internal' }), { status: 500 })
+    // DB 例外は 500/503 想定。ここでは 500 固定（テスト側は [500,503] 許容）
+    return json({ ok: false, error: 'db error' }, 500);
   }
 }

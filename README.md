@@ -21,7 +21,9 @@ cloudflared tunnel --url http://localhost:3000
 pnpm -C apps/web exec prisma studio --schema=prisma/schema.prisma
 # http://localhost:5555
 
+# 単体テスト
 
-
+## 
+pnpm -C apps/web exec vitest --run --coverage --config vitest.config.mts
 
 
