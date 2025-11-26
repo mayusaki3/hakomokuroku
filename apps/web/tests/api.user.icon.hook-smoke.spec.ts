@@ -1,18 +1,22 @@
 // apps/web/tests/api.user.icon.hook-smoke.spec.ts
 import { it, expect, vi } from 'vitest';
-import * as mod from '@/app/api/user/icon/route';
-import { PUT } from '@/app/api/user/icon/route';
+import { PUT, __hooks } from '@/app/api/user/icon/route';
 import { requireUserId } from '@/server/auth';
 
 vi.mock('@/server/auth', () => ({ requireUserId: vi.fn() }));
-vi.mock('@/server/prisma', () => ({
-  prisma: { user: { update: vi.fn().mockResolvedValue({ id: 'U1' }) } },
-}));
 
 it('parseAndNormalizeDataURL を実際に呼び出している（spy が刺さる）', async () => {
+  // 認証は必ず成功
   (requireUserId as any).mockResolvedValue('U1');
 
-  const spy = vi.spyOn(mod as any, 'parseAndNormalizeDataURL');
+  // ① parse は __hooks から spy
+  const parseSpy = vi.spyOn(__hooks, 'parseAndNormalizeDataURL');
+
+  // ② DB 更新も __hooks.updateUserIcon をモックして 200 相当の挙動にする
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockResolvedValue({ id: 'U1' } as any);
+
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -20,7 +24,12 @@ it('parseAndNormalizeDataURL を実際に呼び出している（spy が刺さ�
   });
 
   const res = await PUT(req);
-  expect(spy).toHaveBeenCalledTimes(1);
-  expect([200, 400]).toContain(res.status); // どちらでも spy が刺さっていれば OK
-  spy.mockRestore();
+
+  // parse が 1 回呼ばれていること
+  expect(parseSpy).toHaveBeenCalledTimes(1);
+  // DB をモックしているので 200 を期待してよい
+  expect(res.status).toBe(200);
+
+  parseSpy.mockRestore();
+  updateSpy.mockRestore();
 });

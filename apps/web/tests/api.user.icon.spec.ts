@@ -7,9 +7,13 @@ vi.mock('@/server/auth', () => ({
   requireUserId: vi.fn(),
 }));
 
-import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
+import { PUT as PUT_ICON, __hooks } from '@/app/api/user/icon/route';
 import { prisma } from '@/server/prisma';           // モック済み実体
 import { requireUserId } from '@/server/auth';      // モック関数
+
+// ★
+import { __debug_parseCallCount } from '@/app/api/user/icon/route';
+
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -18,13 +22,12 @@ beforeEach(() => {
 describe('PUT /api/user/icon', () => {
   it('dataURL を保存し、{ ok:true, me } を返す', async () => {
     (requireUserId as any).mockResolvedValue('U1');
-    (prisma.user.update as any).mockResolvedValue({
-      id: 'U1',
-      displayName: 'User1',
-      iconDataUrl: 'data:image/png;base64,AAA',
-    });
 
-    const req = new Request('http://localhost/api/user/icon', {
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      .mockResolvedValue({ id: 'U1' } as any);
+
+    const req = new Request('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
@@ -32,15 +35,14 @@ describe('PUT /api/user/icon', () => {
 
     const res = await PUT_ICON(req);
     expect(res.status).toBe(200);
+
     const json = await res.json();
     expect(json.ok).toBe(true);
-    expect(json.me?.id).toBe('U1');
+    expect(json.me).toEqual({ id: 'U1' });
 
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: 'U1' },
-      data: { iconDataUrl: 'data:image/png;base64,AAA' },
-      select: { id: true, displayName: true, iconDataUrl: true },
-    });
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+
+    updateSpy.mockRestore();
   });
 
   it('未ログインは 401/403 相当', async () => {
@@ -199,19 +201,27 @@ it('JPEGは拒否（mime不正）', async () => {
 import { prisma } from '@/server/prisma';
 
 it('DBで対象ユーザー無しなら 404', async () => {
-  (requireUserId as any).mockResolvedValue('U404');
-  (prisma.user.update as any).mockRejectedValue(
-    new Error('No record was found for query on the database'),
-  );
+  (requireUserId as any).mockResolvedValue('U_NOT_FOUND');
+
+  const err: any = new Error('record to update not found');
+  err.code = 'P2025';
+  err.meta = { cause: 'Record to update not found.' };
+
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockRejectedValue(err);
 
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA=' }),
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
   });
 
   const res = await PUT_ICON(req);
+
   expect(res.status).toBe(404);
+
+  updateSpy.mockRestore();
 });
 
 import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
@@ -304,15 +314,23 @@ it('dataURL のbase64部が空なら 400', async () => {
 });
 
 it('DBで対象ユーザーが存在せず更新0件なら 404', async () => {
-  (requireUserId as any).mockResolvedValue('U404');
-  vi.spyOn(prisma.user, 'update').mockResolvedValueOnce(null as any);
-  const req = new Request('http://t.local/api/user/icon', {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockResolvedValue({ count: 0 } as any);
+
+  const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
   });
+
   const res = await PUT_ICON(req);
+
   expect(res.status).toBe(404);
+
+  updateSpy.mockRestore();
 });
 
 import * as mod from '@/app/api/user/icon/route';

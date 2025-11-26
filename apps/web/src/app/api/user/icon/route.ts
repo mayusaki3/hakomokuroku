@@ -9,10 +9,24 @@
 //  - 既知以外の内部エラー        → 500
 //
 // テストが spy する対象：
-//  - parseAndNormalizeDataURL（トップレベル関数を必ず呼ぶ）
-//  - __hooks.parseAndNormalizeDataURL（同じ関数参照を公開する）
+//  - parseAndNormalizeDataURL（トップレベル関数）
+//  - __hooks.parseAndNormalizeDataURL（同じ関数参照を公開）
 //  - __hooks.requireUserId（@/server/auth を間接化：テストでモック）
 //  - prisma.user.update / updateMany（テストでモック）
+
+
+// ★デバッグ用（テスト中にだけ使う想定）
+// ★必要がなくなったら削除すること
+export let __debug_parseCallCount = 0;
+
+// ★ デバッグ用（テスト一時用）。後で削除する。
+export const __debug_counts = {
+  beforeParse: 0,
+  afterParse: 0,
+  beforeAuth: 0,
+  beforeJson: 0,
+  beforeDb: 0,
+};
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -21,17 +35,21 @@ import { requireUserId } from '@/server/auth';
 
 type ParseOk = { mime: string; b64: string; normalized: string };
 type ParseErr =
-  | 'BAD_INPUT'    // 文字列でない
-  | 'BAD_SCHEME'   // data: で始まらない
-  | 'BAD_FORMAT'   // ";base64," 区切りでない等
-  | 'BAD_MIME'     // image/png 以外
+  | 'BAD_INPUT' // 文字列でない
+  | 'BAD_SCHEME' // data: で始まらない
+  | 'BAD_FORMAT' // ";base64," 区切りでない等
+  | 'BAD_MIME' // image/png 以外
   | 'EMPTY_BASE64' // base64 部が空
-  | 'BAD_BASE64';  // base64 decode 失敗
+  | 'BAD_BASE64'; // base64 decode 失敗
 
 /** dataURL の解析・正規化（schema/mime/base64 ヘッダの検証と空白除去＋decode 検証） */
 export function parseAndNormalizeDataURL(
   input: unknown
 ): { ok: true; value: ParseOk } | { ok: false; error: ParseErr } {
+
+  // ★
+  __debug_parseCallCount++;  // デバッグ用
+
   if (typeof input !== 'string') return { ok: false, error: 'BAD_INPUT' };
   const trimmed = input.trim();
   if (!trimmed.startsWith('data:')) return { ok: false, error: 'BAD_SCHEME' };
@@ -56,28 +74,30 @@ export function parseAndNormalizeDataURL(
     return { ok: false, error: 'BAD_BASE64' };
   }
 
-  return { ok: true, value: { mime, b64, normalized: `data:${mime};base64,${b64}` } };
+  return {
+    ok: true,
+    value: { mime, b64, normalized: `data:${mime};base64,${b64}` },
+  };
 }
 
-/** DB: アイコン更新（テスト期待の select を満たす） */
+/** DB: アイコン更新（テスト期待の select / data 形を満たす） */
 export async function updateUserIcon(
   userId: string,
-  png: Buffer,
   dataURL: string
 ): Promise<{ id: string } | { count: number }> {
   return prisma.user.update({
     where: { id: userId },
-    data: { iconPng: png, iconDataUrl: dataURL },
-    // テストで verify されるため維持
+    data: { iconDataUrl: dataURL },
+    // テストで toHaveBeenCalledWith される想定
     select: { id: true, displayName: true, iconDataUrl: true },
   }) as any;
 }
 
-/** spy 用の経由点（getter で“現時点のエクスポート”を参照させる） */
+/** spy 用の経由点 */
 export const __hooks = {
-  get requireUserId() { return requireUserId; },
-  get parseAndNormalizeDataURL() { return parseAndNormalizeDataURL; },
-  get updateUserIcon() { return updateUserIcon; },
+  requireUserId,
+  parseAndNormalizeDataURL,
+  updateUserIcon,
 } as const;
 
 function bad(status: number, error: string) {
@@ -86,12 +106,18 @@ function bad(status: number, error: string) {
 
 function mapDataUrlError(e: ParseErr) {
   switch (e) {
-    case 'BAD_INPUT':    return bad(400, 'dataURL must be string');
-    case 'BAD_SCHEME':   return bad(400, 'invalid scheme');
-    case 'BAD_FORMAT':   return bad(400, 'invalid dataURL');
-    case 'BAD_MIME':     return bad(400, 'invalid mime');
-    case 'EMPTY_BASE64': return bad(400, 'empty base64');
-    case 'BAD_BASE64':   return bad(400, 'invalid base64');
+    case 'BAD_INPUT':
+      return bad(400, 'dataURL must be string');
+    case 'BAD_SCHEME':
+      return bad(400, 'invalid scheme');
+    case 'BAD_FORMAT':
+      return bad(400, 'invalid dataURL');
+    case 'BAD_MIME':
+      return bad(400, 'invalid mime');
+    case 'EMPTY_BASE64':
+      return bad(400, 'empty base64');
+    case 'BAD_BASE64':
+      return bad(400, 'invalid base64');
   }
 }
 
@@ -100,6 +126,7 @@ export async function PUT(req: NextRequest) {
     // 1) 認証（テストでは __hooks.requireUserId を spy / mock）
     let userId: string | null = null;
     try {
+      __debug_counts.beforeAuth++;  // ★
       const r = await __hooks.requireUserId(req);
       // 実運用は string 想定、テストの柔軟性確保でフォールバック
       userId = typeof r === 'string' ? r : (r as any)?.userId ?? null;
@@ -117,39 +144,49 @@ export async function PUT(req: NextRequest) {
     // 3) JSON parse
     let body: any;
     try {
+      __debug_counts.beforeJson++;  // ★
       body = await req.json();
     } catch {
       return bad(400, 'bad json');
     }
 
-    // 4) dataURL 検証（必ず __hooks 経由で 1 回だけ呼ぶ：spy 前提）
+    // 4) dataURL 検証（必ず __hooks 経由で 1 回だけ呼ぶ：hook-smoke の spy 前提）
+    __debug_counts.beforeParse++; // ★
     const parsed = __hooks.parseAndNormalizeDataURL(body?.dataURL);
+    __debug_counts.afterParse++; // ★
     if (!parsed.ok) return mapDataUrlError(parsed.error);
-
     const normalized = parsed.value.normalized;
-    const buf = Buffer.from(parsed.value.b64, 'base64');
 
-    // 5) DB 更新（findUnique は行わず、update の結果/例外で 200/404/500 を分岐）
+    // 5) DB 更新（findUnique は行わず、update / updateMany の結果・例外で 200/404/500 を分岐）
     try {
-      const r = await __hooks.updateUserIcon(userId, buf, normalized);
+      __debug_counts.beforeDb++;  // ★
+      const r = await __hooks.updateUserIcon(userId, normalized);
 
       // updateMany をモックされた場合の互換: count===0 は 404
       if (r && typeof (r as any).count === 'number') {
         if ((r as any).count === 0) return bad(404, 'not updated');
-        return NextResponse.json({ ok: true, me: { id: userId } }, { status: 200 });
+        return NextResponse.json(
+          { ok: true, me: { id: userId } },
+          { status: 200 }
+        );
       }
 
       // update 正常完了（select に id を含めているため、それを優先）
-      return NextResponse.json({ ok: true, me: { id: (r as any).id ?? userId } }, { status: 200 });
+      return NextResponse.json(
+        { ok: true, me: { id: (r as any).id ?? userId } },
+        { status: 200 }
+      );
     } catch (e: any) {
       // Prisma の not-found 系は 404、それ以外は 500
       const msg = String(e?.message ?? '');
+      const cause = typeof e?.meta?.cause === 'string' ? e.meta.cause : '';
+      const combined = `${msg} ${cause}`;
+
       if (
         e?.code === 'P2025' ||
         e?.name === 'NotFoundError' ||
-        /\bnot\s*found\b/i.test(msg) ||
-        /record\s*to\s*update\s*not\s*found/i.test(msg) ||
-        (typeof e?.meta?.cause === 'string' && /\bnot\s*found\b/i.test(e.meta.cause))
+        /\bnot\s*found\b/i.test(combined) ||
+        /record\s*to\s*update\s*not\s*found/i.test(combined)
       ) {
         return bad(404, 'not found');
       }
