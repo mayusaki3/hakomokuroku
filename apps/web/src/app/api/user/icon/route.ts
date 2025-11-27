@@ -165,10 +165,6 @@ export async function PUT(req: NextRequest) {
       // updateMany をモックされた場合の互換: count===0 は 404
       if (r && typeof (r as any).count === 'number') {
         if ((r as any).count === 0) return bad(404, 'not updated');
-        return NextResponse.json(
-          { ok: true, me: { id: userId } },
-          { status: 200 }
-        );
       }
 
       // update 正常完了（select に id を含めているため、それを優先）
