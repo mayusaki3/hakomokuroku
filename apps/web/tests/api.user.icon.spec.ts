@@ -349,3 +349,63 @@ it('内部で予期せぬ例外なら 500', async () => {
   spy.mockRestore();
   expect(res.status).toBe(500);
 });
+
+// DB エラー: name=NotFoundError は 404 になること
+it('DBエラー name=NotFoundError は 404', async () => {
+  (requireUserId as any).mockResolvedValue('U404');
+
+  const err: any = new Error('failed');
+  err.name = 'NotFoundError';
+
+  (prisma.user.update as any).mockRejectedValueOnce(err);
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(404);
+});
+
+// DB エラー: meta.cause に "record to update not found" を含む場合は 404 になること
+it('DBエラー meta.cause=record to update not found は 404', async () => {
+  (requireUserId as any).mockResolvedValue('U404');
+
+  const err: any = new Error('update failed');
+  err.meta = { cause: 'Record to update not found.' };
+
+  (prisma.user.update as any).mockRejectedValueOnce(err);
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA=' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(404);
+});
+
+// DB エラー: not-found 系でない通常エラーは 500 になること
+// （既存テストがあればそちらをこの形に寄せる）
+it('DBエラー (not-found系でない) は 500', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const err: any = new Error('db error'); // "not found" を含まない
+  err.code = 'P9999';
+  err.name = 'SomeOtherError';
+  err.meta = { cause: 'other error' };
+
+  (prisma.user.update as any).mockRejectedValueOnce(err);
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(500);
+});

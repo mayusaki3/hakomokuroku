@@ -31,7 +31,9 @@ Next.js API Routes（/api/**）の入出力・分岐・認証・DB 更新の正�
 - テスト後は truncate または reseed。  
 - 実際のスキーマ変更の回帰を検出できる。
 
-## 4. /api/user/icon について
+## 4. /api テスト
+
+### 4.1 /api/user/icon について
 
 - `api.user.icon.spec.ts`：完全にモックベースの API UT  
   - dataURL フォーマット  
@@ -53,6 +55,23 @@ Next.js API Routes（/api/**）の入出力・分岐・認証・DB 更新の正�
 - ステータスコードは **必ず明示的にチェック**  
 - 重要な場合のみ mock の呼び出し内容を確認  
 - 予期せぬ例外のテストも最低1ケース含める
+
+## 6. カバレッジ方針
+
+## 6.1 /app/api/user/icon/route.ts のカバレッジ方針
+
+- `/app/api/user/icon/route.ts` は、アイコン更新 API の実装として、本番コードでも **行カバレッジ 100% を維持すること**を目標とする。  
+- このエンドポイントは、次の 2 ファイルでテストされる。  
+  - `tests/api.user.icon.spec.ts` … 正常系・エラー系・境界値を含む API テスト  
+  - `tests/api.user.icon.hook-smoke.spec.ts` … `parseAndNormalizeDataURL` を実際に呼び出していること、および hook 経由の呼び出し経路を確認するスモークテスト
+- `__hooks` を経由して `requireUserId` / `parseAndNormalizeDataURL` / `updateUserIcon` を呼び出す構成とし、テスト側では `vi.spyOn` と `vi.mock` を組み合わせて、  
+  - 認証の成否  
+  - dataURL の妥当性判定  
+  - DB 更新結果（正常・対象なし・例外）  
+  を個別に制御できるようにしている。
+- Istanbul レポート上、Branch カバレッジは Prisma の例外分岐などの影響で 90% 台になるが、**行カバレッジ 100% を満たしていること**をもって、当該エンドポイントのカバレッジ要求を満たすものとする。Branch カバレッジを上げる目的だけで複雑なモックやダミーコードを追加しない。
+
+---
 
 ---
 [目次](../目次.md) > テスト方針 > APIテスト方針

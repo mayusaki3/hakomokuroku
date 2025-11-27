@@ -1,7 +1,7 @@
 import { prisma } from '@/server/prisma';
 import { getUser } from '@/server/auth';
 
-function json(body: any, status = 200) {
+function json(body: any, status: number) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },

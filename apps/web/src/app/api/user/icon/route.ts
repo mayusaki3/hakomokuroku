@@ -14,20 +14,6 @@
 //  - __hooks.requireUserId（@/server/auth を間接化：テストでモック）
 //  - prisma.user.update / updateMany（テストでモック）
 
-
-// ★デバッグ用（テスト中にだけ使う想定）
-// ★必要がなくなったら削除すること
-export let __debug_parseCallCount = 0;
-
-// ★ デバッグ用（テスト一時用）。後で削除する。
-export const __debug_counts = {
-  beforeParse: 0,
-  afterParse: 0,
-  beforeAuth: 0,
-  beforeJson: 0,
-  beforeDb: 0,
-};
-
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
@@ -47,9 +33,6 @@ export function parseAndNormalizeDataURL(
   input: unknown
 ): { ok: true; value: ParseOk } | { ok: false; error: ParseErr } {
 
-  // ★
-  __debug_parseCallCount++;  // デバッグ用
-
   if (typeof input !== 'string') return { ok: false, error: 'BAD_INPUT' };
   const trimmed = input.trim();
   if (!trimmed.startsWith('data:')) return { ok: false, error: 'BAD_SCHEME' };
@@ -62,7 +45,7 @@ export function parseAndNormalizeDataURL(
   if (mime !== 'image/png') return { ok: false, error: 'BAD_MIME' };
 
   // 改行・空白は許容 → 除去
-  const b64Raw = m[2] ?? '';
+  const b64Raw = m[2];
   const b64 = b64Raw.replace(/\s+/g, '');
   if (!b64) return { ok: false, error: 'EMPTY_BASE64' };
 
@@ -126,9 +109,7 @@ export async function PUT(req: NextRequest) {
     // 1) 認証（テストでは __hooks.requireUserId を spy / mock）
     let userId: string | null = null;
     try {
-      __debug_counts.beforeAuth++;  // ★
       const r = await __hooks.requireUserId(req);
-      // 実運用は string 想定、テストの柔軟性確保でフォールバック
       userId = typeof r === 'string' ? r : (r as any)?.userId ?? null;
       if (!userId) return bad(401, 'unauthorized');
     } catch {
@@ -144,22 +125,18 @@ export async function PUT(req: NextRequest) {
     // 3) JSON parse
     let body: any;
     try {
-      __debug_counts.beforeJson++;  // ★
       body = await req.json();
     } catch {
       return bad(400, 'bad json');
     }
 
     // 4) dataURL 検証（必ず __hooks 経由で 1 回だけ呼ぶ：hook-smoke の spy 前提）
-    __debug_counts.beforeParse++; // ★
     const parsed = __hooks.parseAndNormalizeDataURL(body?.dataURL);
-    __debug_counts.afterParse++; // ★
     if (!parsed.ok) return mapDataUrlError(parsed.error);
     const normalized = parsed.value.normalized;
 
     // 5) DB 更新（findUnique は行わず、update / updateMany の結果・例外で 200/404/500 を分岐）
     try {
-      __debug_counts.beforeDb++;  // ★
       const r = await __hooks.updateUserIcon(userId, normalized);
 
       // updateMany をモックされた場合の互換: count===0 は 404
