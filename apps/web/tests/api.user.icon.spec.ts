@@ -350,14 +350,15 @@ it('内部で予期せぬ例外なら 500', async () => {
   expect(res.status).toBe(500);
 });
 
-// DB エラー: name=NotFoundError は 404 になること
 it('DBエラー name=NotFoundError は 404', async () => {
   (requireUserId as any).mockResolvedValue('U404');
 
   const err: any = new Error('failed');
   err.name = 'NotFoundError';
 
-  (prisma.user.update as any).mockRejectedValueOnce(err);
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockRejectedValueOnce(err);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',
@@ -367,16 +368,19 @@ it('DBエラー name=NotFoundError は 404', async () => {
 
   const res = await PUT_ICON(req);
   expect(res.status).toBe(404);
+
+  updateSpy.mockRestore();
 });
 
-// DB エラー: meta.cause に "record to update not found" を含む場合は 404 になること
 it('DBエラー meta.cause=record to update not found は 404', async () => {
   (requireUserId as any).mockResolvedValue('U404');
 
   const err: any = new Error('update failed');
   err.meta = { cause: 'Record to update not found.' };
 
-  (prisma.user.update as any).mockRejectedValueOnce(err);
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockRejectedValueOnce(err);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',
@@ -386,10 +390,10 @@ it('DBエラー meta.cause=record to update not found は 404', async () => {
 
   const res = await PUT_ICON(req);
   expect(res.status).toBe(404);
+
+  updateSpy.mockRestore();
 });
 
-// DB エラー: not-found 系でない通常エラーは 500 になること
-// （既存テストがあればそちらをこの形に寄せる）
 it('DBエラー (not-found系でない) は 500', async () => {
   (requireUserId as any).mockResolvedValue('U1');
 
@@ -408,4 +412,85 @@ it('DBエラー (not-found系でない) は 500', async () => {
 
   const res = await PUT_ICON(req);
   expect(res.status).toBe(500);
+});
+
+it('DBで updateMany 成功 (count>0) なら 200', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockResolvedValue({ count: 1 } as any); // count>0
+
+  const req = new Request('http://t/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(200);
+
+  const json = await res.json();
+  // id がないので userId フォールバック
+  expect(json.ok).toBe(true);
+  expect(json.me).toEqual({ id: 'U1' });
+
+  updateSpy.mockRestore();
+});
+
+it('updateUserIcon が null を返した場合は 500', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockResolvedValueOnce(null as any);
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT_ICON(req);
+  expect(res.status).toBe(500);
+
+  updateSpy.mockRestore();
+});
+
+it('DBエラー message 未定義でも not found 判定される', async () => {
+  (requireUserId as any).mockResolvedValue('U404');
+
+  const err: any = {}; // message を持たない
+  err.code = 'P2025';
+  err.meta = { cause: 'Record to update not found.' };
+
+  const updateSpy = vi
+    .spyOn(__hooks, 'updateUserIcon')
+    .mockRejectedValueOnce(err);
+
+  const req = new Request('http://t.local/api/user/icon', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+  });
+
+  const res = await PUT_ICON(req);
+
+  expect(res.status).toBe(404); // P2025 なので not found 扱い
+
+  updateSpy.mockRestore();
+});
+
+it('Content-Type ヘッダ getter が undefined を返しても 400', async () => {
+  (requireUserId as any).mockResolvedValue('U1');
+
+  const fakeReq = {
+    headers: {
+      get: () => undefined as any, // nullish ブランチを明示的に踏む
+    },
+    json: async () => ({ dataURL: 'data:image/png;base64,AAA' }),
+  } as any;
+
+  const res = await PUT_ICON(fakeReq);
+  expect(res.status).toBe(400);
 });

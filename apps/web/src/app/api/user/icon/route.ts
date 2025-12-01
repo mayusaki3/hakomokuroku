@@ -139,8 +139,13 @@ export async function PUT(req: NextRequest) {
     try {
       const r = await __hooks.updateUserIcon(userId, normalized);
 
+      // updateUserIcon が null/undefined を返した場合の安全弁
+      if (!r) {
+        return bad(500, 'db error');
+      }
+
       // updateMany をモックされた場合の互換: count===0 は 404
-      if (r && typeof (r as any).count === 'number') {
+      if (typeof (r as any).count === 'number') {
         if ((r as any).count === 0) return bad(404, 'not updated');
       }
 
@@ -150,7 +155,6 @@ export async function PUT(req: NextRequest) {
         { status: 200 }
       );
     } catch (e: any) {
-      // Prisma の not-found 系は 404、それ以外は 500
       const msg = String(e?.message ?? '');
       const cause = typeof e?.meta?.cause === 'string' ? e.meta.cause : '';
       const combined = `${msg} ${cause}`;
@@ -158,8 +162,7 @@ export async function PUT(req: NextRequest) {
       if (
         e?.code === 'P2025' ||
         e?.name === 'NotFoundError' ||
-        /\bnot\s*found\b/i.test(combined) ||
-        /record\s*to\s*update\s*not\s*found/i.test(combined)
+        /\bnot\s*found\b/i.test(combined)
       ) {
         return bad(404, 'not found');
       }
