@@ -10,7 +10,7 @@ async function main() {
     where: { userId: 'dev' },
     update: {},
     create: {
-      id: 'U_LOCAL',           // 固定でもOK（重複時は消す）
+      id: 'U_LOCAL', // 固定でもOK（重複時は消す）
       userId: 'dev',
       userName: '開発用ユーザー',
       // まだ認証未実装なら仮文字列でOK（将来argon2idに置換）
@@ -30,8 +30,8 @@ async function main() {
       code: 'UNASSIGNED',
       name: '未割当',
       location: '未設定',
-      tags: [],           // JSON 配列（schema は Json?）
-      thumbs: [],         // JSON 配列
+      tags: [], // JSON 配列（schema は Json?）
+      thumbs: [], // JSON 配列
       meta: {},
       aiState: null,
       aiUpdatedAt: null,
@@ -44,9 +44,33 @@ async function main() {
 
   // 3) 初期タグ（ユーザー専用）— SQLite は skipDuplicates 非対応のため upsert で投入
   const tags = [
-    { id: 't-storage', userId: devUser.id, name: '保管',   kind: 'BOX',    enabled: true, createdAt: now, updatedAt: now },
-    { id: 't-fragile', userId: devUser.id, name: '割れ物', kind: 'SHARED', enabled: true, createdAt: now, updatedAt: now },
-    { id: 't-electro', userId: devUser.id, name: '電気',   kind: 'ITEM',   enabled: true, createdAt: now, updatedAt: now },
+    {
+      id: 't-storage',
+      userId: devUser.id,
+      name: '保管',
+      kind: 'BOX',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 't-fragile',
+      userId: devUser.id,
+      name: '割れ物',
+      kind: 'SHARED',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 't-electro',
+      userId: devUser.id,
+      name: '電気',
+      kind: 'ITEM',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
   for (const t of tags) {
     await prisma.tag.upsert({
@@ -80,5 +104,11 @@ async function main() {
 }
 
 main()
-  .then(async () => { await prisma.$disconnect(); })
-  .catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });
+  .then(async () => {
+    await prisma.$disconnect();
+  })
+  .catch(async (e) => {
+    console.error(e);
+    await prisma.$disconnect();
+    process.exit(1);
+  });

@@ -8,12 +8,11 @@ vi.mock('@/server/auth', () => ({
 }));
 
 import { PUT as PUT_ICON, __hooks } from '@/app/api/user/icon/route';
-import { prisma } from '@/server/prisma';           // モック済み実体
-import { requireUserId } from '@/server/auth';      // モック関数
+import { prisma } from '@/server/prisma'; // モック済み実体
+import { requireUserId } from '@/server/auth'; // モック関数
 
 // ★
 import { __debug_parseCallCount } from '@/app/api/user/icon/route';
-
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -23,9 +22,7 @@ describe('PUT /api/user/icon', () => {
   it('dataURL を保存し、{ ok:true, me } を返す', async () => {
     (requireUserId as any).mockResolvedValue('U1');
 
-    const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
-      .mockResolvedValue({ id: 'U1' } as any);
+    const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockResolvedValue({ id: 'U1' } as any);
 
     const req = new Request('http://t/api/user/icon', {
       method: 'PUT',
@@ -94,11 +91,13 @@ import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
 it('dataURL が不正形式（例: text/plain）なら 400', async () => {
   (requireUserId as any).mockResolvedValue('U1');
   const bad = 'data:text/plain;base64,QUFB'; // 画像MIMEでない
-  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ dataURL: bad }),
-  }));
+  const res = await PUT_ICON(
+    new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dataURL: bad }),
+    })
+  );
   expect(res.status).toBe(400);
 });
 
@@ -142,32 +141,38 @@ import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
 
 it('Content-Type 不正は 400/415', async () => {
   (requireUserId as any).mockResolvedValue('U1');
-  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
-    method: 'PUT',
-    // Content-Type を外す or text/plain にする
-    body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
-  }));
+  const res = await PUT_ICON(
+    new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      // Content-Type を外す or text/plain にする
+      body: JSON.stringify({ dataURL: 'data:image/png;base64,AAA' }),
+    })
+  );
   expect([400, 415]).toContain(res.status);
 });
 
 it('壊れた JSON は 400', async () => {
   (requireUserId as any).mockResolvedValue('U1');
-  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: '{bad json',
-  }));
+  const res = await PUT_ICON(
+    new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: '{bad json',
+    })
+  );
   expect(res.status).toBe(400);
 });
 
 it('Base64 不正は 400', async () => {
   (requireUserId as any).mockResolvedValue('U1');
   const bad = 'data:image/png;base64,@@@'; // デコード失敗
-  const res = await PUT_ICON(new Request('http://t/api/user/icon', {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ dataURL: bad }),
-  }));
+  const res = await PUT_ICON(
+    new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dataURL: bad }),
+    })
+  );
   expect(res.status).toBe(400);
 });
 
@@ -207,9 +212,7 @@ it('DBで対象ユーザー無しなら 404', async () => {
   err.code = 'P2025';
   err.meta = { cause: 'Record to update not found.' };
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockRejectedValue(err);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockRejectedValue(err);
 
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
@@ -316,9 +319,7 @@ it('dataURL のbase64部が空なら 400', async () => {
 it('DBで対象ユーザーが存在せず更新0件なら 404', async () => {
   (requireUserId as any).mockResolvedValue('U1');
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockResolvedValue({ count: 0 } as any);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockResolvedValue({ count: 0 } as any);
 
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
@@ -356,9 +357,7 @@ it('DBエラー name=NotFoundError は 404', async () => {
   const err: any = new Error('failed');
   err.name = 'NotFoundError';
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockRejectedValueOnce(err);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockRejectedValueOnce(err);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',
@@ -378,9 +377,7 @@ it('DBエラー meta.cause=record to update not found は 404', async () => {
   const err: any = new Error('update failed');
   err.meta = { cause: 'Record to update not found.' };
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockRejectedValueOnce(err);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockRejectedValueOnce(err);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',
@@ -417,9 +414,7 @@ it('DBエラー (not-found系でない) は 500', async () => {
 it('DBで updateMany 成功 (count>0) なら 200', async () => {
   (requireUserId as any).mockResolvedValue('U1');
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockResolvedValue({ count: 1 } as any); // count>0
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockResolvedValue({ count: 1 } as any); // count>0
 
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
@@ -441,9 +436,7 @@ it('DBで updateMany 成功 (count>0) なら 200', async () => {
 it('updateUserIcon が null を返した場合は 500', async () => {
   (requireUserId as any).mockResolvedValue('U1');
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockResolvedValueOnce(null as any);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockResolvedValueOnce(null as any);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',
@@ -464,9 +457,7 @@ it('DBエラー message 未定義でも not found 判定される', async () => 
   err.code = 'P2025';
   err.meta = { cause: 'Record to update not found.' };
 
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockRejectedValueOnce(err);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockRejectedValueOnce(err);
 
   const req = new Request('http://t.local/api/user/icon', {
     method: 'PUT',

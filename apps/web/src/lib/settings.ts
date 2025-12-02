@@ -5,43 +5,43 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 
 export type Settings = {
   // 基本
-  displayName: string;     // 表示名（任意）
-  deviceName: string;      // 端末名（手入力）
+  displayName: string; // 表示名（任意）
+  deviceName: string; // 端末名（手入力）
 
   // 表示
-  theme: ThemeMode;        // テーマ
+  theme: ThemeMode; // テーマ
   density: 'comfortable' | 'compact'; // 余白感
 
   // スキャン
-  preferBackCamera: boolean;  // 背面カメラを優先
-  scanBeep: boolean;          // 読み取り時に音/バイブ（UIだけ先に）
-  scanContinuous: boolean;    // 連続読み取り（将来用）
+  preferBackCamera: boolean; // 背面カメラを優先
+  scanBeep: boolean; // 読み取り時に音/バイブ（UIだけ先に）
+  scanContinuous: boolean; // 連続読み取り（将来用）
 
   // 検索/絞り込み
-  keepFiltersOnNav: boolean;  // ルーティングで q/qr を引き継ぐ（既に対応済みの既定）
+  keepFiltersOnNav: boolean; // ルーティングで q/qr を引き継ぐ（既に対応済みの既定）
   sortDefault: 'updatedDesc' | 'nameAsc';
 
   // ラベル/QR
-  labelTapeWidthMM: 24;       // 24固定想定だがUIで持っておく
-  labelQrSizeMM: number;      // QRの実寸(mm)
-  labelShowText: boolean;     // コード文字列を併記
+  labelTapeWidthMM: 24; // 24固定想定だがUIで持っておく
+  labelQrSizeMM: number; // QRの実寸(mm)
+  labelShowText: boolean; // コード文字列を併記
 
   // QRペイロード
   qrPayloadMode: 'code' | 'url'; // 生コード or URL
-  qrUrlPrefix: string;           // url時の prefix（例: https://your.host/b/）
+  qrUrlPrefix: string; // url時の prefix（例: https://your.host/b/）
 
   // 同期
-  syncBaseUrl: string;        // 同期用URL
-  syncToken: string;          // 同期用トークン
+  syncBaseUrl: string; // 同期用URL
+  syncToken: string; // 同期用トークン
 
   // バックアップ既定
-  backupIncludeThumbs: boolean;  // サムネ含める既定
+  backupIncludeThumbs: boolean; // サムネ含める既定
 };
 
 // 既定値
 export const defaultSettings: Settings = {
   displayName: '',
-  deviceName: typeof navigator !== 'undefined' ? (navigator.platform || 'device') : 'device',
+  deviceName: typeof navigator !== 'undefined' ? navigator.platform || 'device' : 'device',
 
   theme: 'system',
   density: 'comfortable',
@@ -83,7 +83,9 @@ export function loadSettings(): Settings {
 export function saveSettings(s: Settings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   // multi-tab 反映
-  try { new BroadcastChannel('hkmk-settings').postMessage('updated'); } catch {}
+  try {
+    new BroadcastChannel('hkmk-settings').postMessage('updated');
+  } catch {}
 }
 
 // Reactフック
@@ -104,7 +106,11 @@ export function useSettings() {
       };
     } catch {}
 
-    return () => { try { bc?.close(); } catch {} };
+    return () => {
+      try {
+        bc?.close();
+      } catch {}
+    };
   }, []);
 
   // テーマを <html data-theme="..."> に反映（簡易）
@@ -128,7 +134,7 @@ export function useSettings() {
 // apps/web/src/lib/settings.ts
 export type SyncSettings = {
   endpoint: string; // 例: http://localhost:3000/api/sync
-  token: string;    // Bearer の中身
+  token: string; // Bearer の中身
 };
 
 const KEY = 'hk.sync.settings';

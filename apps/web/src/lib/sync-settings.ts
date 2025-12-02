@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 
 export type SyncSettings = {
-  baseUrl: string;       // 例: https://<origin>/api/sync
+  baseUrl: string; // 例: https://<origin>/api/sync
   token: string;
   userId: string | null;
 };
@@ -70,8 +70,7 @@ export function useSyncSettings() {
     };
   }, []);
 
-  const update = (patch: Partial<SyncSettings>) =>
-    setSettings(saveSyncSettings(patch));
+  const update = (patch: Partial<SyncSettings>) => setSettings(saveSyncSettings(patch));
 
   const refresh = () => setSettings(loadSyncSettings());
 

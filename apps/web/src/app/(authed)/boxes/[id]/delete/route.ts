@@ -4,10 +4,7 @@ import { prisma } from '@/server/prisma';
 
 const UNASSIGNED_ID = 'UNASSIGNED';
 
-export async function POST(
-  _req: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_req: Request, { params }: { params: { id: string } }) {
   const boxId = params.id;
 
   if (!boxId) {
@@ -41,9 +38,6 @@ export async function POST(
 
     return NextResponse.json({ ok: true, ...result });
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message ?? String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message ?? String(err) }, { status: 500 });
   }
 }

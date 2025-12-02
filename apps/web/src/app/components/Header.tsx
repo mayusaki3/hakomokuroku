@@ -23,7 +23,10 @@ const DEFAULT_USER_ICON_DATAURL =
 
 function preserveParams(sp: ReadonlyURLSearchParams, href: string, keys = ['q', 'qr']) {
   const params = new URLSearchParams();
-  for (const k of keys) { const v = sp.get(k); if (v) params.set(k, v); }
+  for (const k of keys) {
+    const v = sp.get(k);
+    if (v) params.set(k, v);
+  }
   const qs = params.toString();
   return qs ? `${href}?${qs}` : href;
 }
@@ -45,10 +48,17 @@ export default function Header() {
   const injectedTitle = useCurrentHeaderTitle();
 
   async function loadMe() {
-    const r = await fetch('/api/auth/me?cb=' + Date.now(), { cache: 'no-store', credentials: 'include', headers: { accept: 'application/json' } });
-    if (!r.ok) { setMe(null); return; }
-    const body = await r.json();             // { ok: boolean, user: {...} }
-    setMe(body?.user ?? null);               // ← me に user を格納
+    const r = await fetch('/api/auth/me?cb=' + Date.now(), {
+      cache: 'no-store',
+      credentials: 'include',
+      headers: { accept: 'application/json' },
+    });
+    if (!r.ok) {
+      setMe(null);
+      return;
+    }
+    const body = await r.json(); // { ok: boolean, user: {...} }
+    setMe(body?.user ?? null); // ← me に user を格納
   }
   useEffect(() => {
     loadMe();
@@ -61,9 +71,13 @@ export default function Header() {
       window.removeEventListener('hk:logged-out', onLoggedOut);
     };
   }, []);
-  useEffect(() => { loadMe(); }, [pathname]);
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible') loadMe(); };
+    loadMe();
+  }, [pathname]);
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') loadMe();
+    };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
@@ -92,16 +106,32 @@ export default function Header() {
               height={36}
               className="rounded-full"
               style={{ objectFit: 'cover', display: 'block' }}
-              onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_USER_ICON_DATAURL; }}
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = DEFAULT_USER_ICON_DATAURL;
+              }}
             />
           </Link>
         </div>
 
         {/* 中央：タイトル（常にセンタリング */}
         <div className="header-mid">
-          <div className="title-row" aria-label="アプリタイトル" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <img src={BRAND_ICON} alt="" width={24} height={24} style={{ display: 'block' }}
-              onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = '/favicon.ico'; }} />
+          <div
+            className="title-row"
+            aria-label="アプリタイトル"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <img
+              src={BRAND_ICON}
+              alt=""
+              width={24}
+              height={24}
+              style={{ display: 'block' }}
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = '/favicon.ico';
+              }}
+            />
             <div className="title-text">{displayTitle}</div>
           </div>
         </div>

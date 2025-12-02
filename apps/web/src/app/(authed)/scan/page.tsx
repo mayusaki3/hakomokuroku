@@ -14,7 +14,9 @@ export default function ScanPage() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | 'auto'>('auto');
   const [lastText, setLastText] = useState<string>('');
-  const [status, setStatus] = useState<'idle'|'starting'|'running'|'stopped'|'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'starting' | 'running' | 'stopped' | 'error'>(
+    'idle'
+  );
 
   // カメラ一覧
   useEffect(() => {
@@ -24,10 +26,10 @@ export default function ScanPage() {
         await navigator.mediaDevices.getUserMedia({ video: true });
       } catch {}
       const list = await navigator.mediaDevices.enumerateDevices();
-      const cams = list.filter(d => d.kind === 'videoinput');
+      const cams = list.filter((d) => d.kind === 'videoinput');
       setDevices(cams);
       // 背面/外向きらしきものを初期選択
-      const back = cams.find(d => /back|rear|environment/i.test(`${d.label}`));
+      const back = cams.find((d) => /back|rear|environment/i.test(`${d.label}`));
       if (back) setDeviceId(back.deviceId);
     })();
   }, []);
@@ -39,9 +41,10 @@ export default function ScanPage() {
       setStatus('starting');
       if (!readerRef.current) readerRef.current = new BrowserQRCodeReader();
 
-      const constraints: MediaTrackConstraints = deviceId === 'auto'
-        ? { facingMode: { ideal: 'environment' } }
-        : { deviceId: { exact: deviceId } };
+      const constraints: MediaTrackConstraints =
+        deviceId === 'auto'
+          ? { facingMode: { ideal: 'environment' } }
+          : { deviceId: { exact: deviceId } };
 
       // decodeFromVideoDevice は継続的にコールバックされる
       stopRef.current = await readerRef.current.decodeFromVideoDevice(
@@ -66,8 +69,12 @@ export default function ScanPage() {
 
   // 停止
   const stop = () => {
-    try { stopRef.current?.stop(); } catch {}
-    try { readerRef.current?.reset(); } catch {}
+    try {
+      stopRef.current?.stop();
+    } catch {}
+    try {
+      readerRef.current?.reset();
+    } catch {}
     setStatus('stopped');
   };
 
@@ -94,20 +101,45 @@ export default function ScanPage() {
         <div>
           <label>カメラ</label>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <select value={deviceId} onChange={e => setDeviceId(e.target.value as any)} style={{ padding: 6 }}>
+            <select
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value as any)}
+              style={{ padding: 6 }}
+            >
               <option value="auto">自動（背面優先）</option>
-              {devices.map(d => (
-                <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0, 6)}`}</option>
+              {devices.map((d) => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
+                </option>
               ))}
             </select>
-            {status !== 'running'
-              ? <button onClick={start} style={{ padding: '6px 10px' }}>開始</button>
-              : <button onClick={stop} style={{ padding: '6px 10px' }}>停止</button>}
+            {status !== 'running' ? (
+              <button onClick={start} style={{ padding: '6px 10px' }}>
+                開始
+              </button>
+            ) : (
+              <button onClick={stop} style={{ padding: '6px 10px' }}>
+                停止
+              </button>
+            )}
           </div>
         </div>
 
-        <div style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
-          <video ref={videoRef} style={{ width: '100%', maxHeight: 360 }} autoPlay muted playsInline />
+        <div
+          style={{
+            border: '1px solid #eee',
+            borderRadius: 8,
+            overflow: 'hidden',
+            background: '#000',
+          }}
+        >
+          <video
+            ref={videoRef}
+            style={{ width: '100%', maxHeight: 360 }}
+            autoPlay
+            muted
+            playsInline
+          />
         </div>
 
         <div style={{ color: '#555' }}>
@@ -115,8 +147,9 @@ export default function ScanPage() {
         </div>
 
         <p style={{ color: '#666' }}>
-          ※ 権限ダイアログで「カメラを許可」。暗い場所では明るさを上げてください。<br/>
-          ※ 既存の印刷で <code>https://…/box/&lt;code&gt;</code> や <code>hk:&lt;code&gt;</code> でも自動解釈します。
+          ※ 権限ダイアログで「カメラを許可」。暗い場所では明るさを上げてください。
+          <br />※ 既存の印刷で <code>https://…/box/&lt;code&gt;</code> や{' '}
+          <code>hk:&lt;code&gt;</code> でも自動解釈します。
         </p>
       </div>
     </main>

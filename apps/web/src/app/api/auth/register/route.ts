@@ -1,14 +1,14 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/server/prisma";
-import { hashPassword } from "@/server/auth";
+import { NextResponse } from 'next/server';
+import { prisma } from '@/server/prisma';
+import { hashPassword } from '@/server/auth';
 
 export async function POST(req: Request) {
   try {
     const { userId, password, userName } = await req.json();
-    if (!userId || !password) return NextResponse.json({ error: "bad_request" }, { status: 400 });
+    if (!userId || !password) return NextResponse.json({ error: 'bad_request' }, { status: 400 });
 
     const exists = await prisma.user.findUnique({ where: { userId } });
-    if (exists) return NextResponse.json({ error: "user_exists" }, { status: 409 });
+    if (exists) return NextResponse.json({ error: 'user_exists' }, { status: 409 });
 
     const passwordHash = await hashPassword(password);
     const u = await prisma.user.create({
@@ -18,6 +18,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, user: u }, { status: 201 });
   } catch {
-    return NextResponse.json({ error: "server_error" }, { status: 500 });
+    return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -56,7 +56,7 @@ export async function POST() {
   await prisma.user.update({
     where: { id: me.id },
     data: {
-      totpPendingSecretEnc: pendingEnc,   // ← スキーマ名に合わせる
+      totpPendingSecretEnc: pendingEnc, // ← スキーマ名に合わせる
       totpPendingAt: new Date(),
       // 失敗カウントはリセットしておくと親切
       totpFailCount: 0,

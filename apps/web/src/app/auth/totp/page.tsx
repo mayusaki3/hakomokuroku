@@ -35,7 +35,9 @@ export default function TotpPage() {
     (async () => {
       if (!loginId) return;
       try {
-        const r = await fetch(`/api/auth/totp/status?loginId=${encodeURIComponent(loginId)}`, { cache: 'no-store' });
+        const r = await fetch(`/api/auth/totp/status?loginId=${encodeURIComponent(loginId)}`, {
+          cache: 'no-store',
+        });
         if (!r.ok) return; // ← 404は無視
         const j = await r.json();
         if (typeof j.recoveryRemain === 'number') setRemain(j.recoveryRemain);
@@ -45,7 +47,10 @@ export default function TotpPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!loginId) { setErr('セッションが無効です。最初からやり直してください。'); return; }
+    if (!loginId) {
+      setErr('セッションが無効です。最初からやり直してください。');
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -74,12 +79,20 @@ export default function TotpPage() {
   }
 
   return (
-    <main className="container" style={{ paddingTop: 4, maxWidth: 560, margin: '0 auto', paddingLeft: 8, paddingRight: 8 }}>
+    <main
+      className="container"
+      style={{ paddingTop: 4, maxWidth: 560, margin: '0 auto', paddingLeft: 8, paddingRight: 8 }}
+    >
       <section style={frame}>
         {/* 見出し行 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h1 style={{ margin: '2px 0 8px', fontWeight: 700, fontSize: 18 }}>MFA（二段階認証）</h1>
-          <button type="button" className="btn" onClick={() => router.back()} style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => router.back()}
+            style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
+          >
             戻る
           </button>
         </div>
@@ -88,7 +101,14 @@ export default function TotpPage() {
 
         {/* 入力行 */}
         <form onSubmit={onSubmit} style={{ display: 'grid', gap: 12 }}>
-          <label style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center', gap: 8 }}>
+          <label
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '80px 1fr',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
             <span>6桁コード</span>
             <input
               inputMode="numeric"
@@ -104,9 +124,23 @@ export default function TotpPage() {
 
           <div style={{ color: '#666', fontSize: 12 }}>または</div>
 
-          <label style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center', gap: 8 }}>
+          <label
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '80px 1fr',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
             <span>回復コード</span>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr auto',
+                gap: 8,
+                alignItems: 'center',
+              }}
+            >
               <input
                 value={recovery}
                 onChange={(e) => setRecovery(e.target.value)}

@@ -10,7 +10,7 @@ async function resolveUser(req: NextRequest): Promise<{ id: string } | null> {
   const meUrl = `${proto}://${host}/api/settings/user`;
   try {
     const r = await fetch(meUrl, {
-      headers: { cookie: req.headers.get('cookie') ?? '' , accept: 'application/json' },
+      headers: { cookie: req.headers.get('cookie') ?? '', accept: 'application/json' },
       cache: 'no-store',
       credentials: 'include',
     });

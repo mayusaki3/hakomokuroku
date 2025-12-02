@@ -7,8 +7,8 @@ vi.mock('@/server/auth', () => ({
 }));
 
 import { GET as GET_ACTIVE } from '@/app/api/settings/theme/active/route';
-import { prisma } from '@/server/prisma';   // モック済み
-import { getUser } from '@/server/auth';    // モック関数
+import { prisma } from '@/server/prisma'; // モック済み
+import { getUser } from '@/server/auth'; // モック関数
 
 beforeEach(() => {
   vi.clearAllMocks();

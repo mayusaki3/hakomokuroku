@@ -4,7 +4,16 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, hashPassword, randomUrlSafe, sha256hex, buildSessionSetCookie, getRequestUA, getRequestIP, SESSION_COOKIE_NAME } from '@/server/auth'; // すべてauth.ts経由
+import {
+  verifyPassword,
+  hashPassword,
+  randomUrlSafe,
+  sha256hex,
+  buildSessionSetCookie,
+  getRequestUA,
+  getRequestIP,
+  SESSION_COOKIE_NAME,
+} from '@/server/auth'; // すべてauth.ts経由
 // ↑ verifyPassword/hashPassword は '@/server/password' から auth.ts が再出力
 
 export async function POST(req: Request) {

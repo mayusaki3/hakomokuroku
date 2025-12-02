@@ -15,20 +15,20 @@ export async function searchByText(q: string): Promise<SearchRow[]> {
   const [boxes, items] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
 
   const boxRows: SearchRow[] = boxes
-    .filter(b => {
+    .filter((b) => {
       const hay = `${b.code} ${b.name} ${b.location ?? ''} ${(b.tags ?? []).join(' ')}`;
       return norm(hay).includes(needle);
     })
-    .map(b => ({ kind: 'box', box: b }));
+    .map((b) => ({ kind: 'box', box: b }));
 
   // まとめてMap化（アイテムに箱名を載せるため）
-  const boxMap = new Map(boxes.map(b => [b.id, b]));
+  const boxMap = new Map(boxes.map((b) => [b.id, b]));
   const itemRows: SearchRow[] = items
-    .filter(i => {
+    .filter((i) => {
       const hay = `${i.name} ${(i.tags ?? []).join(' ')} ${i.note ?? ''}`;
       return norm(hay).includes(needle);
     })
-    .map(i => ({ kind: 'item', item: i, box: boxMap.get(i.boxId) }));
+    .map((i) => ({ kind: 'item', item: i, box: boxMap.get(i.boxId) }));
 
   // ボックス優先で上、次にアイテム
   return [...boxRows, ...itemRows];
@@ -42,7 +42,9 @@ export function extractBoxCodeFromQr(text: string): string | null {
     const u = new URL(s);
     const m = u.pathname.match(/\/b\/([^/]+)/);
     if (m) return decodeURIComponent(m[1]);
-  } catch { /* not URL */ }
+  } catch {
+    /* not URL */
+  }
 
   // relative path "/b/..."
   const m2 = s.match(/(?:^|\/)b\/([^/]+)/);
@@ -67,6 +69,6 @@ export async function searchByQrPayload(payload: string): Promise<SearchRow[]> {
   // 箱ヒット：箱 1件 + その箱のアイテム一覧
   const items = await db.items.where('boxId').equals(box.id).toArray();
   const rows: SearchRow[] = [{ kind: 'box', box }];
-  rows.push(...items.map(i => ({ kind: 'item', item: i, box })));
+  rows.push(...items.map((i) => ({ kind: 'item', item: i, box })));
   return rows;
 }

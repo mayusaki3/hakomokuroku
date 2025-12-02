@@ -4,7 +4,9 @@
 import { useEffect, useRef } from 'react';
 
 function handle401() {
-  try { localStorage.removeItem('hk.sync'); } catch {}
+  try {
+    localStorage.removeItem('hk.sync');
+  } catch {}
   // Cookie掃除
   document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
   const next = location.pathname + location.search;
@@ -28,9 +30,14 @@ async function ping() {
 export default function AuthedLayout({ children }: { children: React.ReactNode }) {
   const once = useRef(false);
   useEffect(() => {
-    if (!once.current) { once.current = true; ping(); }
+    if (!once.current) {
+      once.current = true;
+      ping();
+    }
     // タブ復帰時も再確認
-    const onVis = () => { if (document.visibilityState === 'visible') ping(); };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') ping();
+    };
     window.addEventListener('visibilitychange', onVis);
     return () => window.removeEventListener('visibilitychange', onVis);
   }, []);

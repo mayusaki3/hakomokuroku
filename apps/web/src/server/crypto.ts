@@ -22,10 +22,6 @@ export function randomUrlSafe(len: number): string {
 export function bothHashes(input: string) {
   const buf = crypto.createHash('sha256').update(input, 'utf8').digest();
   const hex = buf.toString('hex');
-  const b64url = buf
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+  const b64url = buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   return { hex, b64url };
 }

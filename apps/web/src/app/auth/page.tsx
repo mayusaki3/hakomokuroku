@@ -8,28 +8,36 @@ type Mode = 'login' | 'register';
 
 export default function AuthPage() {
   // 画面表示時にテーマをデフォルトへ戻す
-  useEffect(()=>{
-    try{
+  useEffect(() => {
+    try {
       localStorage.removeItem('hk.themeActiveVars');
-      localStorage.setItem('hk.themeActiveId','');
-    }catch{}
+      localStorage.setItem('hk.themeActiveId', '');
+    } catch {}
     const root = document.documentElement;
     const keys = [
-      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
-      'hk-header-image','hk-header-fg',
-      'hk-toolbar-bg','hk-toolbar-fg',
-      'hk-input-bg','hk-input-fg','hk-input-border',
-      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+      'hk-wallpaper-image',
+      'hk-wallpaper-color',
+      'hk-content-bg',
+      'hk-header-image',
+      'hk-header-fg',
+      'hk-toolbar-bg',
+      'hk-toolbar-fg',
+      'hk-input-bg',
+      'hk-input-fg',
+      'hk-input-border',
+      'hk-btn-bg',
+      'hk-btn-fg',
+      'hk-btn-border',
     ];
-    keys.forEach(k=>root.style.removeProperty(`--${k}`));
-    root.style.setProperty('--hk-wallpaper-image','none');
+    keys.forEach((k) => root.style.removeProperty(`--${k}`));
+    root.style.setProperty('--hk-wallpaper-image', 'none');
     window.dispatchEvent(new Event('hk-theme-updated'));
-  },[]);
-  
+  }, []);
+
   const sp = useSearchParams();
   const next = sp.get('next') || '/';
   const router = useRouter();
-  const idRef = useRef<HTMLInputElement|null>(null);
+  const idRef = useRef<HTMLInputElement | null>(null);
 
   const [mode, setMode] = useState<Mode>('login');
   const [userId, setUserId] = useState('');
@@ -44,10 +52,7 @@ export default function AuthPage() {
     return () => clearTimeout(t);
   }, [sp]);
 
-  const toggleLabel = useMemo(
-    () => (mode === 'login' ? '新規登録へ' : 'ログインへ'),
-    [mode]
-  );
+  const toggleLabel = useMemo(() => (mode === 'login' ? '新規登録へ' : 'ログインへ'), [mode]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +77,9 @@ export default function AuthPage() {
         try {
           const j = await r2.json();
           if (j?.requireTotp && j?.loginId) {
-            router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent('/account')}`);
+            router.replace(
+              `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent('/account')}`
+            );
             return;
           }
         } catch {}
@@ -86,9 +93,13 @@ export default function AuthPage() {
         });
 
         let j: any = null;
-        try { j = await r.json(); } catch {}
+        try {
+          j = await r.json();
+        } catch {}
         if (j?.requireTotp && j?.loginId) {
-          router.replace(`/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`);
+          router.replace(
+            `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`
+          );
           return;
         }
         if (!r.ok) throw new Error('ログインに失敗しました');
@@ -168,7 +179,12 @@ export default function AuthPage() {
 
             {/* 行3：送信＋エラー */}
             <div className="content-stack">
-              <button type="submit" className="btn" disabled={busy} style={{ width:'100%', height: 40 }}>
+              <button
+                type="submit"
+                className="btn"
+                disabled={busy}
+                style={{ width: '100%', height: 40 }}
+              >
                 {busy ? '送信中…' : mode === 'login' ? 'ログイン' : '登録してログイン'}
               </button>
 

@@ -8,8 +8,14 @@ export default function RegisterItemsPage() {
       <RegisterStepNav />
       <h2>② アイテム追加</h2>
       <p>（ここに撮影→サムネ→登録UIを後で実装）</p>
-      <div style={{marginTop:12}}>
-        <button className="btn" onClick={async()=>{ await setDraftStep('box-photos'); location.assign('/register/box-photos'); }}>
+      <div style={{ marginTop: 12 }}>
+        <button
+          className="btn"
+          onClick={async () => {
+            await setDraftStep('box-photos');
+            location.assign('/register/box-photos');
+          }}
+        >
           『箱写真』へ
         </button>
       </div>

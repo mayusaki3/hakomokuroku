@@ -3,9 +3,9 @@
 import { PropsWithChildren } from 'react';
 
 type Props = PropsWithChildren<{
-  safeBottom?: boolean;          // 余白調整が必要なら後続で使う。今は未使用。
+  safeBottom?: boolean; // 余白調整が必要なら後続で使う。今は未使用。
   style?: React.CSSProperties;
-  scroll?: boolean;              // iOSで枠内スクロールにしたい場合
+  scroll?: boolean; // iOSで枠内スクロールにしたい場合
 }>;
 
 export default function PageContainer({ style, children, scroll = false }: Props) {

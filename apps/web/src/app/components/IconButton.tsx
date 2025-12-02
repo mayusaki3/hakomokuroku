@@ -1,5 +1,5 @@
-"use client";
-import { ButtonHTMLAttributes, ReactNode } from "react";
+'use client';
+import { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
   /** アイコン（<Search size={..}/> など） */
@@ -20,8 +20,8 @@ export default function IconButton({ icon, ariaLabel, box = 30, style, ...rest }
         width: box,
         height: box,
         padding: 0,
-        display: "grid",
-        placeItems: "center",
+        display: 'grid',
+        placeItems: 'center',
       }}
     >
       {icon}

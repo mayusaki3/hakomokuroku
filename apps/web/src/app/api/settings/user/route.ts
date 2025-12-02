@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { readSession } from '@/server/auth';   // ← requireUserId は使わない（readSession は既に動作実績あり）
-import { prisma } from '@/lib/prisma';         // ← prisma は lib から輸入
+import { readSession } from '@/server/auth'; // ← requireUserId は使わない（readSession は既に動作実績あり）
+import { prisma } from '@/lib/prisma'; // ← prisma は lib から輸入
 export const runtime = 'nodejs';
 
 const headersNoStore = { 'Cache-Control': 'no-store' };
@@ -40,7 +40,7 @@ export async function GET() {
           totpEnabled: !!u.totpEnabled,
         },
       },
-      { headers: headersNoStore },
+      { headers: headersNoStore }
     );
   } catch (err) {
     console.error('GET /api/settings/user failed', err);

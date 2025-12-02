@@ -32,7 +32,6 @@ type ParseErr =
 export function parseAndNormalizeDataURL(
   input: unknown
 ): { ok: true; value: ParseOk } | { ok: false; error: ParseErr } {
-
   if (typeof input !== 'string') return { ok: false, error: 'BAD_INPUT' };
   const trimmed = input.trim();
   if (!trimmed.startsWith('data:')) return { ok: false, error: 'BAD_SCHEME' };
@@ -110,7 +109,7 @@ export async function PUT(req: NextRequest) {
     let userId: string | null = null;
     try {
       const r = await __hooks.requireUserId(req);
-      userId = typeof r === 'string' ? r : (r as any)?.userId ?? null;
+      userId = typeof r === 'string' ? r : ((r as any)?.userId ?? null);
       if (!userId) return bad(401, 'unauthorized');
     } catch {
       return bad(401, 'unauthorized');
@@ -150,20 +149,13 @@ export async function PUT(req: NextRequest) {
       }
 
       // update 正常完了（select に id を含めているため、それを優先）
-      return NextResponse.json(
-        { ok: true, me: { id: (r as any).id ?? userId } },
-        { status: 200 }
-      );
+      return NextResponse.json({ ok: true, me: { id: (r as any).id ?? userId } }, { status: 200 });
     } catch (e: any) {
       const msg = String(e?.message ?? '');
       const cause = typeof e?.meta?.cause === 'string' ? e.meta.cause : '';
       const combined = `${msg} ${cause}`;
 
-      if (
-        e?.code === 'P2025' ||
-        e?.name === 'NotFoundError' ||
-        /\bnot\s*found\b/i.test(combined)
-      ) {
+      if (e?.code === 'P2025' || e?.name === 'NotFoundError' || /\bnot\s*found\b/i.test(combined)) {
         return bad(404, 'not found');
       }
       return bad(500, 'db error');

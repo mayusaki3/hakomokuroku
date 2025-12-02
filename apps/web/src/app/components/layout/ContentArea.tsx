@@ -4,9 +4,7 @@ export default function ContentArea({ children }: { children: React.ReactNode })
   return (
     <div className="content-area">
       {/* 縦積みの“コンテンツ枠”スタック。隙間は常に6px */}
-      <div className="content-stack">
-        {children}
-      </div>
+      <div className="content-stack">{children}</div>
     </div>
   );
 }

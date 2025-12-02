@@ -14,8 +14,7 @@ export function useHeaderTitle(newTitle?: string | null) {
   const ctx = useContext(TitleCtx);
   useEffect(() => {
     if (!ctx) return;
-    const toNull = (s: string | null | undefined) =>
-      s && s.trim().length > 0 ? s : null;
+    const toNull = (s: string | null | undefined) => (s && s.trim().length > 0 ? s : null);
 
     const prev = ctx.title;
     ctx.setTitle(toNull(newTitle));

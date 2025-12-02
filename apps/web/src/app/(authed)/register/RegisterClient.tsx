@@ -43,7 +43,10 @@ const emptyLocDraft = (boxId: string): LocDraft => ({
 export default function RegisterClient({
   initialBoxId,
   initialStep = 0,
-}: { initialBoxId?: string; initialStep?: number }) {
+}: {
+  initialBoxId?: string;
+  initialStep?: number;
+}) {
   // 0=箱登録,1=アイテム,2=箱写真,3=ラベル,4=場所
   const [step, setStep] = useState<number>(0);
 
@@ -192,18 +195,42 @@ export default function RegisterClient({
       {/* ステッパー */}
       <nav className="stepper" aria-label="登録ステップ">
         <StepBtn label="箱登録" active={step === 0} onClick={() => go(0)} />
-        <StepBtn label="アイテム" active={step === 1} disabled={!canGoItems} onClick={() => go(1)} />
-        <StepBtn label="箱写真" active={step === 2} disabled={!canGoBoxPhotos} onClick={() => go(2)} />
+        <StepBtn
+          label="アイテム"
+          active={step === 1}
+          disabled={!canGoItems}
+          onClick={() => go(1)}
+        />
+        <StepBtn
+          label="箱写真"
+          active={step === 2}
+          disabled={!canGoBoxPhotos}
+          onClick={() => go(2)}
+        />
         <StepBtn label="ラベル" active={step === 3} disabled={!canGoLabel} onClick={() => go(3)} />
-        <StepBtn label="場所" active={step === 4} disabled={!canGoLocation} onClick={() => { ensureLocDraft(); go(4); }} />
+        <StepBtn
+          label="場所"
+          active={step === 4}
+          disabled={!canGoLocation}
+          onClick={() => {
+            ensureLocDraft();
+            go(4);
+          }}
+        />
       </nav>
 
       {/* 進行中の箱（箱登録後のみ表示） */}
       {boxIssued && step > 0 && (
         <div className="box-banner" role="note" aria-label="現在の箱">
           <div className="meta">
-            <div><strong>箱名：</strong>{box.name || '(無題)'}</div>
-            <div><strong>タグ：</strong>{(box.tags ?? []).join(' ') || '-'}</div>
+            <div>
+              <strong>箱名：</strong>
+              {box.name || '(無題)'}
+            </div>
+            <div>
+              <strong>タグ：</strong>
+              {(box.tags ?? []).join(' ') || '-'}
+            </div>
           </div>
           <div className="code">CODE: {box.code}</div>
         </div>
@@ -215,9 +242,12 @@ export default function RegisterClient({
           <h3 style={{ marginTop: 8 }}>1. 箱登録</h3>
           <div style={{ display: 'grid', gap: 8 }}>
             <div>
-              <button className="btn" onClick={issueBoxCode}>箱コード発行</button>
+              <button className="btn" onClick={issueBoxCode}>
+                箱コード発行
+              </button>
               <div style={{ marginTop: 6, fontFamily: 'monospace' }}>
-                箱ID: {box.id}<br />
+                箱ID: {box.id}
+                <br />
                 箱コード: {box.code || '(未発行)'}
               </div>
             </div>
@@ -236,7 +266,12 @@ export default function RegisterClient({
               <button className="btn primary" onClick={saveBoxMeta} disabled={!box.code}>
                 箱を登録/更新（ローカル）
               </button>
-              <button className="btn" onClick={() => go(1)} disabled={!canGoItems} style={{ marginLeft: 8 }}>
+              <button
+                className="btn"
+                onClick={() => go(1)}
+                disabled={!canGoItems}
+                style={{ marginLeft: 8 }}
+              >
                 次へ（アイテム）
               </button>
             </div>
@@ -249,34 +284,53 @@ export default function RegisterClient({
         <section>
           <h3>2. アイテム追加</h3>
           <div style={{ marginBottom: 8 }}>
-            <button className="btn" onClick={addItemDraft}>アイテムを追加</button>
-            <button className="btn primary" onClick={saveItems} disabled={!items.length} style={{ marginLeft: 8 }}>
+            <button className="btn" onClick={addItemDraft}>
+              アイテムを追加
+            </button>
+            <button
+              className="btn primary"
+              onClick={saveItems}
+              disabled={!items.length}
+              style={{ marginLeft: 8 }}
+            >
               アイテム登録（ローカル）
             </button>
           </div>
-          {!items.length && <div style={{ color: '#666' }}>まだアイテムがありません。追加してください。</div>}
+          {!items.length && (
+            <div style={{ color: '#666' }}>まだアイテムがありません。追加してください。</div>
+          )}
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 12 }}>
             {items.map((it, idx) => (
               <li key={it.id} style={{ border: '1px solid #eee', borderRadius: 8, padding: 12 }}>
                 <div style={{ display: 'grid', gap: 6 }}>
-                  <label>名前：<input value={it.name} onChange={(e) => {
-                    const v = e.target.value;
-                    setItems(list => list.map((x, i) => i === idx ? { ...x, name: v } : x));
-                  }} /></label>
-                  <label>タグ：
+                  <label>
+                    名前：
+                    <input
+                      value={it.name}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setItems((list) => list.map((x, i) => (i === idx ? { ...x, name: v } : x)));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    タグ：
                     <input
                       onChange={(e) => {
                         const arr = parseTags(e.target.value);
-                        setItems(list => list.map((x, i) => i === idx ? { ...x, tags: arr } : x));
+                        setItems((list) =>
+                          list.map((x, i) => (i === idx ? { ...x, tags: arr } : x))
+                        );
                       }}
                       placeholder="食器 割れ物"
                     />
                   </label>
-                  <label>メモ：
+                  <label>
+                    メモ：
                     <input
                       onChange={(e) => {
                         const v = e.target.value || null;
-                        setItems(list => list.map((x, i) => i === idx ? { ...x, note: v } : x));
+                        setItems((list) => list.map((x, i) => (i === idx ? { ...x, note: v } : x)));
                       }}
                       placeholder="取っ手に欠けあり など"
                     />
@@ -294,7 +348,18 @@ export default function RegisterClient({
                     {!!it.thumbs?.length && (
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
                         {it.thumbs.map((t, i) => (
-                          <img key={i} src={t} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 6, border: '1px solid #eee' }} />
+                          <img
+                            key={i}
+                            src={t}
+                            alt=""
+                            style={{
+                              width: 72,
+                              height: 72,
+                              objectFit: 'cover',
+                              borderRadius: 6,
+                              border: '1px solid #eee',
+                            }}
+                          />
                         ))}
                       </div>
                     )}
@@ -305,8 +370,12 @@ export default function RegisterClient({
           </ul>
 
           <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => go(0)}>戻る（箱登録）</button>
-            <button className="btn" onClick={() => go(2)} style={{ marginLeft: 8 }}>次へ（箱写真）</button>
+            <button className="btn" onClick={() => go(0)}>
+              戻る（箱登録）
+            </button>
+            <button className="btn" onClick={() => go(2)} style={{ marginLeft: 8 }}>
+              次へ（箱写真）
+            </button>
           </div>
         </section>
       )}
@@ -328,16 +397,33 @@ export default function RegisterClient({
           {!!box.thumbs?.length && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
               {box.thumbs.map((t, i) => (
-                <img key={i} src={t} alt="" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 6, border: '1px solid #eee' }} />
+                <img
+                  key={i}
+                  src={t}
+                  alt=""
+                  style={{
+                    width: 96,
+                    height: 96,
+                    objectFit: 'cover',
+                    borderRadius: 6,
+                    border: '1px solid #eee',
+                  }}
+                />
               ))}
             </div>
           )}
           <div style={{ marginTop: 12 }}>
-            <button className="btn primary" onClick={saveBoxPhotos} disabled={!box.code}>箱写真を反映（ローカル保存）</button>
+            <button className="btn primary" onClick={saveBoxPhotos} disabled={!box.code}>
+              箱写真を反映（ローカル保存）
+            </button>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => go(1)}>戻る（アイテム）</button>
-            <button className="btn" onClick={() => go(3)} style={{ marginLeft: 8 }}>次へ（ラベル）</button>
+            <button className="btn" onClick={() => go(1)}>
+              戻る（アイテム）
+            </button>
+            <button className="btn" onClick={() => go(3)} style={{ marginLeft: 8 }}>
+              次へ（ラベル）
+            </button>
           </div>
         </section>
       )}
@@ -354,11 +440,17 @@ export default function RegisterClient({
             <div style={{ color: '#666' }}>先に「箱登録」でコードを生成してください。</div>
           )}
           <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={printLabel} disabled={!box.code}>印刷</button>
+            <button className="btn" onClick={printLabel} disabled={!box.code}>
+              印刷
+            </button>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => go(2)}>戻る（箱写真）</button>
-            <button className="btn" onClick={() => go(4)} style={{ marginLeft: 8 }}>次へ（場所）</button>
+            <button className="btn" onClick={() => go(2)}>
+              戻る（箱写真）
+            </button>
+            <button className="btn" onClick={() => go(4)} style={{ marginLeft: 8 }}>
+              次へ（場所）
+            </button>
           </div>
         </section>
       )}
@@ -381,7 +473,18 @@ export default function RegisterClient({
             {!!loc?.thumbs?.length && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {loc.thumbs.map((t, i) => (
-                  <img key={i} src={t} alt="" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 6, border: '1px solid #eee' }} />
+                  <img
+                    key={i}
+                    src={t}
+                    alt=""
+                    style={{
+                      width: 96,
+                      height: 96,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      border: '1px solid #eee',
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -389,10 +492,12 @@ export default function RegisterClient({
               メモ：
               <input
                 value={loc?.note ?? ''}
-                onChange={(e) => setLoc((l) => {
-                  const base = l ?? emptyLocDraft(box.id);
-                  return { ...base, note: e.target.value || null };
-                })}
+                onChange={(e) =>
+                  setLoc((l) => {
+                    const base = l ?? emptyLocDraft(box.id);
+                    return { ...base, note: e.target.value || null };
+                  })
+                }
                 placeholder="棚A-1 / 押入れ上段 など"
               />
             </label>
@@ -404,7 +509,9 @@ export default function RegisterClient({
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => go(3)}>戻る（ラベル）</button>
+            <button className="btn" onClick={() => go(3)}>
+              戻る（ラベル）
+            </button>
           </div>
         </section>
       )}
@@ -413,8 +520,16 @@ export default function RegisterClient({
 }
 
 function StepBtn({
-  label, active, disabled, onClick,
-}: { label: string; active?: boolean; disabled?: boolean; onClick?: () => void }) {
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
   return (
     <button
       className="stepbtn"

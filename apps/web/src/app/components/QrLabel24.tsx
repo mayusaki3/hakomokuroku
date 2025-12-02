@@ -42,7 +42,7 @@ export default function QrLabel24({
         gap: `${Math.max(1, Math.min(mmPadding, 6))}mm`,
         padding: `${mmPadding}mm`,
         background: '#fff',
-        border: '1px solid #eee',     // 画面確認用。印刷では気になる場合は外してOK
+        border: '1px solid #eee', // 画面確認用。印刷では気になる場合は外してOK
         borderRadius: 6,
       }}
     >

@@ -17,21 +17,27 @@ export async function getDbCounts() {
 export async function exportBackup(opts?: { includeThumbs?: boolean }) {
   const includeThumbs = opts?.includeThumbs ?? true;
 
-  const [boxes, items] = await Promise.all([
-    db.boxes.toArray(),
-    db.items.toArray(),
-  ]);
+  const [boxes, items] = await Promise.all([db.boxes.toArray(), db.items.toArray()]);
 
   // デフォルトでは photoThumbs をそのまま含む（重いと感じたら OFF に）
-  const boxesOut = boxes.map(b => {
+  const boxesOut = boxes.map((b) => {
     const { id, code, name, location, tags, createdAt, updatedAt } = b;
     const anyB = b as any;
     return includeThumbs
-      ? { id, code, name, location, tags, createdAt, updatedAt, photoThumbs: anyB.photoThumbs ?? [] }
+      ? {
+          id,
+          code,
+          name,
+          location,
+          tags,
+          createdAt,
+          updatedAt,
+          photoThumbs: anyB.photoThumbs ?? [],
+        }
       : { id, code, name, location, tags, createdAt, updatedAt };
   });
 
-  const itemsOut = items.map(it => {
+  const itemsOut = items.map((it) => {
     const { id, boxId, name, tags, note, createdAt, updatedAt } = it;
     const anyI = it as any;
     return includeThumbs
@@ -75,12 +81,12 @@ export async function importBackup(file: File, strategy: 'merge' | 'replace' = '
       for (const b of data.boxes) {
         const newId = crypto.randomUUID();
         boxIdMap.set(b.id, newId);
-        const { id:_, ...rest } = b;
+        const { id: _, ...rest } = b;
         await db.boxes.add({ id: newId, ...rest } as Box);
       }
       for (const it of data.items) {
         const newId = crypto.randomUUID();
-        const { id:_, boxId: oldBoxId, ...rest } = it;
+        const { id: _, boxId: oldBoxId, ...rest } = it;
         const mappedBoxId = boxIdMap.get(oldBoxId);
         if (!mappedBoxId) continue; // 孤児は捨てる
         await db.items.add({ id: newId, boxId: mappedBoxId, ...rest } as Item);
@@ -93,29 +99,32 @@ export async function importBackup(file: File, strategy: 'merge' | 'replace' = '
   await db.transaction('rw', db.boxes, db.items, async () => {
     // 既存の boxes を code で引く
     const existingBoxes = await db.boxes.toArray();
-    const byCode = new Map(existingBoxes.map(b => [b.code.toLowerCase(), b]));
+    const byCode = new Map(existingBoxes.map((b) => [b.code.toLowerCase(), b]));
 
     // code 突合で upsert。ID は既存のものを維持し、なければ新規。
     const codeToId = new Map<string, string>();
     for (const b of data.boxes) {
       const key = b.code.toLowerCase();
       const hit = byCode.get(key);
-      const incomingNewer =
-        hit ? (new Date(b.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) : true;
+      const incomingNewer = hit
+        ? new Date(b.updatedAt).getTime() > new Date(hit.updatedAt).getTime()
+        : true;
 
       if (!hit) {
         const newId = crypto.randomUUID();
         codeToId.set(key, newId);
-        const { id:_, ...rest } = b;
+        const { id: _, ...rest } = b;
         await db.boxes.add({ id: newId, ...rest } as Box);
       } else {
         codeToId.set(key, hit.id);
         if (incomingNewer) {
           await db.boxes.update(hit.id, {
-            name: b.name, location: b.location, tags: b.tags,
+            name: b.name,
+            location: b.location,
+            tags: b.tags,
             updatedAt: b.updatedAt,
             // 任意フィールド
-            ...(b as any).photoThumbs ? { photoThumbs: (b as any).photoThumbs } : {},
+            ...((b as any).photoThumbs ? { photoThumbs: (b as any).photoThumbs } : {}),
           } as any);
         }
       }
@@ -123,22 +132,26 @@ export async function importBackup(file: File, strategy: 'merge' | 'replace' = '
 
     // items: id 突合。boxId は code から再マッピング。
     const existingItems = await db.items.toArray();
-    const byId = new Map(existingItems.map(i => [i.id, i]));
+    const byId = new Map(existingItems.map((i) => [i.id, i]));
 
     for (const it of data.items) {
       const hit = byId.get(it.id);
       // boxId を code からマップできるようにするため、バックアップに boxCode が無い前提では
       // 既存/新規の boxId を維持（replace では再割当済み）
-      const incomingNewer =
-        hit ? (new Date(it.updatedAt).getTime() > new Date(hit.updatedAt).getTime()) : true;
+      const incomingNewer = hit
+        ? new Date(it.updatedAt).getTime() > new Date(hit.updatedAt).getTime()
+        : true;
 
       if (!hit) {
         await db.items.add(it as Item);
       } else if (incomingNewer) {
         await db.items.update(hit.id, {
-          name: it.name, tags: it.tags, note: it.note, boxId: it.boxId,
+          name: it.name,
+          tags: it.tags,
+          note: it.note,
+          boxId: it.boxId,
           updatedAt: it.updatedAt,
-          ...(it as any).photoThumbs ? { photoThumbs: (it as any).photoThumbs } : {},
+          ...((it as any).photoThumbs ? { photoThumbs: (it as any).photoThumbs } : {}),
         } as any);
       }
     }

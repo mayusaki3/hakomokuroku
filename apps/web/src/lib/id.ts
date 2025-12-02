@@ -4,7 +4,7 @@ const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export function generateBoxCode(length = 5) {
   let s = '';
-  crypto.getRandomValues(new Uint32Array(length)).forEach(v => {
+  crypto.getRandomValues(new Uint32Array(length)).forEach((v) => {
     s += ALPHABET[v % ALPHABET.length];
   });
   return `BX-${s}`;

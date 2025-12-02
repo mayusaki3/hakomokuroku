@@ -8,8 +8,13 @@ let BrowserQRCodeReader: any; // dynamic import for QR
 function CameraIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M9 3l1.5 2H15l2 2h2a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h2l2-4z" fill="none" stroke="currentColor" strokeWidth="1.5"/>
-      <circle cx="12" cy="13" r="4" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+      <path
+        d="M9 3l1.5 2H15l2 2h2a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2h2l2-4z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <circle cx="12" cy="13" r="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }
@@ -33,8 +38,10 @@ export default function Home() {
         ]);
         const boxMap = new Map<string, any>(boxes.map((b: any) => [b.id, b]));
         res = [
-          ...boxes.map((b: any) => ({ kind: 'box', box: b } as SearchRow)),
-          ...items.map((it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) } as SearchRow)),
+          ...boxes.map((b: any) => ({ kind: 'box', box: b }) as SearchRow),
+          ...items.map(
+            (it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) }) as SearchRow
+          ),
         ];
       }
       setRows(res);
@@ -48,8 +55,10 @@ export default function Home() {
           ]);
           const boxMap = new Map<string, any>(boxes.map((b: any) => [b.id, b]));
           const fallback = [
-            ...boxes.map((b: any) => ({ kind: 'box', box: b } as SearchRow)),
-            ...items.map((it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) } as SearchRow)),
+            ...boxes.map((b: any) => ({ kind: 'box', box: b }) as SearchRow),
+            ...items.map(
+              (it: any) => ({ kind: 'item', item: it, box: boxMap.get(it.boxId) }) as SearchRow
+            ),
           ];
           setRows(fallback);
         } catch {}
@@ -75,7 +84,9 @@ export default function Home() {
       alert('QRの読み取りに失敗しました。もう一度お試しください。');
     } finally {
       setScanning(false);
-      try { await readerRef.current?.reset(); } catch {}
+      try {
+        await readerRef.current?.reset();
+      } catch {}
     }
   };
 
@@ -86,13 +97,17 @@ export default function Home() {
           <div className="searchbar">
             <input
               value={q}
-              onChange={e => setQ(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') runTextSearch(); }}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') runTextSearch();
+              }}
               placeholder="コード／箱名／場所／タグ／アイテム名／メモで検索"
               enterKeyHint="search"
               style={{ padding: 12, fontSize: 16 }}
             />
-            <button type="button" onClick={runTextSearch} className="btn">検索</button>
+            <button type="button" onClick={runTextSearch} className="btn">
+              検索
+            </button>
             <button type="button" onClick={startScan} aria-disabled={scanning} className="icon-btn">
               <CameraIcon />
             </button>
@@ -100,14 +115,20 @@ export default function Home() {
 
           {rows.length === 0 && !scanning && (
             <p className="search-help">
-              検索結果はここに表示されます。<br />
-              <b>カメラ</b>をタップして<strong>箱のQR</strong>を読み取ると、該当の箱と中のアイテムが一覧表示されます。
+              検索結果はここに表示されます。
+              <br />
+              <b>カメラ</b>をタップして<strong>箱のQR</strong>
+              を読み取ると、該当の箱と中のアイテムが一覧表示されます。
             </p>
           )}
 
           {scanning && (
             <div style={{ marginTop: 8 }}>
-              <video ref={videoRef} playsInline style={{ width: '100%', borderRadius: 8, border: '1px solid #eee' }} />
+              <video
+                ref={videoRef}
+                playsInline
+                style={{ width: '100%', borderRadius: 8, border: '1px solid #eee' }}
+              />
             </div>
           )}
         </section>
@@ -157,7 +178,9 @@ export default function Home() {
                       className="block rounded border p-3 hover:bg-muted"
                       aria-label="未登録コードの箱登録へ"
                     >
-                      <div className="font-medium">📦 箱コード: <code>{(r as any).code}</code></div>
+                      <div className="font-medium">
+                        📦 箱コード: <code>{(r as any).code}</code>
+                      </div>
                       <div className="text-sm text-destructive">未登録（タップで箱の登録へ）</div>
                     </a>
                   </li>

@@ -8,17 +8,25 @@ export default function ThemeRuntimeApplier() {
     const clearTheme = () => {
       // CSS変数を即時クリア
       const keys = [
-        'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
-        'hk-header-image','hk-header-fg',
-        'hk-toolbar-bg','hk-toolbar-fg',
-        'hk-input-bg','hk-input-fg','hk-input-border',
-        'hk-btn-bg','hk-btn-fg','hk-btn-border'
+        'hk-wallpaper-image',
+        'hk-wallpaper-color',
+        'hk-content-bg',
+        'hk-header-image',
+        'hk-header-fg',
+        'hk-toolbar-bg',
+        'hk-toolbar-fg',
+        'hk-input-bg',
+        'hk-input-fg',
+        'hk-input-border',
+        'hk-btn-bg',
+        'hk-btn-fg',
+        'hk-btn-border',
       ];
       for (const k of keys) root.style.removeProperty(`--${k}`);
-      root.style.setProperty('--hk-wallpaper-image','none');
+      root.style.setProperty('--hk-wallpaper-image', 'none');
       // ローカル状態も初期化
       localStorage.removeItem('hk.themeActiveVars');
-      localStorage.setItem('hk.themeActiveId','');
+      localStorage.setItem('hk.themeActiveId', '');
     };
 
     const setVars = (vars: Record<string, string> | null | undefined) => {
@@ -27,8 +35,10 @@ export default function ThemeRuntimeApplier() {
       for (const [k, v] of Object.entries(vars)) {
         const val = String(v ?? '');
         if (k === 'hk-wallpaper-image') {
-          root.style.setProperty('--hk-wallpaper-image',
-            val ? (val.startsWith('url(') ? val : `url(${val})`) : 'none');
+          root.style.setProperty(
+            '--hk-wallpaper-image',
+            val ? (val.startsWith('url(') ? val : `url(${val})`) : 'none'
+          );
         } else {
           root.style.setProperty(`--${k}`, val);
         }
@@ -42,29 +52,43 @@ export default function ThemeRuntimeApplier() {
         const vars = JSON.parse(s) as Record<string, string>;
         setVars(vars);
         return vars;
-      } catch { return null; }
+      } catch {
+        return null;
+      }
     };
 
     const loadFromServer = async () => {
       try {
         const r = await fetch('/api/settings/theme/active', { cache: 'no-store' });
-        if (r.status === 401) { clearTheme(); return; } // 未ログイン→デフォルト
+        if (r.status === 401) {
+          clearTheme();
+          return;
+        } // 未ログイン→デフォルト
         if (!r.ok) return;
 
-        const j = await r.json();              // { id, vars }
+        const j = await r.json(); // { id, vars }
         setVars(j?.vars || {});
-      } catch { /* no-op */ }
+      } catch {
+        /* no-op */
+      }
     };
 
     // 空IDは即デフォルト化。そうでなければローカル→サーバの順に適用
     const aid = localStorage.getItem('hk.themeActiveId') || '';
-    if (aid === '') { clearTheme(); }
-    else { loadFromLocal(); }
+    if (aid === '') {
+      clearTheme();
+    } else {
+      loadFromLocal();
+    }
     void loadFromServer();
 
-    const onUpdate = () => { loadFromLocal(); void loadFromServer(); };
+    const onUpdate = () => {
+      loadFromLocal();
+      void loadFromServer();
+    };
     window.addEventListener('hk-theme-updated', onUpdate);
-    window.addEventListener('hk:logout', onUpdate);    window.addEventListener('storage', onUpdate);
+    window.addEventListener('hk:logout', onUpdate);
+    window.addEventListener('storage', onUpdate);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void loadFromServer();
     });

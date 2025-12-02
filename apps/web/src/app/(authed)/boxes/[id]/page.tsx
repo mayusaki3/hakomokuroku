@@ -24,9 +24,11 @@ export default function BoxDetailPage() {
         setTags((b?.tags ?? []).join(', '));
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [params.id]);
-  
+
   const { data: itemCount } = useDexieLive<number>(
     async () => db.items.where('boxId').equals(params.id).count(),
     [params.id],
@@ -34,14 +36,21 @@ export default function BoxDetailPage() {
   );
 
   if (!box) {
-    return <main style={{ padding: 24 }}><p>読み込み中、または存在しません。</p></main>;
+    return (
+      <main style={{ padding: 24 }}>
+        <p>読み込み中、または存在しません。</p>
+      </main>
+    );
   }
 
   const onSave = async () => {
     await updateBox(box.id, {
       name: name.trim() || box.code,
       location: location.trim() || undefined,
-      tags: tags.split(',').map(s => s.trim()).filter(Boolean),
+      tags: tags
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
     });
     alert('保存しました');
   };
@@ -53,32 +62,76 @@ export default function BoxDetailPage() {
   };
 
   const tapeUrl = `/print/tape?${new URLSearchParams({
-    code: box.code, name: name || box.name, location: location || '', n: '1', s: '14', m: '2'
+    code: box.code,
+    name: name || box.name,
+    location: location || '',
+    n: '1',
+    s: '14',
+    m: '2',
   }).toString()}`;
   const a4Url = `/print/labels?${new URLSearchParams({
-    code: box.code, name: name || box.name, location: location || '', n: '21', cols: '7', gap: '2', s: '14', m: '2', o: 'portrait'
+    code: box.code,
+    name: name || box.name,
+    location: location || '',
+    n: '21',
+    cols: '7',
+    gap: '2',
+    s: '14',
+    m: '2',
+    o: 'portrait',
   }).toString()}`;
 
   return (
     <main style={{ padding: 24, maxWidth: 720 }}>
       <h1>箱の詳細</h1>
-      <p><code>{box.code}</code></p>
+      <p>
+        <code>{box.code}</code>
+      </p>
 
       <div style={{ display: 'grid', gap: 12 }}>
-        <label>箱名
-          <input value={name} onChange={e => setName(e.target.value)} style={{ width: '100%', padding: 8 }} />
+        <label>
+          箱名
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
-        <label>場所 / 保管先
-          <input value={location} onChange={e => setLocation(e.target.value)} style={{ width: '100%', padding: 8 }} />
+        <label>
+          場所 / 保管先
+          <input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
-        <label>タグ（カンマ区切り）
-          <input value={tags} onChange={e => setTags(e.target.value)} style={{ width: '100%', padding: 8 }} />
+        <label>
+          タグ（カンマ区切り）
+          <input
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={onSave} style={{ padding: '6px 10px' }}>保存</button>
-          <a href={tapeUrl} target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>テープ印刷</a>
-          <a href={a4Url}   target="_blank" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>A4面付け</a>
+          <button onClick={onSave} style={{ padding: '6px 10px' }}>
+            保存
+          </button>
+          <a
+            href={tapeUrl}
+            target="_blank"
+            style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
+          >
+            テープ印刷
+          </a>
+          <a
+            href={a4Url}
+            target="_blank"
+            style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
+          >
+            A4面付け
+          </a>
           <a
             href={`/items?boxId=${encodeURIComponent(box.id)}`}
             style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
@@ -91,10 +144,23 @@ export default function BoxDetailPage() {
           >
             アイテム追加
           </a>
-          <button onClick={onDelete} style={{ padding: '6px 10px', color: '#b91c1c', border: '1px solid #fca5a5', background: '#fff' }}>
+          <button
+            onClick={onDelete}
+            style={{
+              padding: '6px 10px',
+              color: '#b91c1c',
+              border: '1px solid #fca5a5',
+              background: '#fff',
+            }}
+          >
             削除
           </button>
-          <a href="/boxes" style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}>一覧に戻る</a>
+          <a
+            href="/boxes"
+            style={{ padding: '6px 10px', border: '1px solid #ddd', textDecoration: 'none' }}
+          >
+            一覧に戻る
+          </a>
         </div>
       </div>
     </main>

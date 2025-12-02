@@ -38,7 +38,10 @@ function loadImageFromBlob(blob: File | Blob) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
     img.onerror = reject;
     img.src = url;
   });
@@ -74,21 +77,30 @@ function drawDownscaledOriented(img: HTMLImageElement, maxPx: number, orientatio
 }
 
 // 壁紙タイル用：拡大禁止。長辺 target(px) を上限にダウンスケールのみして dataURL を返す
-export async function normalizeTileNoUpscale(input: File | Blob | string, target = 64): Promise<string> {
+export async function normalizeTileNoUpscale(
+  input: File | Blob | string,
+  target = 64
+): Promise<string> {
   const url = typeof input === 'string' ? input : URL.createObjectURL(input);
   try {
     const img = await new Promise<HTMLImageElement>((res, rej) => {
-      const im = new Image(); im.crossOrigin = 'anonymous';
-      im.onload = () => res(im); im.onerror = rej; im.src = url;
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = () => res(im);
+      im.onerror = rej;
+      im.src = url;
     });
-    const w = img.naturalWidth, h = img.naturalHeight;
+    const w = img.naturalWidth,
+      h = img.naturalHeight;
     // アップスケール禁止：元が小さければそのまま返す
     if (Math.max(w, h) <= target) return url;
 
     const scale = target / Math.max(w, h);
-    const dw = Math.round(w * scale), dh = Math.round(h * scale);
+    const dw = Math.round(w * scale),
+      dh = Math.round(h * scale);
     const canvas = document.createElement('canvas');
-    canvas.width = dw; canvas.height = dh;
+    canvas.width = dw;
+    canvas.height = dh;
     const ctx = canvas.getContext('2d')!;
     ctx.imageSmoothingEnabled = true;
     // PNGで保存（タイルに圧縮劣化を出したくないため）
@@ -100,7 +112,12 @@ export async function normalizeTileNoUpscale(input: File | Blob | string, target
 }
 
 // EXIF Orientationに応じてキャンバス変換を適用する
-function applyExifTransform(ctx: CanvasRenderingContext2D, w: number, h: number, orientation?: number) {
+function applyExifTransform(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  orientation?: number
+) {
   switch (orientation) {
     case 2: // Mirror horizontal
       ctx.translate(w, 0);
@@ -138,5 +155,5 @@ function applyExifTransform(ctx: CanvasRenderingContext2D, w: number, h: number,
 }
 
 function canvasToWebp(canvas: HTMLCanvasElement, quality: number) {
-  return new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/webp', quality));
+  return new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/webp', quality));
 }

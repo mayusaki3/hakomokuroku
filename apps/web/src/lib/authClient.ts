@@ -1,7 +1,16 @@
 import useSWR, { mutate as globalMutate } from 'swr';
 import { apiGet } from './fetcher';
 
-type MeResp = { ok: boolean; user?: { id:string; userId:string; userName:string|null; iconDataUrl:string|null; totpEnabled:boolean } };
+type MeResp = {
+  ok: boolean;
+  user?: {
+    id: string;
+    userId: string;
+    userName: string | null;
+    iconDataUrl: string | null;
+    totpEnabled: boolean;
+  };
+};
 
 export function useMe() {
   const { data, error, isLoading, mutate } = useSWR<MeResp>('/api/auth/me', apiGet, {

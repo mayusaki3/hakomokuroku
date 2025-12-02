@@ -3,8 +3,16 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Camera, Image as ImageIcon, RotateCwSquare, Pencil, Check, X,
-  Shield, Monitor, Settings as SettingsIcon, LogOut
+  Camera,
+  Image as ImageIcon,
+  RotateCwSquare,
+  Pencil,
+  Check,
+  X,
+  Shield,
+  Monitor,
+  Settings as SettingsIcon,
+  LogOut,
 } from 'lucide-react';
 import { mutate as globalMutate } from 'swr';
 
@@ -23,12 +31,12 @@ export default function SettingsUserPage() {
   const loadMe = useCallback(async () => {
     try {
       const r = await fetch('/api/auth/me?cb=' + Date.now(), {
-        cache:'no-store',
-        credentials:'include',
-        headers:{ accept:'application/json' }
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { accept: 'application/json' },
       });
       if (!r.ok) return handleUnauthed();
-      const body = await r.json().catch(() => ({} as any));
+      const body = await r.json().catch(() => ({}) as any);
 
       // /api/auth/me が {ok:true, user:{...}} か {ok:true, me:{...}} の両対応
       const u: Me | null = (body && (body.user ?? body.me)) ?? null;
@@ -37,7 +45,7 @@ export default function SettingsUserPage() {
       setMe(u);
       setUserNameDraft(u.userName ?? '');
       setIconPreview(u.iconDataUrl ?? null);
-      
+
       // 端末ラベル（トークン名）
       try {
         const cur = JSON.parse(localStorage.getItem('hk.sync') || '{}');
@@ -45,8 +53,10 @@ export default function SettingsUserPage() {
         if (!token) return;
         const enc = new TextEncoder().encode(token);
         const h = await crypto.subtle.digest('SHA-256', enc);
-        const hash = Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('');
-        const rt = await fetch('/api/auth/tokens', { cache:'no-store', credentials:'include' });
+        const hash = Array.from(new Uint8Array(h))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        const rt = await fetch('/api/auth/tokens', { cache: 'no-store', credentials: 'include' });
         if (!rt.ok) return;
         const jt = await rt.json();
         const self = (jt.tokens || []).find((t: any) => t.tokenHash === hash);
@@ -60,13 +70,15 @@ export default function SettingsUserPage() {
   }, []);
 
   function handleUnauthed() {
-    try { localStorage.removeItem('hk.sync'); } catch {}
+    try {
+      localStorage.removeItem('hk.sync');
+    } catch {}
     document.cookie = 'hk_token=; Path=/; Max-Age=0; SameSite=Lax';
 
     const u = new URL(location.href);
     // 既に誘導先に居るなら、リダイレクトせずに未ログイン表示へ切り替え
     if (u.pathname === '/settings/user' && u.searchParams.get('login') === '1') {
-      setUnauth(true);   // ★ここで確実に表示を下ろす
+      setUnauth(true); // ★ここで確実に表示を下ろす
       return;
     }
     // まだなら誘導（既存運用に合わせて一本化）
@@ -89,22 +101,26 @@ export default function SettingsUserPage() {
 
   // アイコン入力ref
   const fileRefCamera = useRef<HTMLInputElement>(null);
-  const fileRefPicker  = useRef<HTMLInputElement>(null);
-  
+  const fileRefPicker = useRef<HTMLInputElement>(null);
+
   // 初期ロード：/api/settings/user から取得（{ok,user}）
-  useEffect(() => { loadMe(); }, [loadMe]);
+  useEffect(() => {
+    loadMe();
+  }, [loadMe]);
 
   // 画像送信：現行は PUT JSON {iconDataUrl}
   async function uploadIconDataUrl(dataUrl: string) {
     const r = await fetch('/api/user/icon', {
-      method:'PUT',
-      credentials:'include',
-      headers:{ 'content-type':'application/json', accept:'application/json' },
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ iconDataUrl: dataUrl, dataUrl }),
     });
     if (r.status === 401) return handleUnauthed();
     // サーバが何も返さないケースに備え、jsonは必須にしない
-    try { await r.json(); } catch {}
+    try {
+      await r.json();
+    } catch {}
     if (!r.ok) {
       // 失敗時は軽い通知だけ出してプレビューは残す（ユーザーに保存失敗を知らせる）
       console.error('icon upload failed', r.status);
@@ -112,17 +128,25 @@ export default function SettingsUserPage() {
       return;
     }
     // 自画面（ローカル状態）を即時更新
-    setMe(m => m ? ({ ...m, iconDataUrl: dataUrl }) : m);
-    setIconPreview(prev => prev ?? dataUrl);
+    setMe((m) => (m ? { ...m, iconDataUrl: dataUrl } : m));
+    setIconPreview((prev) => prev ?? dataUrl);
     // SWRキャッシュを「再フェッチなし」で上書き（ヘッダー即反映）
-    await globalMutate('/api/auth/me', (prev: any) => {
-      if (!prev?.ok) return { ok: true, user: { ...(me ?? {}), iconDataUrl: dataUrl } };
-      return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
-    }, false);
-    await globalMutate('/api/settings/user', (prev: any) => {
-      if (!prev?.user) return { user: { ...(me ?? {}), iconDataUrl: dataUrl } };
-      return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
-    }, false);
+    await globalMutate(
+      '/api/auth/me',
+      (prev: any) => {
+        if (!prev?.ok) return { ok: true, user: { ...(me ?? {}), iconDataUrl: dataUrl } };
+        return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
+      },
+      false
+    );
+    await globalMutate(
+      '/api/settings/user',
+      (prev: any) => {
+        if (!prev?.user) return { user: { ...(me ?? {}), iconDataUrl: dataUrl } };
+        return { ...prev, user: { ...prev.user, iconDataUrl: dataUrl } };
+      },
+      false
+    );
     // Header.tsx が購読しているイベントで念押し更新
     window.dispatchEvent(new Event('hk:me:changed'));
   }
@@ -151,8 +175,8 @@ export default function SettingsUserPage() {
     URL.revokeObjectURL(blobUrl);
 
     const dataUrl = canvas.toDataURL('image/png', 0.92); // PNGに統一
-    setIconPreview(dataUrl);           // 楽観プレビュー
-    await uploadIconDataUrl(dataUrl);  // サーバ保存
+    setIconPreview(dataUrl); // 楽観プレビュー
+    await uploadIconDataUrl(dataUrl); // サーバ保存
   }
 
   // 回転→256x256で書き出して送信
@@ -165,15 +189,16 @@ export default function SettingsUserPage() {
     img.onload = async () => {
       const size = 256;
       const canvas = document.createElement('canvas');
-      canvas.width = size; canvas.height = size;
+      canvas.width = size;
+      canvas.height = size;
       const ctx = canvas.getContext('2d')!;
-      ctx.clearRect(0,0,size,size);
-      ctx.translate(size/2, size/2);
-      ctx.rotate(90 * Math.PI / 180);
-      ctx.drawImage(img, -size/2, -size/2, size, size);
-      const dataUrl = canvas.toDataURL('image/png', 0.92);  // 直接 DataURL を得る
-      setIconPreview(dataUrl);                               // 即プレビュー更新
-      await uploadIconDataUrl(dataUrl);                      // サーバ保存
+      ctx.clearRect(0, 0, size, size);
+      ctx.translate(size / 2, size / 2);
+      ctx.rotate((90 * Math.PI) / 180);
+      ctx.drawImage(img, -size / 2, -size / 2, size, size);
+      const dataUrl = canvas.toDataURL('image/png', 0.92); // 直接 DataURL を得る
+      setIconPreview(dataUrl); // 即プレビュー更新
+      await uploadIconDataUrl(dataUrl); // サーバ保存
     };
     img.onerror = () => {};
     img.src = src;
@@ -183,16 +208,16 @@ export default function SettingsUserPage() {
   async function saveUserName() {
     setSavingUser(true);
     const r = await fetch('/api/user/profile', {
-      method:'PUT',
-      credentials:'include',
-      headers:{ 'content-type':'application/json', accept:'application/json' },
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ userName: userNameDraft }),
     });
     setSavingUser(false);
     if (r.status === 401) return handleUnauthed();
     if (r.ok) {
-      const j = await r.json().catch(()=>({}));
-      setMe(m => m ? ({ ...m, userName: j.userName ?? userNameDraft }) : m);
+      const j = await r.json().catch(() => ({}));
+      setMe((m) => (m ? { ...m, userName: j.userName ?? userNameDraft } : m));
       setEditingUserName(false);
       window.dispatchEvent(new Event('hk:me:changed'));
     }
@@ -202,14 +227,17 @@ export default function SettingsUserPage() {
   async function saveDeviceName() {
     setSavingDevice(true);
     const r = await fetch('/api/auth/tokens/label', {
-      method:'POST',
-      credentials:'include',
-      headers:{ 'content-type':'application/json' },
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ deviceName: deviceNameDraft }),
     });
     setSavingDevice(false);
     if (r.status === 401) return handleUnauthed();
-    if (r.ok) { setDeviceName(deviceNameDraft); setEditingDeviceName(false); }
+    if (r.ok) {
+      setDeviceName(deviceNameDraft);
+      setEditingDeviceName(false);
+    }
   }
 
   async function logout() {
@@ -228,11 +256,19 @@ export default function SettingsUserPage() {
     } catch {}
     const root = document.documentElement;
     const keys = [
-      'hk-wallpaper-image','hk-wallpaper-color','hk-content-bg',
-      'hk-header-image','hk-header-fg',
-      'hk-toolbar-bg','hk-toolbar-fg',
-      'hk-input-bg','hk-input-fg','hk-input-border',
-      'hk-btn-bg','hk-btn-fg','hk-btn-border'
+      'hk-wallpaper-image',
+      'hk-wallpaper-color',
+      'hk-content-bg',
+      'hk-header-image',
+      'hk-header-fg',
+      'hk-toolbar-bg',
+      'hk-toolbar-fg',
+      'hk-input-bg',
+      'hk-input-fg',
+      'hk-input-border',
+      'hk-btn-bg',
+      'hk-btn-fg',
+      'hk-btn-border',
     ];
     for (const k of keys) root.style.removeProperty(`--${k}`);
     root.style.setProperty('--hk-wallpaper-image', 'none');
@@ -245,7 +281,7 @@ export default function SettingsUserPage() {
 
     // 4) 404 の /login を使わず、運用済みの誘導先へ
     location.replace('/settings/user?login=1');
-  } 
+  }
 
   // 1) 未ログインUIを最優先で降ろす
   if (unauth) {
@@ -264,7 +300,7 @@ export default function SettingsUserPage() {
     <div className="app-content content-edge-6">
       <div className="app-scroll">
         <section className="hk-frame">
-          <h2 style={{ margin:'2px 0 8px' }}>ユーザー情報</h2>
+          <h2 style={{ margin: '2px 0 8px' }}>ユーザー情報</h2>
 
           <hr className="hk-frame__hr" />
 
@@ -286,7 +322,9 @@ export default function SettingsUserPage() {
                 height={96}
                 className="rounded-full"
                 style={{ objectFit: 'cover' }}
-                onError={(e)=>{ (e.currentTarget as HTMLImageElement).src = '/icons/user-default.svg'; }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/icons/user-default.svg';
+                }}
               />
             </div>
 
@@ -300,33 +338,76 @@ export default function SettingsUserPage() {
               }}
             >
               {/* ID */}
-              <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'nowrap', justifyContent:'flex-start' }}>
-                <span style={{ minWidth:30, whiteSpace:'nowrap' }}>ID :</span>
-                <div style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'nowrap',
+                  justifyContent: 'flex-start',
+                }}
+              >
+                <span style={{ minWidth: 30, whiteSpace: 'nowrap' }}>ID :</span>
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   <b>{me.userId}</b>
                 </div>
               </div>
 
               {/* カメラ／画像／回転 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  justifyContent: 'flex-start',
+                }}
+              >
                 <input
                   ref={fileRefCamera}
                   type="file"
                   accept="image/*"
                   capture="environment"
                   hidden
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadIcon(f);
+                  }}
                 />
                 <input
                   ref={fileRefPicker}
                   type="file"
                   accept="image/*"
                   hidden
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) uploadIcon(f);
+                  }}
                 />
-                <button className="btn" aria-label="カメラで撮影" onClick={() => fileRefCamera.current?.click()}><Camera size={16} /></button>
-                <button className="btn" aria-label="画像を選択" onClick={() => fileRefPicker.current?.click()}><ImageIcon size={16} /></button>
-                <button className="btn" aria-label="90度回転" onClick={rotateIcon90}><RotateCwSquare size={16} /></button>
+                <button
+                  className="btn"
+                  aria-label="カメラで撮影"
+                  onClick={() => fileRefCamera.current?.click()}
+                >
+                  <Camera size={16} />
+                </button>
+                <button
+                  className="btn"
+                  aria-label="画像を選択"
+                  onClick={() => fileRefPicker.current?.click()}
+                >
+                  <ImageIcon size={16} />
+                </button>
+                <button className="btn" aria-label="90度回転" onClick={rotateIcon90}>
+                  <RotateCwSquare size={16} />
+                </button>
               </div>
             </div>
           </div>
@@ -338,42 +419,100 @@ export default function SettingsUserPage() {
             <span className="form-label">ユーザー名</span>
             <input
               value={userNameDraft}
-              onChange={e=>setUserNameDraft(e.target.value)}
+              onChange={(e) => setUserNameDraft(e.target.value)}
               maxLength={50}
               readOnly={!editingUserName}
               aria-readonly={!editingUserName}
               className={`form-input ${!editingUserName ? 'opacity-70 pointer-events-none' : ''}`}
-              onKeyDown={(e)=>{ if (!editingUserName) return; if (e.key==='Enter') saveUserName(); if (e.key==='Escape'){ setUserNameDraft(me.userName ?? ''); setEditingUserName(false);} }}
+              onKeyDown={(e) => {
+                if (!editingUserName) return;
+                if (e.key === 'Enter') saveUserName();
+                if (e.key === 'Escape') {
+                  setUserNameDraft(me.userName ?? '');
+                  setEditingUserName(false);
+                }
+              }}
             />
             {!editingUserName ? (
-              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingUserName(true)}><Pencil size={16} /></button>
+              <button
+                className="btn form-actions"
+                aria-label="編集"
+                onClick={() => setEditingUserName(true)}
+              >
+                <Pencil size={16} />
+              </button>
             ) : (
               <div className="form-actions">
-                <button className="btn btn-primary" aria-label="保存" disabled={savingUser || !editingUserName} onClick={saveUserName}><Check size={16} /></button>
-                <button className="btn" aria-label="キャンセル" onClick={()=>{ setUserNameDraft(me.userName ?? ''); setEditingUserName(false); }}><X size={16} /></button>
+                <button
+                  className="btn btn-primary"
+                  aria-label="保存"
+                  disabled={savingUser || !editingUserName}
+                  onClick={saveUserName}
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  className="btn"
+                  aria-label="キャンセル"
+                  onClick={() => {
+                    setUserNameDraft(me.userName ?? '');
+                    setEditingUserName(false);
+                  }}
+                >
+                  <X size={16} />
+                </button>
               </div>
             )}
           </div>
 
           {/* 中段：デバイス名（ローカル管理のまま） */}
-          <div className="form-row" style={{ marginTop:8 }}>
+          <div className="form-row" style={{ marginTop: 8 }}>
             <span className="form-label">デバイス名</span>
             <input
               value={deviceNameDraft}
-              onChange={e=>setDeviceNameDraft(e.target.value)}
+              onChange={(e) => setDeviceNameDraft(e.target.value)}
               maxLength={80}
               readOnly={!editingDeviceName}
               aria-readonly={!editingDeviceName}
               className={`form-input ${!editingDeviceName ? 'opacity-70 pointer-events-none' : ''}`}
               placeholder={deviceName ? '' : '未設定'}
-              onKeyDown={(e)=>{ if (!editingDeviceName) return; if (e.key==='Enter') saveDeviceName(); if (e.key==='Escape'){ setDeviceNameDraft(deviceName); setEditingDeviceName(false);} }}
+              onKeyDown={(e) => {
+                if (!editingDeviceName) return;
+                if (e.key === 'Enter') saveDeviceName();
+                if (e.key === 'Escape') {
+                  setDeviceNameDraft(deviceName);
+                  setEditingDeviceName(false);
+                }
+              }}
             />
             {!editingDeviceName ? (
-              <button className="btn form-actions" aria-label="編集" onClick={()=>setEditingDeviceName(true)}><Pencil size={16} /></button>
+              <button
+                className="btn form-actions"
+                aria-label="編集"
+                onClick={() => setEditingDeviceName(true)}
+              >
+                <Pencil size={16} />
+              </button>
             ) : (
               <div className="form-actions">
-                <button className="btn btn-primary" aria-label="保存" disabled={savingDevice || !editingDeviceName} onClick={saveDeviceName}><Check size={16} /></button>
-                <button className="btn" aria-label="キャンセル" onClick={()=>{ setDeviceNameDraft(deviceName); setEditingDeviceName(false); }}><X size={16} /></button>
+                <button
+                  className="btn btn-primary"
+                  aria-label="保存"
+                  disabled={savingDevice || !editingDeviceName}
+                  onClick={saveDeviceName}
+                >
+                  <Check size={16} />
+                </button>
+                <button
+                  className="btn"
+                  aria-label="キャンセル"
+                  onClick={() => {
+                    setDeviceNameDraft(deviceName);
+                    setEditingDeviceName(false);
+                  }}
+                >
+                  <X size={16} />
+                </button>
               </div>
             )}
           </div>
@@ -424,8 +563,12 @@ export default function SettingsUserPage() {
 
           {/* 最下段：ログアウト（横いっぱい） */}
           <div>
-            <button className="btn" style={{ width:'100%', justifyContent:'center' }} onClick={logout}>
-              <LogOut size={16} style={{ marginRight:6 }} /> ログアウト
+            <button
+              className="btn"
+              style={{ width: '100%', justifyContent: 'center' }}
+              onClick={logout}
+            >
+              <LogOut size={16} style={{ marginRight: 6 }} /> ログアウト
             </button>
           </div>
         </section>

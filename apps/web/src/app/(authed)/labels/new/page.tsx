@@ -23,7 +23,9 @@ export default function NewLabelPage() {
       const svg = await makeQrSvg(url, { margin: qrMargin, ecl: 'M' });
       if (!canceled) setQrSvg(svg);
     })();
-    return () => { canceled = true; };
+    return () => {
+      canceled = true;
+    };
   }, [url, qrMargin]); // ← margin 変更でも再生成
 
   const handlePrint = () => window.print();
@@ -34,8 +36,8 @@ export default function NewLabelPage() {
       name: boxName,
       location: location,
       n: '1',
-      s: String(qrSizeMm),     // ← 追加: size
-      m: String(qrMargin),     // ← 追加: margin
+      s: String(qrSizeMm), // ← 追加: size
+      m: String(qrMargin), // ← 追加: margin
     });
     window.open(`/print/tape?${params.toString()}`, '_blank');
   };
@@ -45,12 +47,12 @@ export default function NewLabelPage() {
       code: boxCode,
       name: boxName,
       location,
-      n: '21',           // 既定の枚数（適宜変更）
-      cols: '7',         // 既定列数
-      gap: '2',          // ギャップmm
+      n: '21', // 既定の枚数（適宜変更）
+      cols: '7', // 既定列数
+      gap: '2', // ギャップmm
       s: String(qrSizeMm),
       m: String(qrMargin),
-      o: 'portrait'
+      o: 'portrait',
     });
     window.open(`/print/labels?${params.toString()}`, '_blank');
   };
@@ -60,27 +62,55 @@ export default function NewLabelPage() {
       <h1>QRラベル作成</h1>
       <p>24mmテープ向け（PT-2430PC）</p>
 
-      <form onSubmit={(e) => e.preventDefault()} style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
-        <label>箱コード
-          <input value={boxCode} onChange={(e) => setBoxCode(e.target.value)} style={{ width: '100%', padding: 8 }} />
+      <form
+        onSubmit={(e) => e.preventDefault()}
+        style={{ display: 'grid', gap: 12, maxWidth: 720 }}
+      >
+        <label>
+          箱コード
+          <input
+            value={boxCode}
+            onChange={(e) => setBoxCode(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
-        <label>箱名
-          <input value={boxName} onChange={(e) => setBoxName(e.target.value)} style={{ width: '100%', padding: 8 }} />
+        <label>
+          箱名
+          <input
+            value={boxName}
+            onChange={(e) => setBoxName(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
-        <label>場所 / タグ
-          <input value={location} onChange={(e) => setLocation(e.target.value)} style={{ width: '100%', padding: 8 }} />
+        <label>
+          場所 / タグ
+          <input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            style={{ width: '100%', padding: 8 }}
+          />
         </label>
 
         {/* QRサイズ・Quiet Zone */}
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-          <label>QRサイズ(mm)
-            <select value={qrSizeMm} onChange={(e) => setQrSizeMm(Number(e.target.value) as 14 | 16)} style={{ marginLeft: 8, padding: 6 }}>
+          <label>
+            QRサイズ(mm)
+            <select
+              value={qrSizeMm}
+              onChange={(e) => setQrSizeMm(Number(e.target.value) as 14 | 16)}
+              style={{ marginLeft: 8, padding: 6 }}
+            >
               <option value={14}>14</option>
               <option value={16}>16</option>
             </select>
           </label>
-          <label>Quiet Zone（margin）
-            <select value={qrMargin} onChange={(e) => setQrMargin(Number(e.target.value))} style={{ marginLeft: 8, padding: 6 }}>
+          <label>
+            Quiet Zone（margin）
+            <select
+              value={qrMargin}
+              onChange={(e) => setQrMargin(Number(e.target.value))}
+              style={{ marginLeft: 8, padding: 6 }}
+            >
               <option value={0}>0</option>
               <option value={1}>1</option>
               <option value={2}>2（推奨）</option>
@@ -92,7 +122,11 @@ export default function NewLabelPage() {
       </form>
 
       <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button type="button" onClick={() => setBoxCode(generateBoxCode())} style={{ padding: '6px 10px' }}>
+        <button
+          type="button"
+          onClick={() => setBoxCode(generateBoxCode())}
+          style={{ padding: '6px 10px' }}
+        >
           コードを自動生成
         </button>
         <button onClick={handlePrint} style={{ padding: '6px 10px' }}>
@@ -109,11 +143,17 @@ export default function NewLabelPage() {
       <div style={{ marginTop: 24 }}>
         <h2>プレビュー</h2>
         <div style={{ display: 'inline-flex', gap: '8mm', padding: '8mm', background: '#fafafa' }}>
-          <QrLabel24 code={boxCode} name={boxName} location={location} qrSvg={qrSvg} qrSizeMm={qrSizeMm} />
+          <QrLabel24
+            code={boxCode}
+            name={boxName}
+            location={location}
+            qrSvg={qrSvg}
+            qrSizeMm={qrSizeMm}
+          />
         </div>
         <p style={{ marginTop: 8, color: '#555' }}>
-          ※ 読み取り安定性が低ければ、まずは Quiet Zone を 2→3→4 と増やして試してください。<br />
-          ※ 16mm にするとQRは大きくなりますが、その分テキスト領域が狭くなります。
+          ※ 読み取り安定性が低ければ、まずは Quiet Zone を 2→3→4 と増やして試してください。
+          <br />※ 16mm にするとQRは大きくなりますが、その分テキスト領域が狭くなります。
         </p>
       </div>
     </main>

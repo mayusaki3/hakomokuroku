@@ -38,9 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AutoSyncEndpoint />
 
         <div className="app-content">
-          <ContentArea>
-            {children}
-          </ContentArea>          
+          <ContentArea>{children}</ContentArea>
         </div>
 
         <MobileTabBar />

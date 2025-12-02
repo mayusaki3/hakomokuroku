@@ -12,9 +12,9 @@ export interface Box {
   thumbs?: string[] | null;
   meta?: any | null;
   aiState?: AIState | null;
-  aiUpdatedAt?: string | null;   // ISO
-  createdAt: string;             // ISO
-  updatedAt: string;             // ISO
+  aiUpdatedAt?: string | null; // ISO
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
 }
 
 export interface Item {
@@ -27,20 +27,20 @@ export interface Item {
   meta?: any | null;
   aiState?: AIState | null;
   aiUpdatedAt?: string | null;
-  createdAt: string;             // ISO
-  updatedAt: string;             // ISO
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
 }
 
 export interface BoxLocation {
   id: string;
   boxId: string;
-  thumbs?: string[] | null;      // 置き場所のサムネ
+  thumbs?: string[] | null; // 置き場所のサムネ
   note?: string | null;
   meta?: any | null;
   aiState?: AIState | null;
   aiUpdatedAt?: string | null;
-  createdAt: string;             // ISO
-  updatedAt: string;             // ISO
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
 }
 
 export type TagKind = 'BOX' | 'ITEM' | 'SHARED';
@@ -50,8 +50,8 @@ export interface Tag {
   name: string;
   kind: TagKind;
   enabled: boolean;
-  createdAt: string;             // ISO
-  updatedAt: string;             // ISO
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
 }
 
 // Dexie v3
@@ -65,10 +65,10 @@ class HKDB extends Dexie {
     super('hk-local-v1');
     // v1 スキーマ
     this.version(1).stores({
-      boxes:        'id, code, updatedAt, aiState',
-      items:        'id, boxId, updatedAt, aiState, name',
+      boxes: 'id, code, updatedAt, aiState',
+      items: 'id, boxId, updatedAt, aiState, name',
       boxLocations: 'id, boxId, updatedAt, aiState',
-      tags:         'id, [name+kind], enabled'
+      tags: 'id, [name+kind], enabled',
     });
   }
 }
@@ -76,8 +76,8 @@ class HKDB extends Dexie {
 export const db = new HKDB();
 
 // DevConsole 支援
-;(globalThis as any).__hkdb = db;
-;(globalThis as any).__hkdbReset = async () => {
+(globalThis as any).__hkdb = db;
+(globalThis as any).__hkdbReset = async () => {
   // Dexie DB を削除して再オープン
   await db.delete();
   await db.open();
@@ -128,10 +128,13 @@ export async function removeBox(boxId: string) {
 
   await db.transaction('rw', db.items, db.boxLocations, db.boxes, async () => {
     // アイテムを仮置き箱へ移動
-    await db.items.where('boxId').equals(boxId).modify((it) => {
-      it.boxId = UNASSIGNED_BOX_ID;
-      it.updatedAt = now;
-    });
+    await db.items
+      .where('boxId')
+      .equals(boxId)
+      .modify((it) => {
+        it.boxId = UNASSIGNED_BOX_ID;
+        it.updatedAt = now;
+      });
 
     // 置き場所情報は削除（箱自体が無くなるため）
     await db.boxLocations.where('boxId').equals(boxId).delete();
@@ -183,13 +186,16 @@ export async function moveItems(itemIds: string[], targetBoxId: string) {
 
   return db.transaction('rw', db.items, async () => {
     let count = 0;
-    await db.items.where('id').anyOf(itemIds).modify((it) => {
-      if (it.boxId !== targetBoxId) {
-        it.boxId = targetBoxId;
-        it.updatedAt = now;
-        count++;
-      }
-    });
+    await db.items
+      .where('id')
+      .anyOf(itemIds)
+      .modify((it) => {
+        if (it.boxId !== targetBoxId) {
+          it.boxId = targetBoxId;
+          it.updatedAt = now;
+          count++;
+        }
+      });
     return count;
   });
 }

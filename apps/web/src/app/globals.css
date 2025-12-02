@@ -3,14 +3,19 @@
    =======================================================*/
 *,
 *::before,
-*::after { box-sizing: border-box; }
-html, body { height: 100%; }
-body{
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
   min-height: 100dvh;
   overflow: hidden;
-  display:flex;
-  flex-direction:column;
-  margin:0;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
   color: var(--hk-text);
 }
 
@@ -18,51 +23,54 @@ body{
    1) パラメータ（レイアウト／壁紙・配色）
    =======================================================*/
 /* レイアウト共通 */
-:root{
+:root {
   /* === サイズ・余白 === */
-  --edge-x: 6px;                 /* 画面左右の基本ガター幅(px) */
-  --gap-2: 2px;                  /* 微小ギャップ */
-  --gap-4: 4px;                  /* 小ギャップ */
-  --gap-6: 6px;                  /* 既定ギャップ（枠間/上下左右の標準） */
-  --gap-8: 8px;                  /* 大きめギャップ */
-  --radius-6: 6px;               /* 小角丸 */
-  --radius-12: 12px;             /* 大角丸 */
-  --topbar-h: 48px;              /* ヘッダー高さ */
-  --bottombar-h: 56px;           /* 下タブ高さ（モバイル） */
-  --content-max-w: 754px;        /* PC時の枠の最大幅 */
-  --form-gap: 6px;               /* 入力とボタンの固定間隔（.form-row 第3列） 非iOS既定 */
+  --edge-x: 6px; /* 画面左右の基本ガター幅(px) */
+  --gap-2: 2px; /* 微小ギャップ */
+  --gap-4: 4px; /* 小ギャップ */
+  --gap-6: 6px; /* 既定ギャップ（枠間/上下左右の標準） */
+  --gap-8: 8px; /* 大きめギャップ */
+  --radius-6: 6px; /* 小角丸 */
+  --radius-12: 12px; /* 大角丸 */
+  --topbar-h: 48px; /* ヘッダー高さ */
+  --bottombar-h: 56px; /* 下タブ高さ（モバイル） */
+  --content-max-w: 754px; /* PC時の枠の最大幅 */
+  --form-gap: 6px; /* 入力とボタンの固定間隔（.form-row 第3列） 非iOS既定 */
   /* === タイポグラフィ === */
-  --btn-font-size: 14px;         /* ボタン文字サイズ（全画面で統一） */
-  --input-font-size: 14px;       /* 入力欄の文字サイズ */
+  --btn-font-size: 14px; /* ボタン文字サイズ（全画面で統一） */
+  --input-font-size: 14px; /* 入力欄の文字サイズ */
 }
 /* iOS専用: ルートに壁紙を敷く + 画面全体のスクロール禁止 + コンテンツだけスクロール */
 @supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
-  :root{ --form-gap: 12px; }
-  html, body{
+  :root {
+    --form-gap: 12px;
+  }
+  html,
+  body {
     background-color: var(--hk-wallpaper-color);
     background-image: var(--hk-wallpaper-image);
     background-repeat: repeat;
     background-size: auto;
     background-position: 0 0;
   }
-  body{ overflow: hidden; overscroll-behavior-y: none; }
+  body {
+    overflow: hidden;
+    overscroll-behavior-y: none;
+  }
 }
 
 /* 小画面：ヘッダー＋下タブを控除した“ちょうどの高さ”にしてスクロールは中身だけ */
-@media (max-width: 767px){
-  .app-content{
-    height: calc(
-      100dvh - var(--topbar-h)
-      - (var(--bottombar-h) + env(safe-area-inset-bottom))
-    );
-    bottom: auto;  /* 高さ指定に切替 */
+@media (max-width: 767px) {
+  .app-content {
+    height: calc(100dvh - var(--topbar-h) - (var(--bottombar-h) + env(safe-area-inset-bottom)));
+    bottom: auto; /* 高さ指定に切替 */
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
 }
 
 /* 壁紙・配色（テーマ変数） */
-:root{
+:root {
   --hk-wallpaper-image: none;
   --hk-wallpaper-color: #cccccc; /* 壁紙が無い時の下地色 */
 
@@ -70,7 +78,7 @@ body{
   --hk-page-bg: #cccccc;
 
   /* コンテンツ枠（カード）の塗り＝枠の背景 */
-  --hk-card-bg: #ffffff;  
+  --hk-card-bg: #ffffff;
 
   /* 既定の文字色（全体） */
   --hk-text: #111827;
@@ -79,55 +87,71 @@ body{
   --hk-card-fg: var(--hk-text);
 
   --hk-header-image: none;
-  --hk-header-fg: #111827;       /* ヘッダ内テキスト色 */
+  --hk-header-fg: #111827; /* ヘッダ内テキスト色 */
 
-  --hk-toolbar-bg: #111827;      /* 下タブ背景 */
-  --hk-toolbar-fg: #e5e7eb;      /* 下タブ文字色 */
+  --hk-toolbar-bg: #111827; /* 下タブ背景 */
+  --hk-toolbar-fg: #e5e7eb; /* 下タブ文字色 */
 
-  --hk-input-bg: #ffffff;        /* 入力背景 */
-  --hk-input-fg: #111827;        /* 入力文字色 */
-  --hk-input-border: #cbd5e1;    /* 入力枠線 */
+  --hk-input-bg: #ffffff; /* 入力背景 */
+  --hk-input-fg: #111827; /* 入力文字色 */
+  --hk-input-border: #cbd5e1; /* 入力枠線 */
 
-  --hk-btn-bg: #ffffff;          /* ボタン背景 */
-  --hk-btn-fg: #111827;          /* ボタン文字色 */
-  --hk-btn-border: #94a3b8;      /* ボタン枠線 */
+  --hk-btn-bg: #ffffff; /* ボタン背景 */
+  --hk-btn-fg: #111827; /* ボタン文字色 */
+  --hk-btn-border: #94a3b8; /* ボタン枠線 */
 }
 
 /* =========================================================
    2) ページ全体 → ヘッダ部 / コンテンツ部 / 下タブ
    =======================================================*/
 /* ページ（土台）。paddingは持たない＝ガターはユーティリティで付与 */
-.hk-page{ padding:0; min-height:100dvh; display:flex; flex-direction:column; }
+.hk-page {
+  padding: 0;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
 
 /* 画面左右ガター（モバイルで6px固定。iOSはセーフエリア加味） */
-@media (max-width: 767px){
-  .content-edge-6{
-    padding-left:  calc(var(--edge-x) + env(safe-area-inset-left));
+@media (max-width: 767px) {
+  .content-edge-6 {
+    padding-left: calc(var(--edge-x) + env(safe-area-inset-left));
     padding-right: calc(var(--edge-x) + env(safe-area-inset-right));
   }
 }
 
 /* コンテンツ部（ヘッダー＋下タブを除いた領域） */
-.app-content{ position: fixed; top: var(--topbar-h); left:0; right:0; background: var(--hk-page-bg); }
-@media (min-width:768px){
-  .app-content{ bottom: 0; }                            /* PC: 下端まで */
+.app-content {
+  position: fixed;
+  top: var(--topbar-h);
+  left: 0;
+  right: 0;
+  background: var(--hk-page-bg);
 }
-@media (max-width:767px){
-  .app-content{                                         /* SP: 下タブぶん控除 */
+@media (min-width: 768px) {
+  .app-content {
+    bottom: 0;
+  } /* PC: 下端まで */
+}
+@media (max-width: 767px) {
+  .app-content {
+    /* SP: 下タブぶん控除 */
     bottom: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
   }
 }
 /* 実際にスクロールさせる中身 */
-.app-scroll{
+.app-scroll {
   height: 100%;
-  overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
-  padding-top: var(--gap-6);                            /* 先頭枠の上6px */
-  padding-bottom: var(--gap-6);                         /* 末尾も6px確保 */
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-top: var(--gap-6); /* 先頭枠の上6px */
+  padding-bottom: var(--gap-6); /* 末尾も6px確保 */
 }
 
 /* PC時：コンテンツ枠の最大幅を中央で制限 */
-@media (min-width: 768px){
-  .app-scroll > .hk-frame{
+@media (min-width: 768px) {
+  .app-scroll > .hk-frame {
     max-width: var(--content-max-w);
     margin-left: auto;
     margin-right: auto;
@@ -135,122 +159,202 @@ body{
 }
 
 /* iOSでコンテンツだけスクロールさせたい領域に付与 */
-.content-scroll{
+.content-scroll {
   height: 100%;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 /* ヘッダ部 */
-.header{
-  position: fixed; inset: 0 0 auto 0; z-index:20;   /* 画面上に固定 */
+.header {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 20; /* 画面上に固定 */
   height: var(--topbar-h);
-  display:flex; align-items:center;
-  margin:0;
+  display: flex;
+  align-items: center;
+  margin: 0;
   background: var(--hk-btn-bg);
   border-bottom: 1px solid var(--hk-btn-border);
 }
-.nav-horizontal { display: flex; gap: 6px; }
+.nav-horizontal {
+  display: flex;
+  gap: 6px;
+}
 
 /* 中央タイトル行を“高さ=ヘッダー”で厳密センタリング */
-.header-mid{ display:flex; align-items:center; height: var(--topbar-h); }
-.title-row{ display:flex; align-items:center; gap:6px; height:100%; line-height:1; }
-.title-text{ line-height:1; }
+.header-mid {
+  display: flex;
+  align-items: center;
+  height: var(--topbar-h);
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  line-height: 1;
+}
+.title-text {
+  line-height: 1;
+}
 
-@media (min-width: 768px){
-  .only-mobile{ display: none !important; }
-  nav.only-desktop{ display: block !important; }
+@media (min-width: 768px) {
+  .only-mobile {
+    display: none !important;
+  }
+  nav.only-desktop {
+    display: block !important;
+  }
   /* PC時：右ナビの間隔と高さを統一 */
-  .header-right.nav-horizontal{
-    display:flex !important;
-    align-items:center !important;
-    gap:8px !important;
+  .header-right.nav-horizontal {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
   }
   /* ボタンの縦センターを数式で固定 */
-  .header-right.nav-horizontal a.btn{
-    place-items:center !important;
-    text-align:center !important;
+  .header-right.nav-horizontal a.btn {
+    place-items: center !important;
+    text-align: center !important;
     /* ヘッダー高に合わせて“確実に”上書き */
-    height: calc(var(--topbar-h) - 8px) !important;   /* 例: 48px → 40px */
+    height: calc(var(--topbar-h) - 8px) !important; /* 例: 48px → 40px */
     min-height: calc(var(--topbar-h) - 8px) !important;
     padding-block: 0 !important;
     padding-inline: 12px !important;
     line-height: 1 !important;
     font-size: var(--btn-font-size); /* ヘッダー右側も同一サイズ */
   }
-  .header-right.nav-horizontal a.btn > *{
-    line-height:1;
-    transform: translateY(-0.0px);
+  .header-right.nav-horizontal a.btn > * {
+    line-height: 1;
+    transform: translateY(-0px);
   }
 }
 
 /* ヘッダーの3カラム配置 [左][中央=伸長][右] */
-.header-grid{
-  display:grid;
+.header-grid {
+  display: grid;
   grid-template-columns: auto 1fr auto;
-  align-items:center;
-  gap:8px;
+  align-items: center;
+  gap: 8px;
 }
-.header-left{ padding-left: var(--edge-x); }
-.header-right{ padding-right: calc(var(--edge-x) + env(safe-area-inset-right)); }
-.header-mid{ justify-self:center; }                 /* (1) 中央を常にセンタリング */
+.header-left {
+  padding-left: var(--edge-x);
+}
+.header-right {
+  padding-right: calc(var(--edge-x) + env(safe-area-inset-right));
+}
+.header-mid {
+  justify-self: center;
+} /* (1) 中央を常にセンタリング */
 
 /* モバイル時は左右を対称にして中央を“画面に対し”センタリング */
-@media (max-width: 767px){
-  .header-left, .header-spacer{ width:44px; }       /* (1)(2)(3) 左右バランス＋左余白 */
+@media (max-width: 767px) {
+  .header-left,
+  .header-spacer {
+    width: 44px;
+  } /* (1)(2)(3) 左右バランス＋左余白 */
 }
 
 /* 下タブ（モバイル） */
-.mobile-tabbar{
-  position: fixed; left:0; right:0; bottom:0; z-index: 50;
+.mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
   height: calc(var(--bottombar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  background: var(--hk-btn-bg); color: var(--hk-btn-fg);
+  background: var(--hk-btn-bg);
+  color: var(--hk-btn-fg);
   border-top: 1px solid var(--hk-btn-border);
 }
-@media (min-width: 768px){
+@media (min-width: 768px) {
   /* PCでは常に非表示（表示が残ると高さ計算でわずかにはみ出す） */
-  .mobile-tabbar{ display:none !important; }
-  .app-content{ min-height: auto; overflow-y: visible; }
+  .mobile-tabbar {
+    display: none !important;
+  }
+  .app-content {
+    min-height: auto;
+    overflow-y: visible;
+  }
 }
-.hk-page{ display:flex; flex-direction:column; min-height:100dvh; }
-.pattern-one-fixed .content-root{ flex:1 1 auto; overflow:hidden; }
-.pattern-one-scroll .content-root{ flex:1 1 auto; overflow:auto; -webkit-overflow-scrolling:touch; }
-.pattern-fixed-and-scroll .content-root{ display:flex; flex-direction:column; flex:1 1 auto; }
-.pattern-fixed-and-scroll .content-fixed{ flex:0 0 auto; }
-.pattern-fixed-and-scroll .content-scroll{ flex:1 1 auto; overflow:auto; -webkit-overflow-scrolling:touch; }
+.hk-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+.pattern-one-fixed .content-root {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.pattern-one-scroll .content-root {
+  flex: 1 1 auto;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.pattern-fixed-and-scroll .content-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+.pattern-fixed-and-scroll .content-fixed {
+  flex: 0 0 auto;
+}
+.pattern-fixed-and-scroll .content-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
 /* ボトムタブの中身 */
-.tabbar-grid{
-  list-style:none; display:grid;
+.tabbar-grid {
+  list-style: none;
+  display: grid;
   grid-template-columns: repeat(6, 1fr);
-  align-items:center; margin:0; padding:0; height:100%;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  height: 100%;
 }
-.tab-link{ display:grid; place-items:center; text-decoration:none; height:100%; }
-.tab-label{ font-size: 10px; line-height: 1.2; }
+.tab-link {
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+  height: 100%;
+}
+.tab-label {
+  font-size: 10px;
+  line-height: 1.2;
+}
 
 /* =========================================================
    3) コンテンツ枠（カード）
    =======================================================*/
-.hk-frame{
-  background: var(--hk-card-bg);   /* ← 枠の前景（塗り） */
-  color: var(--hk-card-fg);        /* ← 枠内の文字色。未指定なら --hk-text が効く */
+.hk-frame {
+  background: var(--hk-card-bg); /* ← 枠の前景（塗り） */
+  color: var(--hk-card-fg); /* ← 枠内の文字色。未指定なら --hk-text が効く */
   border: 1px solid var(--hk-btn-border); /* 境界線は流用でOK。必要なら専用変数に */
   border-radius: var(--radius-12);
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
-  padding: 12px;                 /* 内側だけ */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  padding: 12px; /* 内側だけ */
   box-sizing: border-box;
 }
 /* ガターをフレーム側で確保したい画面向け（上・左右6px） */
-.hk-frame--gutter{ margin: 6px 6px 0; }
+.hk-frame--gutter {
+  margin: 6px 6px 0;
+}
 /* フレーム間の縦間隔 */
-.hk-frame + .hk-frame{ margin-top: 6px; }
+.hk-frame + .hk-frame {
+  margin-top: 6px;
+}
 
 /* 先頭枠側のマージンは不要（親で逃げを確保済み） */
-.app-content > .hk-frame:first-child{ margin-top: 0; }
+.app-content > .hk-frame:first-child {
+  margin-top: 0;
+}
 
 /* 枠内の区切り線 */
-.hk-frame__hr{
+.hk-frame__hr {
   border: 0;
   border-top: 1px solid var(--hk-btn-border);
   margin: 6px 0;
@@ -260,16 +364,19 @@ body{
    4) フォーム行（ユーザー情報／ログイン等で共通）
    [ラベル][入力][スペーサー(--form-gap)][ボタン]
    =======================================================*/
-.form-row{
+.form-row {
   display: grid;
-  grid-template-columns: 84px minmax(0,1fr) var(--form-gap) max-content;
+  grid-template-columns: 84px minmax(0, 1fr) var(--form-gap) max-content;
   column-gap: 6px;
   align-items: center;
   width: 100%;
   min-width: 0;
 }
-.form-label{ min-width:84px; white-space:nowrap; }
-.form-input{
+.form-label {
+  min-width: 84px;
+  white-space: nowrap;
+}
+.form-input {
   grid-column: 2;
   width: 100%;
   min-width: 0;
@@ -281,7 +388,7 @@ body{
   color: var(--hk-input-fg);
   font-size: var(--input-font-size);
 }
-.form-actions{
+.form-actions {
   grid-column: 4;
   display: flex;
   gap: 6px;
@@ -292,15 +399,27 @@ body{
 /* =========================================================
    5) ユーティリティ
    =======================================================*/
-.only-desktop{ display: none; }
-@media (min-width: 768px){ .only-desktop{ display: block; } }
+.only-desktop {
+  display: none;
+}
+@media (min-width: 768px) {
+  .only-desktop {
+    display: block;
+  }
+}
 
-.hidden{ display: none !important; }
-.opacity-70{ opacity: .7; }
-.pointer-events-none{ pointer-events: none; }
+.hidden {
+  display: none !important;
+}
+.opacity-70 {
+  opacity: 0.7;
+}
+.pointer-events-none {
+  pointer-events: none;
+}
 
 /* ボタンのベース（必要に応じて既存の .btn をここへ揃える） */
-.btn{
+.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -316,9 +435,13 @@ body{
   font-size: var(--btn-font-size);
   line-height: 1.2;
 }
-.btn *{ font-size: inherit; }        /* 子要素(svgやspan)もサイズ継承 */
-.btn svg{ flex-shrink: 0; }          /* アイコンでの窮屈さ防止 */
-.btn-primary{
+.btn * {
+  font-size: inherit;
+} /* 子要素(svgやspan)もサイズ継承 */
+.btn svg {
+  flex-shrink: 0;
+} /* アイコンでの窮屈さ防止 */
+.btn-primary {
   background: var(--hk-toolbar-fg);
   color: #111;
 }
@@ -326,5 +449,13 @@ body{
 /* =========================================================
    6) 既知のはみ出し対策
    =======================================================*/
-main, .container{ width: 100%; }
-img, video{ max-width: 100%; height: auto; display: block; }
+main,
+.container {
+  width: 100%;
+}
+img,
+video {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}

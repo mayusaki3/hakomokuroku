@@ -7,7 +7,7 @@ export default function RegisterLocationPage() {
       <RegisterStepNav />
       <h2>⑤ 置き場所（写真＋メモ）</h2>
       <p>（ここに撮影→サムネ保存UIを後で実装）</p>
-      <div style={{marginTop:12}}>
+      <div style={{ marginTop: 12 }}>
         <button className="btn">登録を確定（後で実装）</button>
       </div>
     </div>

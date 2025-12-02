@@ -9,7 +9,7 @@ export async function doPull() {
   const { endpoint, token } = loadSyncSettings();
   if (!endpoint || !token) throw new Error('同期設定が未設定です');
 
-  const cursor = (typeof window !== 'undefined') ? (localStorage.getItem(LS_CURSOR) || '') : '';
+  const cursor = typeof window !== 'undefined' ? localStorage.getItem(LS_CURSOR) || '' : '';
   const url = new URL(`${endpoint}/pull`);
   if (cursor) url.searchParams.set('cursor', cursor);
 
@@ -19,7 +19,7 @@ export async function doPull() {
   });
   if (!res.ok) throw new Error(`Pull failed ${res.status}`);
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     boxes: Box[];
     items: Item[];
     locations: BoxLocation[];
@@ -36,11 +36,13 @@ export async function doPull() {
   if (nextCursor && typeof window !== 'undefined') {
     localStorage.setItem(LS_CURSOR, nextCursor);
   }
-  return { received: {
-    boxes: data.boxes?.length || 0,
-    items: data.items?.length || 0,
-    locations: data.locations?.length || 0,
-  }};
+  return {
+    received: {
+      boxes: data.boxes?.length || 0,
+      items: data.items?.length || 0,
+      locations: data.locations?.length || 0,
+    },
+  };
 }
 
 // --- Push（簡易差分：lastPushAt 以降、なければ全件） ---
@@ -48,15 +50,19 @@ export async function doPush() {
   const { endpoint, token } = loadSyncSettings();
   if (!endpoint || !token) throw new Error('同期設定が未設定です');
 
-  const since = (typeof window !== 'undefined') ? (localStorage.getItem(LS_LAST_PUSH) || '') : '';
-  let boxes: Box[]; let items: Item[]; let locations: BoxLocation[];
+  const since = typeof window !== 'undefined' ? localStorage.getItem(LS_LAST_PUSH) || '' : '';
+  let boxes: Box[];
+  let items: Item[];
+  let locations: BoxLocation[];
   if (since) {
     boxes = await db.boxes.where('updatedAt').above(since).toArray();
     items = await db.items.where('updatedAt').above(since).toArray();
     locations = await db.boxLocations.where('updatedAt').above(since).toArray();
   } else {
     [boxes, items, locations] = await Promise.all([
-      db.boxes.toArray(), db.items.toArray(), db.boxLocations.toArray(),
+      db.boxes.toArray(),
+      db.items.toArray(),
+      db.boxLocations.toArray(),
     ]);
   }
 

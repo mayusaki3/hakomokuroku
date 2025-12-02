@@ -6,7 +6,7 @@ export const boxZ = z.object({
   code: z.string().min(1),
   name: z.string().default(''),
   location: z.string().nullable().optional(),
-  tags: z.any().optional(),                 // ["引越し", ...] を想定（Json互換）
+  tags: z.any().optional(), // ["引越し", ...] を想定（Json互換）
   thumbs: z.array(z.string()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),

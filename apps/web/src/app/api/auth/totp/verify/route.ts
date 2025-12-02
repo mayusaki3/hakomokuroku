@@ -36,7 +36,13 @@ function makeRecoveryCodes(n = 10): string[] {
   // 10本の英数字8桁（重複可）を生成。運用に合わせて一意性担保や形式変更可
   const codes: string[] = [];
   for (let i = 0; i < n; i++) {
-    codes.push(crypto.randomBytes(6).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 8));
+    codes.push(
+      crypto
+        .randomBytes(6)
+        .toString('base64')
+        .replace(/[^A-Za-z0-9]/g, '')
+        .slice(0, 8)
+    );
   }
   return codes;
 }

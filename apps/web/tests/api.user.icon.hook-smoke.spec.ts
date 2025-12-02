@@ -13,9 +13,7 @@ it('parseAndNormalizeDataURL を実際に呼び出している（spy が刺さ�
   const parseSpy = vi.spyOn(__hooks, 'parseAndNormalizeDataURL');
 
   // ② DB 更新も __hooks.updateUserIcon をモックして 200 相当の挙動にする
-  const updateSpy = vi
-    .spyOn(__hooks, 'updateUserIcon')
-    .mockResolvedValue({ id: 'U1' } as any);
+  const updateSpy = vi.spyOn(__hooks, 'updateUserIcon').mockResolvedValue({ id: 'U1' } as any);
 
   const req = new Request('http://t/api/user/icon', {
     method: 'PUT',
