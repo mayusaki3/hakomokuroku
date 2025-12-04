@@ -1,4 +1,4 @@
-[目次](../目次.md) > APIテストケース集 > テーマ有効化状況取得（GET /api/settings/theme/active）
+[目次](../../目次.md) > テストケース集 > テーマ設定API > テーマ有効化状況取得（GET /api/settings/theme/active）
 
 # テストケース：テーマ有効化状況取得（GET /api/settings/theme/active）
 
@@ -49,4 +49,4 @@
 - 500 Internal Server Error
 
 ---
-[目次](../目次.md) > APIテストケース集 > テーマ有効化状況取得（GET /api/settings/theme/active）
+[目次](../../目次.md) > テストケース集 > テーマ設定API > テーマ有効化状況取得（GET /api/settings/theme/active）

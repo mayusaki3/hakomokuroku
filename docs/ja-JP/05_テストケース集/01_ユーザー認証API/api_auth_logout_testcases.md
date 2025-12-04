@@ -1,4 +1,4 @@
-[目次](../目次.md) > テストケース集 > ログアウト（POST /api/auth/logout）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウト（POST /api/auth/logout）
 
 # テストケース：ログアウト（POST /api/auth/logout）
 
@@ -52,4 +52,4 @@ POST → POST
 | 200 | { ok:true } |
 
 ---
-[目次](../目次.md) > テストケース集 > ログアウト（POST /api/auth/logout）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウト（POST /api/auth/logout）

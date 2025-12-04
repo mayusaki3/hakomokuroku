@@ -1,4 +1,4 @@
-[目次](../目次.md) > API仕様 > ユーザー基本設定 (GET/PUT /api/settings/user)
+[目次](../../目次.md) > API仕様 > ユーザー情報API > ユーザー基本設定 (GET/PUT /api/settings/user)
 
 # ユーザー基本設定 (GET/PUT /api/settings/user)
 
@@ -137,4 +137,4 @@
 - 更新フィールドは今後追加予定のため、バリデーションを分離して管理する。
 
 ---
-[目次](../目次.md) > API仕様 > ユーザー基本設定 (GET/PUT /api/settings/user)
+[目次](../../目次.md) > API仕様 > ユーザー情報API > ユーザー基本設定 (GET/PUT /api/settings/user)

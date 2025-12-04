@@ -1,4 +1,4 @@
-[目次](../目次.md) > API仕様 > ユーザーアイコン更新（PUT /api/user/icon）
+[目次](../../目次.md) > API仕様 > ユーザー情報API > ユーザーアイコン更新（PUT /api/user/icon）
 
 # ユーザーアイコン更新（PUT /api/user/icon）
 
@@ -72,9 +72,4 @@
 4. 最新の me 情報を返す  
 
 ---
-
-## 7. 関連テストケース
-05_テストケース集/20_APIテストケース集/api_user_icon_testcases.md
-
----
-[目次](../目次.md) > API仕様 > ユーザーアイコン更新（PUT /api/user/icon）
+[目次](../../目次.md) > API仕様 > ユーザー情報API > ユーザーアイコン更新（PUT /api/user/icon）

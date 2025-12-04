@@ -1,4 +1,4 @@
-[目次](../目次.md) > テストケース集 > ユーザーアイコン更新（PUT /api/user/icon）
+[目次](../../目次.md) > テストケース集 > ユーザー情報API > ユーザーアイコン更新（PUT /api/user/icon）
 
 # テストケース：ユーザーアイコン更新（PUT /api/user/icon）
 
@@ -73,4 +73,4 @@
 - 500 Internal Server Error
 
 ---
-[目次](../目次.md) > テストケース集 > ユーザーアイコン更新（PUT /api/user/icon）
+[目次](../../目次.md) > テストケース集 > ユーザー情報API > ユーザーアイコン更新（PUT /api/user/icon）

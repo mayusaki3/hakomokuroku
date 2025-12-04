@@ -1,4 +1,4 @@
-[目次](../目次.md) > API仕様 > テーマ有効化状況取得（GET /api/settings/theme/active）
+[目次](../../目次.md) > API仕様 > テーマ設定API > テーマ有効化状況取得（GET /api/settings/theme/active）
 
 # テーマ有効化状況取得（GET /api/settings/theme/active）
 
@@ -49,9 +49,4 @@
 4. レスポンスとして返す  
 
 ---
-
-## 6. 関連テストケース
-05_テストケース集/20_APIテストケース集/api_settings_theme_active_testcases.md
-
----
-[目次](../目次.md) > API仕様 > テーマ有効化状況取得（GET /api/settings/theme/active）
+[目次](../../目次.md) > API仕様 > テーマ設定API > テーマ有効化状況取得（GET /api/settings/theme/active）

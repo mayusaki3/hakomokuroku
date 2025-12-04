@@ -1,4 +1,4 @@
-[目次](../目次.md) > テストケース集 > ユーザー基本設定 (GET/PUT /api/settings/user)
+[目次](../../目次.md) > テストケース集 > ユーザー情報API > ユーザー基本設定 (GET/PUT /api/settings/user)
 
 # テストケース：ユーザー基本設定 (GET/PUT /api/settings/user)
 
@@ -37,4 +37,4 @@
 - 期待: 500
 
 ---
-[目次](../目次.md) > テストケース集 > ユーザー基本設定 (GET/PUT /api/settings/user)
+[目次](../../目次.md) > テストケース集 > ユーザー情報API > ユーザー基本設定 (GET/PUT /api/settings/user)

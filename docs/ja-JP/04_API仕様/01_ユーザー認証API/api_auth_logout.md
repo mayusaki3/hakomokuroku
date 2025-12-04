@@ -1,4 +1,4 @@
-[目次](../目次.md) > API仕様 > ログアウト（POST /api/auth/logout）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > ログアウト（POST /api/auth/logout）
 
 # ログアウト（POST /api/auth/logout）
 
@@ -61,4 +61,4 @@
 | サーバー内部例外 | 500 + { ok:false, error:"internal error" } |
 
 ---
-[目次](../目次.md) > API仕様 > ログアウト（POST /api/auth/logout）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > ログアウト（POST /api/auth/logout）
