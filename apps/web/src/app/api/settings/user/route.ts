@@ -59,3 +59,43 @@ export async function GET() {
     );
   }
 }
+
+export async function PUT(req: Request) {
+  try {
+    const { user } = await readSession();
+    if (!user) {
+      // 未ログイン
+      return NextResponse.json(
+        { ok: false, user: null },
+        { status: 401, headers: headersNoStore }
+      );
+    }
+
+    const body = await req.json().catch(() => null) as { displayName?: unknown } | null;
+    const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
+
+    if (!displayName) {
+      // displayName 不正
+      return NextResponse.json(
+        { ok: false, message: 'displayName is required' },
+        { status: 400, headers: headersNoStore }
+      );
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { userName: displayName },
+    });
+
+    return NextResponse.json(
+      { ok: true },
+      { status: 200, headers: headersNoStore }
+    );
+  } catch (err) {
+    console.error('PUT /api/settings/user failed', err);
+    return NextResponse.json(
+      { ok: false },
+      { status: 500, headers: headersNoStore }
+    );
+  }
+}

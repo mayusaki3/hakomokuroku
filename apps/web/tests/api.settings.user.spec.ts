@@ -3,13 +3,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // 認証モジュールをモック
 vi.mock('@/server/auth', () => ({
-  getUser: vi.fn(),
+  readSession: vi.fn(),
   requireUserId: vi.fn(),
 }));
 
 import { GET as GET_USER, PUT as PUT_USER } from '@/app/api/settings/user/route';
 import { prisma } from '@/server/prisma';
-import { getUser, requireUserId } from '@/server/auth';
+import { readSession, requireUserId } from '@/server/auth';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,12 +26,12 @@ describe('GET /api/settings/user', () => {
    */
   it('API_SETTINGS_USER-TC-01: ログイン中なら 200 + ok:true + user', async () => {
     // 認証済みユーザー
-    (getUser as any).mockResolvedValue({
+    (readSession as any).mockResolvedValue({
       user: { id: 'U1' },
     });
 
     // DB からユーザー情報が取得できる想定
-    (prisma.user.findUnique as any).mockResolvedValue({
+    (prisma.user.findFirst as any).mockResolvedValue({
       id: 'U1',
       displayName: 'Alice',
     });
@@ -53,7 +53,7 @@ describe('GET /api/settings/user', () => {
    */
   it('API_SETTINGS_USER-TC-02: 未ログインなら 401', async () => {
     // セッションなし
-    (getUser as any).mockResolvedValue({ user: null });
+    (readSession as any).mockResolvedValue({ user: null });
 
     const res = await GET_USER();
     expect(res.status).toBe(401);
@@ -65,8 +65,8 @@ describe('GET /api/settings/user', () => {
    * - 期待: 500
    */
   it('API_SETTINGS_USER-TC-03: DB 例外なら 500', async () => {
-    (getUser as any).mockResolvedValue({ user: { id: 'U1' } });
-    (prisma.user.findUnique as any).mockRejectedValue(new Error('db error'));
+    (readSession as any).mockResolvedValue({ user: { id: 'U1' } });
+    (prisma.user.findFirst as any).mockRejectedValue(new Error('db error'));
 
     const res = await GET_USER();
     expect([500, 503]).toContain(res.status);
