@@ -11,7 +11,11 @@ export async function GET() {
     // まずセッションだけで判定（未ログイン・セッション切れは user:null を返す）
     const { user } = await readSession();
     if (!user) {
-      return NextResponse.json({ ok: false, user: null }, { headers: headersNoStore });
+      // 未ログインは 401
+      return NextResponse.json(
+        { ok: false, user: null },
+        { status: 401, headers: headersNoStore }
+      );
     }
 
     // DB の最新を取得（isActive で無効化も除外）
@@ -26,7 +30,11 @@ export async function GET() {
       },
     });
     if (!u) {
-      return NextResponse.json({ ok: false, user: null }, { headers: headersNoStore });
+      // セッションはあるが DB に有効ユーザーがいないケース → 404
+      return NextResponse.json(
+        { ok: false, user: null },
+        { status: 404, headers: headersNoStore }
+      );
     }
 
     return NextResponse.json(
@@ -44,6 +52,10 @@ export async function GET() {
     );
   } catch (err) {
     console.error('GET /api/settings/user failed', err);
-    return NextResponse.json({ ok: false, user: null }, { headers: headersNoStore });
+    // DB 例外などは 500 系
+    return NextResponse.json(
+      { ok: false, user: null },
+      { status: 500, headers: headersNoStore }
+    );
   }
 }
