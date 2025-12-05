@@ -10,8 +10,20 @@ vi.mock('@/server/auth', () => ({
   requireUserId: vi.fn(),
 }));
 
-import { PUT as PUT_ICON, __hooks } from '@/app/api/user/icon/route';
+// Prisma クライアントもモックする
+vi.mock('@/lib/db', () => {
+  return {
+    prisma: {
+      user: {
+        update: vi.fn(),
+      },
+    },
+  };
+});
+
+import { PUT as PUT_ICON, __hooks, updateUserIcon } from '@/app/api/user/icon/route';
 import { requireUserId } from '@/server/auth';
+import { prisma } from '@/lib/db';
 
 // 型が厳しいときに any キャストで逃がすためのエイリアス
 const requireUserIdMock = requireUserId as unknown as vi.Mock;
@@ -505,5 +517,318 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     expect(json.error).toBe('internal_error');
 
     expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-20 dataURL フォーマット不正（;base64, 区切りなし）
+   * - data:image/png,AAAA のように ";base64," がない
+   * - 400 + ok:false （BAD_FORMAT）
+   */
+  it('API_USER_ICON-TC-20: dataURL フォーマット不正（;base64, 区切りなし）は 400', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        // startsWith('data:') だが ";base64," 形式ではない → BAD_FORMAT
+        icon: 'data:image/png,AAAA',
+      }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(400);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    // 必要であればメッセージも確認（route.ts に合わせて）
+    // expect(json.error).toBe('invalid dataURL');
+  });
+
+  /**
+   * API_USER_ICON-TC-21 updateMany で count=0 の場合は 404
+   * - updateUserIcon が { count: 0 } を返すケース
+   * - 404 + ok:false + error: not updated
+   */
+  it('API_USER_ICON-TC-21: updateMany count=0 なら 404', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      .mockResolvedValue({ count: 0 } as any);
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        icon: 'data:image/png;base64,AAAA',
+      }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(404);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    // route.ts の実装に合わせる
+    expect(json.error).toBe('not_found');
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-22 parseAndNormalizeDataURL が例外なら 500
+   * - dataURL 正常でも parseAndNormalizeDataURL が throw した場合
+   * - 500 + ok:false + internal_error
+   */
+  it('API_USER_ICON-TC-22: parseAndNormalizeDataURL が例外なら 500', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    // parseAndNormalizeDataURL を例外を投げる実装に差し替え
+    const parseSpy = vi
+      .spyOn(__hooks, 'parseAndNormalizeDataURL')
+      .mockImplementation(() => {
+        throw new Error('parse failed');
+      });
+
+    try {
+      const req = new Request('http://t/api/user/icon', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+      });
+
+      const res = await PUT_ICON(req);
+      expect(res.status).toBe(500);
+
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+      expect(json.error).toBe('internal_error');
+    } finally {
+      // ここで必ず元の実装に戻す
+      parseSpy.mockRestore();
+    }
+  });
+
+  /**
+   * API_USER_ICON-TC-23 updateMany count>0
+   * - updateUserIcon が { count: >0 } を返すパターン
+   * - route.ts の実装では成功扱い（200）
+   */
+  it('API_USER_ICON-TC-23: updateMany count>0 なら 200', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      .mockResolvedValue({ count: 1 } as any);
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-24 DBエラー name=NotFoundError のみ
+   * - route.ts の実装では not-found 判定され 404
+   */
+  it('API_USER_ICON-TC-24: DBエラー name=NotFoundError のみなら 404', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const err: any = new Error('some db error');
+    err.name = 'NotFoundError';
+
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      .mockRejectedValue(err);
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(404);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe('not_found');
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-25 DBエラー message のみが not found を含む
+   * - route.ts の実装では not-found 判定され 404
+   */
+  it('API_USER_ICON-TC-25: DBエラー message のみが not found を含んでも 404', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const err: any = new Error('record not found in db');
+    // code や meta は付けない（message のみ not found）
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      .mockRejectedValue(err);
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(404);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe('not_found');
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-26 Content-Type が application/json 以外(text/plain)
+   * - Content-Type はあるが application/json ではない
+   * - 400 or 415
+   */
+   it('API_USER_ICON-TC-26: Content-Type text/plain なら 400/415', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'text/plain' }, // ヘッダありだが不正
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect([400, 415]).toContain(res.status);
+  });
+
+  /**
+   * API_USER_ICON-TC-27 DBエラー err が非オブジェクト
+   * - isNotFoundError のフォールバック枝を通す想定
+   * - 500 + ok:false + internal_error
+   */
+  it('API_USER_ICON-TC-27: DBエラー err が非オブジェクトでも 500', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const updateSpy = vi
+      .spyOn(__hooks, 'updateUserIcon')
+      // 非オブジェクトを投げる
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockRejectedValue('some error' as any);
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(500);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe('internal_error');
+
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * API_USER_ICON-TC-28 Base64 decode が空バッファを返す場合
+   * - Buffer.from が長さ 0 の Buffer を返す
+   * - BAD_BASE64 判定となり 400 + ok:false
+   */
+  it('API_USER_ICON-TC-28: Base64 decode が空バッファなら 400', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const originalFrom = Buffer.from;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (Buffer as any).from = vi.fn(() => Buffer.alloc(0));
+
+    try {
+      const req = new Request('http://t/api/user/icon', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          // 一見正常な dataURL（Base64 部分はなんでもよい）
+          icon: 'data:image/png;base64,QUFB',
+        }),
+      });
+
+      const res = await PUT_ICON(req);
+      expect(res.status).toBe(400);
+
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+    } finally {
+      // 他テストへの影響を防ぐため必ず復元
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (Buffer as any).from = originalFrom;
+    }
+  });
+
+  /**
+   * API_USER_ICON-TC-29: Content-Type ヘッダなしは 400
+   */
+  it('API_USER_ICON-TC-29: Content-Type ヘッダなしは 400', async () => {
+    requireUserIdMock.mockResolvedValue('U1');
+
+    const req = new Request('http://t/api/user/icon', {
+      method: 'PUT',
+      body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
+    });
+
+    // ここがポイント：自動で付与された Content-Type を削除
+    req.headers.delete('content-type');
+
+    const res = await PUT_ICON(req);
+    expect(res.status).toBe(400);
+
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe('unsupported content-type');
+  });
+
+});
+
+describe('updateUserIcon 単体', () => {
+  /**
+   * API_USER_ICON-UT-01 prisma.user.update を正しく呼び出す
+   */
+  it('API_USER_ICON-UT-01: prisma.user.update を正しく呼び出す', async () => {
+    const userId = 'U1';
+    const dataURL = 'data:image/png;base64,AAAA';
+
+    // モックされた prisma.user.update を取得
+    const prismaUpdateMock = prisma.user.update as unknown as vi.Mock;
+
+    // 戻り値も適当にモック
+    prismaUpdateMock.mockResolvedValue({
+      id: userId,
+      displayName: 'User 1',
+      iconDataUrl: dataURL,
+    } as any);
+
+    const result = await updateUserIcon(userId, dataURL);
+
+    expect(prismaUpdateMock).toHaveBeenCalledTimes(1);
+    expect(prismaUpdateMock).toHaveBeenCalledWith({
+      where: { id: userId },
+      data: { iconDataUrl: dataURL },
+      select: { id: true, displayName: true, iconDataUrl: true },
+    });
+
+    expect((result as any).id).toBe(userId);
   });
 });
