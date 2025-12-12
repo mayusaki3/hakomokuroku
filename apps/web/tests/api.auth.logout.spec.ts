@@ -10,7 +10,7 @@
 //  - 現状の実装 (apps/web/src/app/api/auth/logout/route.ts) は、
 //      - ステータス 200
 //      - JSON { ok: true }
-//      - セッション用 Cookie 名: hk_token
+//      - セッション用 Cookie 名: sid
 //    を返す実装になっているため、これに合わせて検証する。
 //  - Cookie の詳細属性 (Path, HttpOnly, SameSite など) は実装依存のため、
 //    ここでは「Cookie 名が hk_token で、値が消される方向（Max-Age=0 など）」を確認する。
@@ -43,12 +43,29 @@ describe('POST /api/auth/logout', () => {
     const res = await POST_LOGOUT(req);
     const setCookie = res.headers.get('Set-Cookie') ?? '';
 
-    // 実装上のセッションCookie名は hk_token
-    expect(setCookie).toMatch(/hk_token=/);
+    // 実装上のセッションCookie名は sid
+    expect(setCookie).toMatch(/sid=/);
 
     // 値が破棄される方向に設定されていることを確認
     // - Max-Age=0 または Expires= 過去日 など
     // 実装では Max-Age=0 が使われているため、ここでは Max-Age=0 の有無を確認
     expect(setCookie).toMatch(/Max-Age=0/);
   });
+
+  it('API_AUTH_LOGOUT-TC-03: 多重ログアウト（idempotent）', async () => {
+    const req1 = new Request(url, { method: 'POST' });
+    const res1 = await POST_LOGOUT(req1);
+
+    expect(res1.status).toBe(200);
+    const json1 = await res1.json() as any;
+    expect(json1).toMatchObject({ ok: true });
+
+    const req2 = new Request(url, { method: 'POST' });
+    const res2 = await POST_LOGOUT(req2);
+
+    expect(res2.status).toBe(200);
+    const json2 = await res2.json() as any;
+    expect(json2).toMatchObject({ ok: true });
+  });
+
 });

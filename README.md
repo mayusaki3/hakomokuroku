@@ -23,7 +23,7 @@ pnpm -C apps/web exec prisma studio --schema=prisma/schema.prisma
 
 # 単体テスト
 
-## 
+# 通常実行 
 pnpm -C apps/web exec vitest --run --coverage --config vitest.config.mts
-
-
+# テスト番号を表示
+pnpm -C apps/web exec vitest --run --coverage --config vitest.config.mts  --reporter=verbose
