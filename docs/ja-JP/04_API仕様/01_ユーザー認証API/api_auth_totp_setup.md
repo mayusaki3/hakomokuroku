@@ -1,74 +1,77 @@
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP設定開始（POST /api/auth/totp/setup）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 設定開始（POST /api/auth/totp/setup）
 
-# TOTP設定開始（POST /api/auth/totp/setup）
+# TOTP 設定開始（POST /api/auth/totp/setup）
 
-## 概要
+本書は、TOTP による二要素認証の「設定開始 API」（POST /api/auth/totp/setup）の正式な仕様を定義する。
 
-ログイン済みユーザーに対して、TOTP（二段階認証）の初期設定を開始する API。  
-サーバー側で TOTP シークレットを生成し、otpauth URI と QR コード（SVG）を返す。  
-生成したシークレットは、検証成功まで有効化せず、暗号化した状態でユーザーに紐付けて保存する。
+## 1. 概要
 
-## エンドポイント
+ログイン中ユーザーに対して、TOTP 設定用のシークレットを発行し、
+認証アプリで読み込むための otpauth:// URL を返す。
 
-- Method: POST  
-- Path: /api/auth/totp/setup
+- 要ログイン（sid Cookie で判定）
+- すでに TOTP 有効なユーザーには設定開始を許可しない
+- 成功時は 200 + { ok:true, otpauthUrl }
 
-## 認可
+## 2. エンドポイント
 
-- 要ログイン（Authorization ヘッダー必須）
-- 共通仕様（04_API仕様/00_共通仕様.md）で定める認証方式に従う
+| メソッド | パス |
+|---------|------|
+| POST | /api/auth/totp/setup |
 
-## リクエスト
+## 3. 入力
 
-### ヘッダー
+### 3.1 リクエストヘッダ
 
-- Authorization: Bearer \<token\>（必須）
-- Content-Type: application/json（推奨）
+| 項目 | 必須 | 値 |
+|------|------|------|
+| Cookie | 任意 | sid={セッションID} |
+| Content-Type | 任意 | なし（ボディ無し） |
 
-### ボディ
+### 3.2 ボディ
 
-現時点ではパラメータなし。空オブジェクトまたはボディなしを許容する。
+なし。
 
-```json
-{}
-```
+## 4. 出力（レスポンス）
 
-## レスポンス
-
-### 正常系（200 OK）
-
-```json
-{
-  "otpauth": "otpauth://totp/hakomokuroku:userId?secret=XXXXX&issuer=hakomokuroku",
-  "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" ...>...</svg>"
-}
-```
-
-- otpauth  
-  - 認証アプリ向け otpauth URI（Base32 シークレットを含む）
-- svg  
-  - otpauth を QR コード化した SVG 文字列
-
-### 異常系
-
-- 401 Unauthorized  
-  - ログインしていない、またはトークンが無効な場合
-- 500 Internal Server Error  
-  - シークレット生成、暗号化、DB 保存、QR 生成など内部エラーが発生した場合
-
-エラーレスポンス形式は共通仕様に従う。例:
+### 4.1 成功
 
 ```json
 {
-  "error": "unauthorized",
-  "message": "Authentication required."
+  "ok": true,
+  "otpauthUrl": "otpauth://totp/…"
 }
 ```
 
-## 備考
+- otpauthUrl は認証アプリの読み込み用 URL。
 
-- この API 実行時点では、TOTP はまだ「有効化」されない。  
-- 後続の /api/auth/totp/verify 正常完了後に TOTP 有効フラグを立てる実装を想定する。
+### 4.2 失敗例
+
+| 状態 | ステータス | Body 例 |
+|------|-----------|---------|
+| 未ログイン | 401 | { "ok": false, "error": "unauthorized" } |
+| 既に TOTP 有効 | 400 | { "ok": false, "error": "already_enabled" } |
+| レートリミット | 429 | { "ok": false, "error": "too_many_requests" } |
+| 内部エラー | 500 | { "ok": false, "error": "internal_error" } |
+
+## 5. ステータスコード
+
+| 状態 | ステータス |
+|------|-----------|
+| 正常 | 200 |
+| 認証エラー | 401 |
+| 業務エラー | 400 |
+| レートリミット | 429 |
+| 内部エラー | 500 |
+
+## 6. 挙動仕様
+
+1. sid Cookie からログイン中ユーザーを取得。無効なら 401。
+2. 既に TOTP 有効なら 400。
+3. 新規 TOTP シークレットを生成。
+4. otpauth:// URL を生成。
+5. DB に TOTP 情報を保存。
+6. 200 + { ok:true, otpauthUrl } を返す。
 
 ---
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP設定開始（POST /api/auth/totp/setup）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 設定開始（POST /api/auth/totp/setup）

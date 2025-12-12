@@ -1,93 +1,87 @@
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > TOTPログイン確認（POST /api/auth/login/totp）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン（TOTP 2段階目：POST /api/auth/login/totp）
 
-# テストケース：TOTPログイン確認（POST /api/auth/login/totp）
+# ログイン（TOTP 2 段階目：POST /api/auth/login/totp）
 
-## 前提
+本書は、一次ログイン後の 2 段階目（TOTP / Recovery Code）でログインを完了する API 仕様を定義する。
 
-- ベース URL: /api/auth/login/totp
-- /api/auth/login でパスワード認証が成功し、TOTP が有効なユーザーに対して  
-  一時的な loginId が払い出されている前提
+## 1. 概要
 
-## テストケース一覧
+- loginId（一次ログインのチャレンジ ID）を受け取る
+- TOTP またはリカバリコードで検証
+- 成功したら sid Cookie を発行し、200 + token / expiresAt を返す
 
-- TOTP-LOGIN-TC-01 正常: 正しい 6 桁コードでログイン完了
-- TOTP-LOGIN-TC-02 正常: 正しい回復コードでログイン完了
-- TOTP-LOGIN-TC-03 異常: loginId 未指定（400）
-- TOTP-LOGIN-TC-04 異常: code / recoveryCode 両方未指定（400）
-- TOTP-LOGIN-TC-05 異常: 不正 loginId（404）
-- TOTP-LOGIN-TC-06 異常: loginId の状態が TOTP チャレンジでない（409）
-- TOTP-LOGIN-TC-07 異常: コード不一致（422）
-- TOTP-LOGIN-TC-08 異常: 内部エラー（500）
+## 2. エンドポイント
 
-## テストケース詳細
+| メソッド | パス |
+|---------|------|
+| POST | /api/auth/login/totp |
 
-### TOTP-LOGIN-TC-01 正常: 正しい 6 桁コードでログイン完了
+## 3. 入力
 
-- 前提  
-  - /api/auth/login 呼び出しで、TOTP 必須ユーザーに対して loginId が取得済み
-- 入力  
-  - Body: {"loginId": "<有効ID>", "code": "<正しい6桁>"}
-- 期待結果  
-  - ステータスコード: 200  
-  - レスポンスボディ: token が非空文字列  
-  - 取得した token を用いた /api/auth/me が 200 を返す（別ケースで確認）
+### 3.1 ボディ
 
-### TOTP-LOGIN-TC-02 正常: 正しい回復コードでログイン完了
+```json
+{
+  "loginId": "xxxxxx",
+  "code": "123456",
+  "recoveryCode": null
+}
+```
 
-- 前提  
-  - loginId が有効な TOTP チャレンジ状態  
-  - 有効な回復コードが存在
-- 入力  
-  - Body: {"loginId": "<有効ID>", "recoveryCode": "<有効な回復コード>"}
-- 期待結果  
-  - ステータスコード: 200  
-  - token が返る
+### 3.2 ヘッダ
 
-### TOTP-LOGIN-TC-03 異常: loginId 未指定（400）
+| 項目 | 必須 | 値 |
+|------|------|------|
+| Content-Type | 必須 | application/json |
 
-- 入力  
-  - Body: {"code": "123456"}
-- 期待結果  
-  - ステータスコード: 400  
+## 4. 出力
 
-### TOTP-LOGIN-TC-04 異常: code / recoveryCode 両方未指定（400）
+### 4.1 成功
 
-- 入力  
-  - Body: {"loginId": "<有効ID>"}
-- 期待結果  
-  - ステータスコード: 400  
+```json
+{
+  "token": "xxxxx",
+  "expiresAt": "2025-12-31T23:59:59.000Z"
+}
+```
 
-### TOTP-LOGIN-TC-05 異常: 不正 loginId（404）
+Set-Cookie:
 
-- 入力  
-  - Body: {"loginId": "non-existent", "code": "123456"}
-- 期待結果  
-  - ステータスコード: 404  
+```txt
+sid={セッションID}; Path=/; HttpOnly; SameSite=Lax; ...
+```
 
-### TOTP-LOGIN-TC-06 異常: loginId の状態が TOTP チャレンジでない（409）
+### 4.2 失敗
 
-- 前提  
-  - loginId が別フローに紐づく、または既に処理済み
-- 入力  
-  - Body: {"loginId": "<不正状態ID>", "code": "123456"}
-- 期待結果  
-  - ステータスコード: 409  
+| 状態 | ステータス | Body 例 |
+|------|-----------|---------|
+| フィールド不足 | 400 | { "error": "invalid_request" } |
+| loginId 不明 | 404 | { "error": "login_challenge_not_found" } |
+| TOTP 未有効 | 400 | { "error": "totp_not_enabled" } |
+| コード不一致 | 401 | { "error": "invalid_code" } |
+| 試行回数超過 | 429 | { "error": "too_many_attempts" } |
+| 内部エラー | 500 | { "error": "internal_error" } |
 
-### TOTP-LOGIN-TC-07 異常: コード不一致（422）
+## 5. ステータスコード
 
-- 入力  
-  - Body: {"loginId": "<有効ID>", "code": "000000"}
-- 期待結果  
-  - ステータスコード: 422  
+| 状態 | ステータス |
+|------|-----------|
+| 正常 | 200 |
+| 入力エラー | 400 |
+| 認証エラー | 401 |
+| チャレンジ不明 | 404 |
+| レートリミット | 429 |
+| 内部エラー | 500 |
 
-### TOTP-LOGIN-TC-08 異常: 内部エラー（500）
+## 6. 挙動仕様
 
-- 前提  
-  - TOTP 検証またはトークン発行処理をモックで例外発生させる
-- 入力  
-  - Body: {"loginId": "<有効ID>", "code": "123456"}
-- 期待結果  
-  - ステータスコード: 500  
+1. loginId / code / recoveryCode を取得。loginId 無し → 400。
+2. チャレンジ検索。無ければ 404。
+3. ユーザーが TOTP 有効か確認。無効なら 400。
+4. TOTP or recoveryCode を検証。不一致なら 401。
+5. セッション ID（sid）を発行し Cookie 付与。
+6. token / expiresAt を返す。
+7. loginId は使用済みにして再利用不可。
 
 ---
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > TOTPログイン確認（POST /api/auth/login/totp）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン（TOTP 2段階目：POST /api/auth/login/totp）

@@ -1,67 +1,71 @@
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP無効化（POST /api/auth/totp/disable）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 無効化（POST /api/auth/totp/disable）
 
-# TOTP無効化（POST /api/auth/totp/disable）
+# TOTP 無効化（POST /api/auth/totp/disable）
 
-## 概要
+本書は、TOTP 認証を無効化する API の仕様を定義する。
 
-ログイン済みユーザーが、自身のアカウントから TOTP 設定を解除する API。  
-セキュリティ上、TOTP コードまたは回復コードによる再認証を要求する。
+## 1. 概要
 
-## エンドポイント
+- 要ログイン（sid 必須）
+- TOTP コード or リカバリコードの検証が必要
+- 成功時は 204 No Content
 
-- Method: POST  
-- Path: /api/auth/totp/disable
+## 2. エンドポイント
 
-## 認可
+| メソッド | パス |
+|---------|------|
+| POST | /api/auth/totp/disable |
 
-- 要ログイン
+## 3. 入力
 
-## リクエスト
+### 3.1 ヘッダ
+| 項目 | 必須 | 値 |
+|------|------|------|
+| Cookie | 必須 | sid={セッションID} |
+| Content-Type | 必須 | application/json |
 
-### ヘッダー
-
-- Authorization: Bearer \<token\>（必須）
-- Content-Type: application/json（必須）
-
-### ボディ
-
+### 3.2 ボディ
 ```json
 {
   "code": "123456",
-  "recoveryCode": "ABCD-1234"
+  "recoveryCode": null
 }
 ```
 
-- code（任意）: 現在の TOTP コード
-- recoveryCode（任意）: 回復コード  
-- code と recoveryCode の少なくとも一方は必須（両方指定も可）
+- code または recoveryCode のどちらかは必須。
 
-## レスポンス
+## 4. 出力（レスポンス）
 
-### 正常系（200 OK）
+### 4.1 成功
+- ステータス：204
+- Body：なし
 
-```json
-{
-  "enabled": false
-}
-```
+### 4.2 失敗
 
-- enabled  
-  - 無効化完了後は false
+| 状態 | ステータス | Body 例 |
+|------|-----------|---------|
+| 未ログイン | 401 | { "error": "unauthorized" } |
+| 入力不備 | 400 | { "error": "invalid_request" } |
+| 検証失敗 | 401 | { "error": "invalid_code" } |
+| レートリミット | 429 | { "error": "too_many_requests" } |
+| 内部エラー | 500 | { "error": "internal_error" } |
 
-### 異常系
+## 5. ステータスコード
 
-- 400 Bad Request  
-  - code / recoveryCode が両方とも未指定
-- 401 Unauthorized  
-  - ログインしていない／トークン無効
-- 403 Forbidden  
-  - code / recoveryCode が不正で無効化が拒否された場合
-- 409 Conflict  
-  - 元々 TOTP が有効化されていないユーザーが呼び出した場合
-- 500 Internal Server Error  
+| 状態 | ステータス |
+|------|-----------|
+| 正常 | 204 |
+| 入力/認証エラー | 400/401 |
+| レートリミット | 429 |
+| 内部エラー | 500 |
 
-エラーレスポンス形式は共通仕様に従う。
+## 6. 挙動仕様
+
+1. sid Cookie を検証。なければ 401。
+2. code / recoveryCode を取得。どちらも無い → 400。
+3. TOTP or リカバリコード検証。不一致 → 401。
+4. DB の TOTP 設定を削除/無効化。
+5. 204 No Content を返却。
 
 ---
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP無効化（POST /api/auth/totp/disable）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 無効化（POST /api/auth/totp/disable）

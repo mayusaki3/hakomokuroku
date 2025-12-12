@@ -1,55 +1,66 @@
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP状態取得（GET /api/auth/totp/status）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 状態取得（GET /api/auth/totp/status）
 
-# TOTP状態取得（GET /api/auth/totp/status）
+# TOTP 状態取得（GET /api/auth/totp/status）
 
-## 概要
+本書は、ログイン途中で使用する「TOTP 状態取得 API」（GET /api/auth/totp/status）の仕様を定義する。
 
-ログイン済みユーザーに紐づく TOTP 設定の状態を取得する API。  
-設定画面などで「TOTP 有効／無効」を表示するために使用する。
+## 1. 概要
 
-## エンドポイント
+一次ログインで発行された loginId を受け取り、ユーザーの残リカバリコード数を返す。
 
-- Method: GET  
-- Path: /api/auth/totp/status
+- sid Cookie は不要
+- loginId 不正なら 404
 
-## 認可
+## 2. エンドポイント
 
-- 要ログイン
+| メソッド | パス |
+|---------|------|
+| GET | /api/auth/totp/status |
 
-## リクエスト
+## 3. 入力
 
-### ヘッダー
+### 3.1 クエリパラメータ
 
-- Authorization: Bearer \<token\>（必須）
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| loginId | 必須 | 一次ログインのログインチャレンジ ID |
 
-### ボディ
+例:  
+`/api/auth/totp/status?loginId=abc123`
 
-なし。
+## 4. 出力（レスポンス）
 
-## レスポンス
-
-### 正常系（200 OK）
+### 4.1 成功
 
 ```json
 {
-  "enabled": true,
-  "recoveryCodesRemaining": 5
+  "recoveryRemain": 5
 }
 ```
 
-- enabled  
-  - TOTP が有効化済みであれば true、未設定または無効なら false
-- recoveryCodesRemaining  
-  - 残り回復コード数  
-  - 回復コード機能を実装していない場合は null または省略してよい
+### 4.2 失敗
 
-### 異常系
+| 状態 | ステータス | Body 例 |
+|------|-----------|---------|
+| loginId 未指定 | 400 | { "error": "missing_loginId" } |
+| loginId 不明 | 404 | { "error": "login_challenge_not_found" } |
+| 内部エラー | 500 | { "error": "internal_error" } |
 
-- 401 Unauthorized  
-  - ログインしていない／トークン無効
-- 500 Internal Server Error  
+## 5. ステータスコード
 
-エラーレスポンス形式は共通仕様に従う。
+| 状態 | ステータス |
+|------|-----------|
+| 正常 | 200 |
+| パラメータ不足 | 400 |
+| チャレンジ不明 | 404 |
+| 内部エラー | 500 |
+
+## 6. 挙動仕様
+
+1. loginId を取得。なければ 400。
+2. チャレンジを検索。なければ 404。
+3. ユーザーの残リカバリコード数を取得。
+4. 200 + { recoveryRemain } を返却。
 
 ---
-[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP状態取得（GET /api/auth/totp/status）
+[目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 状態取得（GET /api/auth/totp/status）
