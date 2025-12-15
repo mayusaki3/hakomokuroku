@@ -1,87 +1,66 @@
-[目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン（TOTP 2段階目：POST /api/auth/login/totp）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログイン2段階認証（POST /api/auth/login/totp）
 
-# ログイン（TOTP 2 段階目：POST /api/auth/login/totp）
+# テストケース：ログイン2段階認証（POST /api/auth/login/totp）
 
-本書は、一次ログイン後の 2 段階目（TOTP / Recovery Code）でログインを完了する API 仕様を定義する。
+## 1. 前提
+- ベース URL: /api/auth/login/totp
+- Cookie `sid` を使用
+- ユーザー状態（`totpEnabled` / `totpSecretEnc` / `recoveryCodes` / `totpFailCount` / `lockUntil`）を DB モックで制御
 
-## 1. 概要
+## 2. テストケース一覧
+- AUTH_LOGIN_TOTP-TC-01 正常: 正しい TOTP code（200）
+- AUTH_LOGIN_TOTP-TC-02 正常: 正しい recovery code（200、かつコードが消費される）
+- AUTH_LOGIN_TOTP-TC-03 異常: 未ログイン（401）
+- AUTH_LOGIN_TOTP-TC-04 異常: code 未指定/空（400）
+- AUTH_LOGIN_TOTP-TC-05 異常: code 形式不正（400）
+- AUTH_LOGIN_TOTP-TC-06 異常: code 不一致（401）
+- AUTH_LOGIN_TOTP-TC-07 異常: TOTP 未有効（409）
+- AUTH_LOGIN_TOTP-TC-08 異常: recovery code 再利用（401/422 相当）
+- AUTH_LOGIN_TOTP-TC-09 異常: 連続失敗で lockUntil により拒否（401/429 相当）※実装がある場合
 
-- loginId（一次ログインのチャレンジ ID）を受け取る
-- TOTP またはリカバリコードで検証
-- 成功したら sid Cookie を発行し、200 + token / expiresAt を返す
+## 3. テストケース詳細
 
-## 2. エンドポイント
+### AUTH_LOGIN_TOTP-TC-01 正常: 正しい TOTP code（200）
+- 前提: User A `totpEnabled=true`, `totpSecretEnc` あり
+- 入力: sid（User A）+ 正しい 6桁
+- 期待: 200 + `{ok:true}`
 
-| メソッド | パス |
-|---------|------|
-| POST | /api/auth/login/totp |
+### AUTH_LOGIN_TOTP-TC-02 正常: 正しい recovery code（200、かつコードが消費される）
+- 前提
+  - User A `recoveryCodes` に「未使用コード」が含まれる
+- 手順
+  1) sid + recovery code で実行
+  2) 同じ recovery code で再度実行
+- 期待
+  - 1) 200
+  - 2) 401/422 相当（再利用不可）
 
-## 3. 入力
+### AUTH_LOGIN_TOTP-TC-03 異常: 未ログイン（401）
+- 入力: Cookie なし
+- 期待: 401
 
-### 3.1 ボディ
+### AUTH_LOGIN_TOTP-TC-04 異常: code 未指定/空（400）
+- 入力: {} / {"code":""}
+- 期待: 400
 
-```json
-{
-  "loginId": "xxxxxx",
-  "code": "123456",
-  "recoveryCode": null
-}
-```
+### AUTH_LOGIN_TOTP-TC-05 異常: code 形式不正（400）
+- 入力: {"code":"!!!!"} / {"code":"12345"} 等
+- 期待: 400
 
-### 3.2 ヘッダ
+### AUTH_LOGIN_TOTP-TC-06 異常: code 不一致（401）
+- 入力: 形式OKだが不正な 6 桁 / 不正な recovery code
+- 期待: 401
 
-| 項目 | 必須 | 値 |
-|------|------|------|
-| Content-Type | 必須 | application/json |
+### AUTH_LOGIN_TOTP-TC-07 異常: TOTP 未有効（409）
+- 前提: User B `totpEnabled=false`
+- 期待: 409
 
-## 4. 出力
+### AUTH_LOGIN_TOTP-TC-08 異常: recovery code 再利用（401/422 相当）
+- 期待: TC-02 の 2) で担保
 
-### 4.1 成功
-
-```json
-{
-  "token": "xxxxx",
-  "expiresAt": "2025-12-31T23:59:59.000Z"
-}
-```
-
-Set-Cookie:
-
-```txt
-sid={セッションID}; Path=/; HttpOnly; SameSite=Lax; ...
-```
-
-### 4.2 失敗
-
-| 状態 | ステータス | Body 例 |
-|------|-----------|---------|
-| フィールド不足 | 400 | { "error": "invalid_request" } |
-| loginId 不明 | 404 | { "error": "login_challenge_not_found" } |
-| TOTP 未有効 | 400 | { "error": "totp_not_enabled" } |
-| コード不一致 | 401 | { "error": "invalid_code" } |
-| 試行回数超過 | 429 | { "error": "too_many_attempts" } |
-| 内部エラー | 500 | { "error": "internal_error" } |
-
-## 5. ステータスコード
-
-| 状態 | ステータス |
-|------|-----------|
-| 正常 | 200 |
-| 入力エラー | 400 |
-| 認証エラー | 401 |
-| チャレンジ不明 | 404 |
-| レートリミット | 429 |
-| 内部エラー | 500 |
-
-## 6. 挙動仕様
-
-1. loginId / code / recoveryCode を取得。loginId 無し → 400。
-2. チャレンジ検索。無ければ 404。
-3. ユーザーが TOTP 有効か確認。無効なら 400。
-4. TOTP or recoveryCode を検証。不一致なら 401。
-5. セッション ID（sid）を発行し Cookie 付与。
-6. token / expiresAt を返す。
-7. loginId は使用済みにして再利用不可。
+### AUTH_LOGIN_TOTP-TC-09 異常: 連続失敗で lockUntil により拒否（401/429 相当）
+- 前提: `lockUntil` が未来
+- 期待: 401/429（実装準拠）
 
 ---
-[目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン（TOTP 2段階目：POST /api/auth/login/totp）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログイン2段階認証（POST /api/auth/login/totp）
