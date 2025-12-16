@@ -16,8 +16,7 @@
 - AUTH_TOKENS-TC-01 正常：トークン一覧を返す（200）
 - AUTH_TOKENS-TC-02 正常：トークンが0件でも空配列（200）
 - AUTH_TOKENS-TC-03 異常：未ログイン（401）
-- AUTH_TOKENS-TC-04 異常：Content-Type 不正（400）
-- AUTH_TOKENS-TC-05 異常：DB 例外（500 相当）
+- AUTH_TOKENS-TC-04 異常：DB 例外（500 相当）
 
 ## 3. テストケース詳細
 
@@ -27,7 +26,7 @@
   - requireUserId -> "U1"
   - prisma.syncToken.findMany -> 2件返す
 - 入力
-  - Headers: Content-Type=application/json
+  - なし
 - 期待結果
   - status=200
   - body が配列
@@ -43,14 +42,7 @@
 - 前提：requireUserId が UNAUTHORIZED 相当を throw
 - 期待結果：status=401 相当（既定エラー応答に委ねる）
 
-### AUTH_TOKENS-TC-04 異常：Content-Type 不正（400）
-
-- 入力：Content-Type 未指定、または text/plain
-- 期待結果
-  - status=400
-  - body={ error:"bad_request" }
-
-### AUTH_TOKENS-TC-05 異常：DB 例外（500 相当）
+### AUTH_TOKENS-TC-04 異常：DB 例外（500 相当）
 
 - 前提：findMany が throw
 - 期待結果：status=500 相当（既定エラー応答に委ねる）

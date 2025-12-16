@@ -3,14 +3,14 @@
 # トークンラベル更新（POST /api/auth/tokens/label）
 
 本書は、トークンラベル更新 API（POST /api/auth/tokens/label）の正式な仕様を定義する。  
-※現時点の実装（apps/web/src/app/api/auth/tokens/label/route.ts）を正とする。
 
 ## 1. 概要
 
 指定トークン（SyncToken）の label を更新する。
 
 - 要ログイン
-- 対象トークンは、リクエストボディの token か Cookie から取得する（実装依存）
+- 対象トークンは リクエストボディで明示的に指定する
+- token が指定されていない場合は 400 Bad Request を返す
 - 更新対象が見つからない場合は 404
 
 ## 2. エンドポイント
@@ -40,14 +40,13 @@
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---:|---|
-| token | string | △ | 対象トークン（平文）。未指定の場合は Cookie から取得を試みる |
-| label | string | ✅ | 新しいラベル（空文字は許容される。※現行実装は文字列チェックのみ） |
+| token | string | ✅ | 対象トークン（平文） |
+| label | string | ✅ | 新しいラベル（空文字の許容可否は現行仕様を踏襲する） |
+※ token は必須とし、Cookie からの補完は行わない。
 
-### 3.4 token の解決（実装仕様）
-
-- body.token が string の場合、それを使用する
-- そうでない場合、Cookie 名 **hk_token** の値を使用する  
-  ※ログイン系が sid を使っている場合でも、このエンドポイントは現行実装では hk_token を参照する
+### 3.4 token の扱い
+- token はリクエストボディで必ず指定する
+- Cookie から token を解決する処理は行わない
 
 ## 4. レスポンス
 
@@ -59,7 +58,7 @@
 
 ### 4.2 失敗
 
-#### 400 Bad Request（Content-Type 不正 / JSON不正 / label 不正 / token 解決不可）
+#### 400 Bad Request（Content-Type 不正 / JSON不正 / label 不正 / token 不正）
 
 ```json
 { "error": "bad_request" }
