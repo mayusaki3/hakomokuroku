@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// TODO(PATH)
-import { POST } from "../../src/app/api/auth/tokens/label/route";
+import { POST } from '@/app/api/auth/tokens/label/route'
 
 vi.mock("../../src/lib/prisma", () => ({
   prisma: {
