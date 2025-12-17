@@ -1,32 +1,50 @@
-export const runtime = 'nodejs';
-
+// apps/web/src/app/api/auth/tokens/route.ts
 import { NextResponse } from 'next/server';
-import { prisma } from '@/server/prisma';
-import { requireUserId } from '@/server/auth';
+import { prisma } from '@/lib/prisma';
+import { requireUserId } from '@/lib/auth/requireUserId';
+
+function isJsonContentType(req: Request): boolean {
+  const ct = req.headers.get('content-type');
+  return typeof ct === 'string' && ct.toLowerCase().startsWith('application/json');
+}
+
+function toStatus(err: unknown, fallback: number): number {
+  // 既存コード側の投げ方（e.status / e.code / message）に寄せて吸収
+  const e = err as any;
+  const s = e?.status ?? e?.statusCode;
+  if (typeof s === 'number') return s;
+  const msg = typeof e?.message === 'string' ? e.message : '';
+  if (msg.toUpperCase().includes('UNAUTHORIZED')) return 401;
+  return fallback;
+}
 
 export async function GET(req: Request) {
-  // ★ここで認証 → 自ユーザーIDを確定
-  const uid = await requireUserId(req);
+  try {
+    if (!isJsonContentType(req)) {
+      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+    }
 
-  // ★サーバ側で userId=uid にハード固定（クエリ等は一切見ない）
-  const rows = await prisma.syncToken.findMany({
-    where: { userId: uid },
-    orderBy: [{ issuedAt: 'desc' }],
-    select: {
-      id: true,
-      // tokenHash は自端の一致判定にのみ使うが、漏えい性は低い（平文は返さない）
-      tokenHash: true,
-      issuedAt: true,
-      expiresAt: true,
-      lastUsedAt: true,
-      deviceName: true,
-      userAgent: true,
-      ip: true,
-    },
-  });
+    let userId: string;
+    try {
+      userId = await requireUserId();
+    } catch (e) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: toStatus(e, 401) });
+    }
 
-  // 念のため二重フィルタ（万一 join 等を追加しても他人のが混ざらない）
-  const tokens = rows.filter((r) => ((r as any).userId === undefined ? true : false));
+    const list = await prisma.syncToken.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        token: true,
+        label: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
 
-  return NextResponse.json({ tokens });
+    return NextResponse.json(list, { status: 200 });
+  } catch (e) {
+    console.error('[tokens] failed', e);
+    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
+  }
 }
