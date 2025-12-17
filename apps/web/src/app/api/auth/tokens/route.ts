@@ -1,50 +1,47 @@
-// apps/web/src/app/api/auth/tokens/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUserId } from '@/lib/auth/requireUserId';
 
-function isJsonContentType(req: Request): boolean {
-  const ct = req.headers.get('content-type');
-  return typeof ct === 'string' && ct.toLowerCase().startsWith('application/json');
-}
-
-function toStatus(err: unknown, fallback: number): number {
-  // 既存コード側の投げ方（e.status / e.code / message）に寄せて吸収
-  const e = err as any;
-  const s = e?.status ?? e?.statusCode;
-  if (typeof s === 'number') return s;
-  const msg = typeof e?.message === 'string' ? e.message : '';
-  if (msg.toUpperCase().includes('UNAUTHORIZED')) return 401;
-  return fallback;
-}
-
+/**
+ * GET /api/auth/tokens
+ * - Content-Type が application/json でない場合は 400（テスト仕様に合わせる）
+ * - 未ログインは 401
+ * - DB例外は 500 相当
+ */
 export async function GET(req: Request) {
+  const ct = req.headers.get('content-type') ?? '';
+  if (!ct.includes('application/json')) {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
+
+  let userId: string;
   try {
-    if (!isJsonContentType(req)) {
-      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
-    }
+    userId = await requireUserId();
+  } catch (e: any) {
+    // テスト側は throw { status: 401 } などで来る想定
+    const status = typeof e?.status === 'number' ? e.status : 401;
+    return NextResponse.json({ error: 'unauthorized' }, { status });
+  }
 
-    let userId: string;
-    try {
-      userId = await requireUserId();
-    } catch (e) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: toStatus(e, 401) });
-    }
-
-    const list = await prisma.syncToken.findMany({
+  try {
+    const rows = await prisma.syncToken.findMany({
       where: { userId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { issuedAt: 'desc' },
       select: {
-        token: true,
-        label: true,
-        createdAt: true,
-        updatedAt: true,
+        tokenHash: true,
+        issuedAt: true,
+        expiresAt: true,
+        lastUsedAt: true,
+        deviceName: true,
+        userAgent: true,
+        ip: true,
       },
     });
 
-    return NextResponse.json(list, { status: 200 });
+    return NextResponse.json(rows, { status: 200 });
   } catch (e) {
-    console.error('[tokens] failed', e);
-    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
+    return new NextResponse(null, { status: 500 });
   }
 }

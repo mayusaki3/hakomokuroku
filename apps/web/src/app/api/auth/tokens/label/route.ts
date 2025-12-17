@@ -1,75 +1,66 @@
-// apps/web/src/app/api/auth/tokens/label/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUserId } from '@/lib/auth/requireUserId';
 
-function isJsonContentType(req: Request): boolean {
-  const ct = req.headers.get('content-type');
-  return typeof ct === 'string' && ct.toLowerCase().startsWith('application/json');
-}
-
-function toStatus(err: unknown, fallback: number): number {
-  const e = err as any;
-  const s = e?.status ?? e?.statusCode;
-  if (typeof s === 'number') return s;
-  const msg = typeof e?.message === 'string' ? e.message : '';
-  if (msg.toUpperCase().includes('UNAUTHORIZED')) return 401;
-  return fallback;
-}
-
-type Body = {
-  token?: unknown;
-  label?: unknown;
-};
-
+/**
+ * POST /api/auth/tokens/label
+ * body: { token: string, label: string }
+ *
+ * - Content-Type 不正は 400
+ * - JSONパース不正は 400
+ * - token/label 未指定 or 非string は 400
+ * - 未ログインは 401
+ * - 対象トークンなしは 404
+ * - DB例外は 500 相当
+ */
 export async function POST(req: Request) {
+  const ct = req.headers.get('content-type') ?? '';
+  if (!ct.includes('application/json')) {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
+
+  let body: any;
   try {
-    if (!isJsonContentType(req)) {
-      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
-    }
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
 
-    let body: Body;
-    try {
-      body = (await req.json()) as Body;
-    } catch {
-      // JSON パース不正は「例外を投げず」400 で返す（テスト期待）
-      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
-    }
+  const token = body?.token;
+  const label = body?.label;
 
-    const token = body?.token;
-    const label = body?.label;
+  if (typeof token !== 'string' || token.trim().length === 0) {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
+  if (typeof label !== 'string') {
+    return NextResponse.json({ error: 'bad_request' }, { status: 400 });
+  }
 
-    if (typeof token !== 'string' || token.trim() === '') {
-      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
-    }
-    if (typeof label !== 'string') {
-      return NextResponse.json({ error: 'bad_request' }, { status: 400 });
-    }
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch (e: any) {
+    const status = typeof e?.status === 'number' ? e.status : 401;
+    return NextResponse.json({ error: 'unauthorized' }, { status });
+  }
 
-    let userId: string;
-    try {
-      userId = await requireUserId();
-    } catch (e) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: toStatus(e, 401) });
-    }
-
-    const updated = await prisma.syncToken.updateMany({
-      where: { userId, token },
-      data: { label },
+  try {
+    const result = await prisma.syncToken.updateMany({
+      where: { userId, tokenHash: token },
+      data: { deviceName: label },
     });
 
-    if (!updated || typeof updated.count !== 'number') {
-      // Prisma の戻りが想定外なら 500 扱い
-      return NextResponse.json({ error: 'internal_error' }, { status: 500 });
+    if (!result || typeof result.count !== 'number') {
+      return new NextResponse(null, { status: 500 });
     }
-
-    if (updated.count === 0) {
-      return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    if (result.count === 0) {
+      return new NextResponse(null, { status: 404 });
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e) {
-    console.error('[tokens/label] failed', e);
-    return NextResponse.json({ error: 'internal_error' }, { status: 500 });
+    return new NextResponse(null, { status: 500 });
   }
 }
