@@ -26,7 +26,7 @@ describe('POST /api/auth/register', () => {
     const req = new Request(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: 'u1', password: 'p1' }),
+      body: JSON.stringify({ userId: '  u1  ', password: 'p1' }),
     });
 
     const res = await POST_REGISTER(req);
@@ -146,6 +146,24 @@ describe('POST /api/auth/register', () => {
     const res = await POST_REGISTER(req);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
+  });
+
+  it('AUTH_REGISTER-TC-11: userId は trim して既存判定する（409）', async () => {
+    (prisma.user.findFirst as any).mockResolvedValue({ id: 'U1' });
+
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: '  u1  ', password: 'p1' }),
+    });
+
+    const res = await POST_REGISTER(req);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: 'already_exists' });
+
+    // trim 後で findFirst されること
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+    expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
 });

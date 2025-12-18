@@ -177,4 +177,34 @@ describe("AUTH_TOKENS_LABEL (POST /api/auth/tokens/label)", () => {
     expect(res.status).toBeGreaterThanOrEqual(500);
   });
 
+  it('AUTH_TOKENS_LABEL-TC-12: 正常：label が空文字でも許容（200）', async () => {
+    vi.mocked(requireUserId).mockResolvedValueOnce('U1');
+    vi.mocked(prisma.syncToken.updateMany).mockResolvedValueOnce({ count: 1 });
+
+    const req = new Request('http://localhost/api/auth/tokens/label', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 't1', label: '' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('AUTH_TOKENS_LABEL-TC-13: 正常：label が空白のみでも許容（200）', async () => {
+    vi.mocked(requireUserId).mockResolvedValueOnce('U1');
+    vi.mocked(prisma.syncToken.updateMany).mockResolvedValueOnce({ count: 1 });
+
+    const req = new Request('http://localhost/api/auth/tokens/label', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 't1', label: '   ' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
 });
