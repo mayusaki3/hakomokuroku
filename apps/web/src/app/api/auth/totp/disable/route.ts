@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   const verified =
     code
       ? await verifyTotpCode(user, code)
-      : await verifyRecoveryCode(user, recoveryCode);
+      : await verifyRecoveryCode(user, recoveryCode.trim());
 
   if (!verified) {
     return NextResponse.json(

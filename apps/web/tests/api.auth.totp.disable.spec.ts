@@ -27,7 +27,6 @@ vi.mock('@/lib/prisma', () => {
 vi.mock("@/server/auth", () => ({
   requireUserId: vi.fn(),
 }));
-import { requireUserId } from "@/server/auth";
 
 // TOTPユーティリティモック
 vi.mock('@/server/totp', () => ({
@@ -274,7 +273,7 @@ describe('POST /api/auth/totp/disable', () => {
 
   it('AUTH_TOTP_DISABLE-TC-14: 異常：requireUserId の想定外例外は throw される', async () => {
     // route.ts の仕様コメントに合わせて「401以外」は throw される想定
-    vi.mocked(requireUserId).mockRejectedValueOnce({ status: 403 });
+    vi.mocked(auth.requireUserId).mockRejectedValueOnce({ status: 403 });
 
     const req = new Request('http://localhost/api/auth/totp/disable', {
       method: 'POST',
@@ -287,5 +286,34 @@ describe('POST /api/auth/totp/disable', () => {
       await POST_DISABLE(req);
     }).rejects.toBeTruthy();
   });  
+
+
+  it('AUTH_TOTP_DISABLE-TC-15: 異常：JSON が null（400）', async () => {
+    vi.mocked(auth.requireUserId).mockResolvedValueOnce('U1');
+
+    const req = new Request('http://localhost/api/auth/totp/disable', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'null', // ← body が null になる
+    });
+
+    const res = await POST_DISABLE(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
+  });
+
+  it('AUTH_TOTP_DISABLE-TC-16: 異常：Content-Type ヘッダ無し（400）', async () => {
+    vi.mocked(auth.requireUserId).mockResolvedValueOnce('U1');
+
+    const req = new Request('http://localhost/api/auth/totp/disable', {
+      method: 'POST',
+      // headers なし
+      // body なし（重要）
+    });
+
+    const res = await POST_DISABLE(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
+  });
 
 });

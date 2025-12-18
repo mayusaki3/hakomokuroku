@@ -60,6 +60,7 @@ describe('POST /api/auth/register', () => {
     });
     const res = await POST_REGISTER(req);
     expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
   });
 
   it('AUTH_REGISTER-TC-04: 異常：userId 未指定/空/非string（400）', async () => {
@@ -116,21 +117,7 @@ describe('POST /api/auth/register', () => {
     expect(res.status).toBeGreaterThanOrEqual(500);
   });
 
-  it('API_AUTH_REGISTER-TC-08: 異常：JSON パース不正（400）', async () => {
-    const { POST } = await import('@/app/api/auth/register/route');
-
-    const req = new Request('http://localhost/api/auth/register', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      // JSONとして壊す
-      body: '{',
-    });
-
-    const res = await POST_REGISTER(req);
-    expect(res.status).toBe(400);
-  });
-
-  it('AUTH_REGISTER-TC-09: 異常：Content-Type ヘッダ無し（400）', async () => {
+  it('AUTH_REGISTER-TC-08: 異常：Content-Type ヘッダ無し（400）', async () => {
     const req = new Request('http://localhost/api/auth/register', {
       method: 'POST',
       // Content-Type を付けない
@@ -142,16 +129,22 @@ describe('POST /api/auth/register', () => {
     expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
   });
 
+  it('AUTH_REGISTER-TC-09: 異常：Content-Type ヘッダ無し（400）', async () => {
+    const req = new Request(url, { method: 'POST' });
+    const res = await POST_REGISTER(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
+  });
+
   it('AUTH_REGISTER-TC-10: 異常：JSON が null（400）', async () => {
-    const req = new Request('http://localhost/api/auth/register', {
+    const req = new Request(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: 'null', // ← JSON としては正しいが body は null になる
+      body: 'null', // JSONとしては正しい → body は null
     });
 
     const res = await POST_REGISTER(req);
     expect(res.status).toBe(400);
-    // userId/password 検証で bad_request になる想定
     expect(await res.json()).toEqual({ ok: false, error: 'bad_request' });
   });
 

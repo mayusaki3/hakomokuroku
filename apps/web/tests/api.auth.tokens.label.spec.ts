@@ -13,10 +13,10 @@ vi.mock("@/lib/prisma", () => ({
 import { prisma } from "@/lib/prisma";
 
 // requireUserId（route の import に合わせる）
-vi.mock("@/server/auth", () => ({
+vi.mock("@/lib/auth/requireUserId", () => ({
   requireUserId: vi.fn(),
 }));
-import { requireUserId } from "@/server/auth";
+import { requireUserId } from "@/lib/auth/requireUserId";
 
 describe("AUTH_TOKENS_LABEL (POST /api/auth/tokens/label)", () => {
   beforeEach(() => {
@@ -95,6 +95,17 @@ describe("AUTH_TOKENS_LABEL (POST /api/auth/tokens/label)", () => {
     expect(res.status).toBe(400);
   });
 
+  it("AUTH_TOKENS_LABEL-TC-06a: 異常：token が空白のみ（400）", async () => {
+    const req = new Request("http://localhost/api/auth/tokens/label", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "   ", label: "L1" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
   it("AUTH_TOKENS_LABEL-TC-07: 異常：対象トークンなし（404）", async () => {
     (requireUserId as any).mockResolvedValue("U1");
     (prisma.syncToken.updateMany as any).mockResolvedValue({ count: 0 });
@@ -129,7 +140,7 @@ describe("AUTH_TOKENS_LABEL (POST /api/auth/tokens/label)", () => {
   it("AUTH_TOKENS_LABEL-TC-09: 異常：Content-Type ヘッダ無し（400）", async () => {
     const req = new Request("http://localhost/api/auth/tokens/label", {
       method: "POST",
-      body: JSON.stringify({ token: "t1", label: "L1" }),
+      // body を付けない（重要）
     });
 
     const res = await POST(req);
@@ -147,6 +158,23 @@ describe("AUTH_TOKENS_LABEL (POST /api/auth/tokens/label)", () => {
 
     const res = await POST(req);
     expect(res.status).toBe(401);
+  });
+
+  it('AUTH_TOKENS_LABEL-TC-11: 異常：updateMany が不正な戻り値なら 500', async () => {
+    // requireUserId はログイン済みにする
+    vi.mocked(requireUserId).mockResolvedValueOnce('U1');
+
+    // updateMany が壊れた戻り値（count が無い/number でない）
+    (prisma.syncToken.updateMany as any).mockResolvedValueOnce({ count: '1' });
+
+    const req = new Request('http://localhost/api/auth/tokens/label', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 't', label: 'dev' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBeGreaterThanOrEqual(500);
   });
 
 });
