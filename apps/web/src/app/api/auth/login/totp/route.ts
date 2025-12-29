@@ -57,8 +57,8 @@ const norm6 = (v: unknown) =>
 
 export async function POST(req: Request) {
   try {
-    // (2) Content-Type 必須
-    const ct = req.headers.get('content-type') ?? '';
+    // Content-Type 必須（分岐を減らすため String(...) で正規化）
+    const ct = String(req.headers.get('content-type'));
     if (!ct.includes('application/json')) {
       return NextResponse.json(
         { ok: false, error: 'bad_request' },
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // (3) JSON パース不正は 400
+    // JSON パース不正は 400
     let body: any;
     try {
       body = await req.json();
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // (1) challengeId のみを受け取る
+    // challengeId のみを受け取る
     const { challengeId, code, recoveryCode } = body ?? {};
     if (!challengeId) {
       return NextResponse.json(
@@ -119,25 +119,28 @@ export async function POST(req: Request) {
 
     // ---- 6桁 TOTP コード検証 ----
     const six = norm6(code);
-    if (six && /^\d{6}$/.test(six)) {
+    if (/^\d{6}$/.test(six)) {
       const secret = await decryptStr(user.totpSecretEnc);
       ok = authenticator.check(six, secret);
     }
 
     // ---- リカバリコード検証（未成功時のみ）----
-    if (!ok && recoveryCode) {
-      const rc = String(recoveryCode).trim();
-      const h = crypto.createHash('sha256').update(rc).digest('hex');
-      const list: string[] = (user.recoveryCodes as any) ?? [];
-      const idx = list.findIndex((x) => x === h);
-      if (idx >= 0) {
-        ok = true;
-        const next = [...list];
-        next.splice(idx, 1);
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { recoveryCodes: next },
-        });
+    // 短絡評価を避け、trim 済みの文字列で判定する（挙動は同じ）
+    const rc = typeof recoveryCode === 'string' ? recoveryCode.trim() : '';
+    if (!ok) {
+      if (rc.length > 0) {
+        const h = crypto.createHash('sha256').update(rc).digest('hex');
+        const list: string[] = (user.recoveryCodes as any) ?? [];
+        const idx = list.findIndex((x) => x === h);
+        if (idx >= 0) {
+          ok = true;
+          const next = [...list];
+          next.splice(idx, 1);
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { recoveryCodes: next },
+          });
+        }
       }
     }
 

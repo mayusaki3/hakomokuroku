@@ -6,7 +6,12 @@ import crypto from 'crypto';
 import { getCurrentUser } from '@/server/auth';
 import { prisma } from '@/server/prisma';
 
+/**
+ * 環境鍵（Base64, 32 bytes）を使用して TOTP pending secret を暗号化する。
+ * - 失敗時は internal_error（500）として扱う（共通仕様に合わせる）
+ */
 const ENC_KEY_B64 = process.env.TOTP_SECRET_KEY ?? '';
+
 function getKey(): Buffer {
   if (!ENC_KEY_B64) throw new Error('TOTP_SECRET_KEY is not set');
   const key = Buffer.from(ENC_KEY_B64, 'base64');
@@ -30,12 +35,18 @@ export async function GET() {
 export async function POST() {
   try {
     const me = await getCurrentUser();
-    if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    if (!me) {
+      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    }
 
     const user = await prisma.user.findUnique({ where: { id: me.id } });
-    if (!user) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+    if (!user) {
+      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+    }
+
+    // すでに有効 → 状態衝突（共通仕様の conflict）
     if (user.totpEnabled) {
-      return NextResponse.json({ ok: false, error: 'already_enabled' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: 'conflict' }, { status: 409 });
     }
 
     const pendingSecret = authenticator.generateSecret();
@@ -57,6 +68,7 @@ export async function POST() {
 
     return NextResponse.json({ ok: true, otpauthUrl }, { status: 200 });
   } catch {
-    return new NextResponse(null, { status: 500 });
+    // 共通仕様：内部エラーは ok:false + internal_error
+    return NextResponse.json({ ok: false, error: 'internal_error' }, { status: 500 });
   }
 }

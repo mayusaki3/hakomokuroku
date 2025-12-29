@@ -1,6 +1,6 @@
-[目次](../../目次.md) > テストケース集 > ライブラリ > server/auth テストケース
+[目次](../../目次.md) > テストケース集 > ライブラリ > server/auth サーバー認証ライブラリ
 
-# server/auth テストケース
+# テストケース：server/auth サーバー認証ライブラリ
 
 ## 1. 概要
 
@@ -167,4 +167,4 @@ server/auth.ts は、主に以下の責務を持つ。
 - 本テストにより、server/auth.ts は Branch / Statement / Function / Line すべて 100% カバレッジとなる。
 
 ---
-[目次](../../目次.md) > テストケース集 > ライブラリ > server/auth テストケース
+[目次](../../目次.md) > テストケース集 > ライブラリ > server/auth サーバー認証ライブラリ
