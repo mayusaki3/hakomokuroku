@@ -1,22 +1,27 @@
 // apps/web/src/app/api/auth/totp/setup/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
-import { authenticator } from 'otplib';
-import crypto from 'crypto';
-
-import { getCurrentUser } from '@/server/auth';
 import { prisma } from '@/server/prisma';
+import { getCurrentUser } from '@/server/auth';
+import crypto from 'crypto';
+import { authenticator } from 'otplib';
 
-/**
- * 環境鍵（Base64, 32 bytes）を使用して TOTP pending secret を暗号化する。
- * - 失敗時は internal_error（500）として扱う（共通仕様に合わせる）
- */
-const ENC_KEY_B64 = process.env.TOTP_SECRET_KEY ?? '';
+// ------------------------------
+// TOTP 設定（±1スライス許容）
+// ------------------------------
+authenticator.options = { window: 1 };
 
+// ------------------------------
+// 暗号化（TOTP_PENDING_SECRET 用）
+// ※ テストで env を切り替えられるよう、key は毎回読む
+// ------------------------------
 function getKey(): Buffer {
-  if (!ENC_KEY_B64) throw new Error('TOTP_SECRET_KEY is not set');
-  const key = Buffer.from(ENC_KEY_B64, 'base64');
-  if (key.length !== 32) throw new Error('TOTP_SECRET_KEY must be 32 bytes (Base64)');
-  return key;
+  const b64 = process.env.TOTP_SECRET_KEY;
+  if (!b64) throw new Error('TOTP_SECRET_KEY is missing');
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length !== 32) throw new Error('TOTP_SECRET_KEY must be 32 bytes (base64)');
+  return buf;
 }
 
 function encryptWithEnvKey(plain: string): string {
@@ -25,50 +30,44 @@ function encryptWithEnvKey(plain: string): string {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
+
+  // iv(12) + tag(16) + enc
   return Buffer.concat([iv, tag, enc]).toString('base64');
 }
 
-export async function GET() {
-  return new NextResponse('Method Not Allowed', { status: 405 });
-}
-
+// ------------------------------
+// POST /api/auth/totp/setup
+// ------------------------------
 export async function POST() {
   try {
     const me = await getCurrentUser();
-    if (!me) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
+    if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
     const user = await prisma.user.findUnique({ where: { id: me.id } });
-    if (!user) {
-      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
-    }
+    if (!user) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
 
-    // すでに有効 → 状態衝突（共通仕様の conflict）
     if (user.totpEnabled) {
       return NextResponse.json({ ok: false, error: 'conflict' }, { status: 409 });
     }
 
-    const pendingSecret = authenticator.generateSecret();
-    const pendingEnc = encryptWithEnvKey(pendingSecret);
+    // secret生成 → pendingへ保存
+    const secret = authenticator.generateSecret();
+    const pendingEnc = encryptWithEnvKey(secret);
 
     await prisma.user.update({
-      where: { id: me.id },
-      data: {
-        totpPendingSecretEnc: pendingEnc,
-        totpPendingAt: new Date(),
-        totpFailCount: 0,
-      },
+      where: { id: user.id },
+      data: { totpPendingSecretEnc: pendingEnc },
     });
 
-    const issuer = 'Hakomokuroku';
-    const labelUserId = user.userId ?? 'user';
-    const label = `${issuer}: ${labelUserId}`;
-    const otpauthUrl = authenticator.keyuri(label, issuer, pendingSecret);
+    // otpauth URL（issuer/label はプロジェクト側の規約に合わせて調整）
+    const issuer = 'HakoMokuroku';
+    const label = `user:${user.id}`;
+    const otpauthUrl = authenticator.keyuri(label, issuer, secret);
 
     return NextResponse.json({ ok: true, otpauthUrl }, { status: 200 });
-  } catch {
-    // 共通仕様：内部エラーは ok:false + internal_error
+  } catch (e) {
+    // 鍵未設定等もここに落とす（共通仕様）
+    console.error('[totp/setup] error', e);
     return NextResponse.json({ ok: false, error: 'internal_error' }, { status: 500 });
   }
 }

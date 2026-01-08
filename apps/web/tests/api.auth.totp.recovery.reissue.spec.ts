@@ -36,7 +36,6 @@ describe('AUTH_TOTP_RECOVERY_REISSUE (POST /api/auth/totp/recovery/reissue)', ()
   it('AUTH_TOTP_RECOVERY_REISSUE-TC-01: 正常：TOTP 有効ユーザーが正しい code で再発行（200）', async () => {
     vi.mocked(requireUserId).mockResolvedValueOnce('U1');
 
-    // totpEnabled=true & totpSecretEncあり
     (prisma.user.findUnique as any).mockResolvedValueOnce({
       id: 'U1',
       totpEnabled: true,
@@ -48,9 +47,7 @@ describe('AUTH_TOTP_RECOVERY_REISSUE (POST /api/auth/totp/recovery/reissue)', ()
 
     vi.mocked(verifyTotpCode).mockResolvedValueOnce(true);
 
-    (prisma.user.update as any).mockResolvedValueOnce({
-      id: 'U1',
-    });
+    (prisma.user.update as any).mockResolvedValueOnce({ id: 'U1' });
 
     const req = new Request(url, {
       method: 'POST',
@@ -66,20 +63,19 @@ describe('AUTH_TOTP_RECOVERY_REISSUE (POST /api/auth/totp/recovery/reissue)', ()
     expect(Array.isArray(body.recoveryCodes)).toBe(true);
     expect(body.recoveryCodes).toHaveLength(10);
 
-    // 返却は平文（XXXX-XXXX）形式
     for (const c of body.recoveryCodes) {
       expect(typeof c).toBe('string');
       expect(c).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
     }
 
-    // DB更新: recoveryCodes を置換
     expect(prisma.user.update).toHaveBeenCalledTimes(1);
     const arg = (prisma.user.update as any).mock.calls[0][0];
     expect(arg.where).toEqual({ id: 'U1' });
-    expect(Array.isArray(arg.data.recoveryCodes)).toBe(true);
-    expect(arg.data.recoveryCodes).toHaveLength(10);
-    // ハッシュはhex(sha256)想定の長さ(64)
-    for (const h of arg.data.recoveryCodes) {
+
+    const nextList = arg.data.recoveryCodes as string[];
+    expect(Array.isArray(nextList)).toBe(true);
+    expect(nextList).toHaveLength(10);
+    for (const h of nextList) {
       expect(typeof h).toBe('string');
       expect(h).toMatch(/^[0-9a-f]{64}$/);
     }
@@ -250,7 +246,7 @@ describe('AUTH_TOTP_RECOVERY_REISSUE (POST /api/auth/totp/recovery/reissue)', ()
     expect(await res.json()).toEqual({ ok: false, error: 'internal_error' });
   });
 
-  it('AUTH_TOTP_RECOVERY_REISSUE-TC-11: 正常：再発行により旧リカバリコードが無効化される（実装上は置換を確認）（200）', async () => {
+  it('AUTH_TOTP_RECOVERY_REISSUE-TC-11: 正常：再発行により旧リカバリコードが無効化される（置換確認）（200）', async () => {
     vi.mocked(requireUserId).mockResolvedValueOnce('U1');
     (prisma.user.findUnique as any).mockResolvedValueOnce({
       id: 'U1',
@@ -275,8 +271,22 @@ describe('AUTH_TOTP_RECOVERY_REISSUE (POST /api/auth/totp/recovery/reissue)', ()
 
     const arg = (prisma.user.update as any).mock.calls[0][0];
     const nextList = arg.data.recoveryCodes as string[];
-
-    // 旧セットと異なる（置換される）
     expect(nextList).not.toEqual(['oldhash1', 'oldhash2']);
+  });
+
+  it('AUTH_TOTP_RECOVERY_REISSUE-TC-12: Content-Type ヘッダ無し（headers.get が null） -> 400 invalid_request（ct null 分岐を確実に踏む）', async () => {
+    // NOTE:
+    // 標準 Request は body の与え方で content-type が自動付与されがちで null にならない。
+    // ここは「headers.get() が null を返す」Request互換スタブで分岐を踏む。
+    const req = {
+      headers: { get: () => null },
+      json: async () => {
+        throw new Error('should not be called');
+      },
+    } as unknown as Request;
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'invalid_request' });
   });
 });
