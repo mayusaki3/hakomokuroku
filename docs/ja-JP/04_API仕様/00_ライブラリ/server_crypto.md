@@ -1,4 +1,3 @@
-[目次](../目次.md) > API仕様 > ライブラリ > server/crypto サーバー暗号ユーティリティ仕様
 [目次](../../目次.md) > API仕様 > ライブラリ > server/crypto サーバー暗号ユーティリティ仕様
 
 本書は `apps/web/src/server/crypto.ts` の仕様を定義する。
