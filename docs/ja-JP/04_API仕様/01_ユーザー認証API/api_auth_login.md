@@ -17,9 +17,24 @@
 
 ---
 
-## 2. リクエスト
+## 2. 仕様項目
 
-### Body(JSON)
+| sec_id | 項目 | 検証責務 |
+|---|---|---|
+| sec_auth_login_request_body | リクエスト本文 | `userId` と `password` を受け取る |
+| sec_auth_login_invalid_request | 不正リクエスト | Content-Type / JSON / body / 必須項目不正を 400 にする |
+| sec_auth_login_success_basic | 通常ログイン成功 | TOTP 無効ユーザーで 200 + ok:true + Cookie を返す |
+| sec_auth_login_success_totp_required | TOTP 必須 | TOTP 有効ユーザーで 200 + totpRequired:true + challengeId を返す |
+| sec_auth_login_auth_failed | 認証失敗 | userId 不明 / password 不一致を 401 にする |
+| sec_auth_login_locked | ロック中 | lockUntil が未来なら 401 を返す |
+| sec_auth_login_internal_error | 内部エラー | 予期しない例外を 500 にする |
+| sec_auth_login_security | セキュリティ | 認証失敗理由を詳細化しない |
+
+---
+
+## 3. リクエスト
+
+### 3.1 Body(JSON) {#sec_auth_login_request_body}
 
 ```json
 {
@@ -28,20 +43,22 @@
 }
 ```
 
-### バリデーション
+### 3.2 バリデーション {#sec_auth_login_invalid_request}
 
 | 項目 | 条件 |
 |---|---|
+| Content-Type | `application/json` を含むこと |
+| body | `null` ではなく object であること |
 | userId | 必須・1文字以上の文字列 |
 | password | 必須・1文字以上の文字列 |
 
-`body` が `null`、または object ではない場合は `400 invalid_request` を返す。
+不正な場合は `400 invalid_request` を返す。
 
 ---
 
-## 3. レスポンス
+## 4. レスポンス
 
-### 3.1 共通事項
+### 4.1 共通事項
 
 - Body は JSON
 - 成功時は `ok: true`
@@ -50,7 +67,7 @@
 
 ---
 
-### 3.2 成功時（200）: 通常ユーザー（TOTP 無効）
+### 4.2 成功時（200）: 通常ユーザー（TOTP 無効） {#sec_auth_login_success_basic}
 
 ```json
 {
@@ -66,7 +83,7 @@
 
 ---
 
-### 3.3 成功時（200）: TOTP 必須ユーザー（TOTP 有効）
+### 4.3 成功時（200）: TOTP 必須ユーザー（TOTP 有効） {#sec_auth_login_success_totp_required}
 
 ```json
 {
@@ -85,31 +102,31 @@
 
 ---
 
-### 3.4 失敗時
+### 4.4 失敗時
 
-| 状況 | ステータス | Body 例 |
-|---|---:|---|
-| Content-Type 不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| JSON パース不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| body が null / 非 object | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| userId / password 不足 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| userId 不明 | 401 | `{ "ok": false, "error": "auth_failed" }` |
-| パスワード不一致 | 401 | `{ "ok": false, "error": "auth_failed" }` |
-| lockUntil が未来 | 401 | `{ "ok": false, "error": "locked" }` |
-| 内部エラー | 500 | `{ "ok": false, "error": "internal_error" }` |
+| sec_id | 状況 | ステータス | Body 例 |
+|---|---|---:|---|
+| sec_auth_login_invalid_request | Content-Type 不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| sec_auth_login_invalid_request | JSON パース不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| sec_auth_login_invalid_request | body が null / 非 object | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| sec_auth_login_invalid_request | userId / password 不足 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| sec_auth_login_auth_failed | userId 不明 | 401 | `{ "ok": false, "error": "auth_failed" }` |
+| sec_auth_login_auth_failed | パスワード不一致 | 401 | `{ "ok": false, "error": "auth_failed" }` |
+| sec_auth_login_locked | lockUntil が未来 | 401 | `{ "ok": false, "error": "locked" }` |
+| sec_auth_login_internal_error | 内部エラー | 500 | `{ "ok": false, "error": "internal_error" }` |
 
 ユーザー不明とパスワード不一致は、レスポンス上は区別しない。
 
 ---
 
-## 4. DB 更新仕様
+## 5. DB 更新仕様
 
-### 4.1 通常ログイン成功時
+### 5.1 通常ログイン成功時 {#sec_auth_login_success_basic}
 
 - ログイン用 Cookie または同期トークンを発行する
 - 必要に応じて最終ログイン日時を更新する
 
-### 4.2 TOTP 必須ユーザー成功時
+### 5.2 TOTP 必須ユーザー成功時 {#sec_auth_login_success_totp_required}
 
 - `LoginChallenge` を作成する
 - `LoginChallenge` には以下を含める
@@ -117,14 +134,14 @@
   - 有効期限
   - 使用済みフラグ `used=false`
 
-### 4.3 認証失敗時
+### 5.3 認証失敗時 {#sec_auth_login_auth_failed}
 
 - 必要に応じて失敗回数やロック状態を更新する
 - 詳細な失敗理由はクライアントへ返さない
 
 ---
 
-## 5. セキュリティ注意点
+## 6. セキュリティ注意点 {#sec_auth_login_security}
 
 - ログにはパスワードを記録しない
 - 認証失敗時のメッセージは詳細化しない
