@@ -2,18 +2,18 @@
 
 # ログイン（POST /api/auth/login）
 
-ユーザーの資格情報を検証し、セッション（または TOTP ログインフロー用の一時 ID）を発行する API。
+ユーザーの資格情報を検証し、通常ログインまたは TOTP ログインフローへ分岐する API。
 
 ---
 
 ## 1. 概要
 
-ログインフォームから送信されたメールアドレスとパスワードを検証し、  
-以下の 2 パターンいずれかで成功レスポンスを返す。
+ログインフォームから送信された `userId` と `password` を検証し、以下のいずれかで成功レスポンスを返す。
 
-1. **通常ユーザー（TOTP 無効）**: セッション Cookie を発行し、ユーザー情報を返す  
-2. **TOTP 必須ユーザー（TOTP 有効）**: セッション Cookie を発行せず、一時的な loginId を返す  
-   - クライアントは `/login/totp` 画面に遷移し、`/api/auth/login/totp` で TOTP コード検証を行う
+1. **通常ユーザー（TOTP 無効）**: セッション Cookie を発行し、ログインを完了する
+2. **TOTP 必須ユーザー（TOTP 有効）**: セッション Cookie を発行せず、TOTP ログイン確認用の `challengeId` を返す
+
+クライアントは `totpRequired: true` を受け取った場合、`challengeId` と TOTP コードまたはリカバリコードを `/api/auth/login/totp` に送信する。
 
 ---
 
@@ -23,94 +23,114 @@
 
 ```json
 {
-  "email": "string",
+  "userId": "string",
   "password": "string"
 }
 ```
 
 ### バリデーション
 
-| 項目     | 条件               |
-|----------|--------------------|
-| email    | 必須・メール形式   |
-| password | 必須・1文字以上    |
+| 項目 | 条件 |
+|---|---|
+| userId | 必須・1文字以上の文字列 |
+| password | 必須・1文字以上の文字列 |
+
+`body` が `null`、または object ではない場合は `400 invalid_request` を返す。
 
 ---
 
 ## 3. レスポンス
 
-### 3-1. 共通事項
+### 3.1 共通事項
 
-- HTTP ステータスコード: 200 / 400 / 401 / 500
 - Body は JSON
-- エラー時のフォーマットは共通仕様（00_共通仕様.md）の方針に従う
+- 成功時は `ok: true`
+- 失敗時は `ok: false`
+- エラー時のフォーマットは共通仕様（`00_共通仕様.md`）の方針に従う
 
 ---
 
-### 3-2. 成功時（200）: 通常ユーザー（TOTP 無効）
-
-ユーザーに TOTP が設定されていない場合、従来どおりセッション Cookie を発行し、ユーザー情報を返す。
+### 3.2 成功時（200）: 通常ユーザー（TOTP 無効）
 
 ```json
 {
-  "ok": true,
-  "user": {
-    "id": "string",
-    "displayName": "string"
-  }
+  "ok": true
 }
 ```
 
-- 振る舞い
-  - サーバー側でセッションを作成
-  - レスポンスヘッダーの `Set-Cookie` にセッション ID を設定
-  - `ok: true` かつ `user` オブジェクトが含まれる
-  - `totpRequired` フラグは **含めない**（または `false` を返す実装でもよいが、仕様上は省略推奨）
+振る舞い:
+
+- サーバー側でログイン用 Cookie を発行する
+- レスポンスヘッダーの `Set-Cookie` にセッションまたはログイントークンを設定する
+- TOTP チャレンジは作成しない
 
 ---
 
-### 3-3. 成功時（200）: TOTP 必須ユーザー（TOTP 有効）
-
-ユーザーに TOTP が有効化されている場合、**この段階ではセッション Cookie を発行せず**、  
-TOTP ログイン確認用の一時 ID を返す。
+### 3.3 成功時（200）: TOTP 必須ユーザー（TOTP 有効）
 
 ```json
 {
   "ok": true,
   "totpRequired": true,
-  "loginId": "string"
+  "challengeId": "string"
 }
 ```
 
-- 振る舞い
-  - サーバー側で「TOTP チャレンジ」用の一時レコードを作成し、その ID を `loginId` として返す
-  - このレスポンスでは `Set-Cookie` によるセッション ID の発行は行わない
-  - クライアントは以下のような流れで処理することを想定
-    - `/login` 画面で email/password を送信
-    - `totpRequired: true` と `loginId` を受け取ったら `/login/totp?loginId=...` に遷移
-    - `/api/auth/login/totp` に `loginId` と TOTP コード（または回復コード）を送信し、最終的にアクセストークンまたはセッションを取得する
+振る舞い:
+
+- サーバー側で `LoginChallenge` を作成する
+- 作成した `LoginChallenge.id` を `challengeId` として返す
+- このレスポンスではログイン完了用 Cookie を発行しない
+- クライアントは `/api/auth/login/totp` に `challengeId` と TOTP コードまたはリカバリコードを送信する
 
 ---
 
-### 3-4. 失敗時
+### 3.4 失敗時
 
-| 状況                           | ステータス | Body 例                                                  |
-|--------------------------------|------------|----------------------------------------------------------|
-| パラメータ不足                 | 400        | { "ok": false, "error": "invalid_request" }             |
-| メール不一致 / パスワード不一致| 401        | { "ok": false, "error": "auth_failed" }                 |
-| 内部エラー                     | 500        | { "ok": false, "error": "internal_error" }              |
+| 状況 | ステータス | Body 例 |
+|---|---:|---|
+| Content-Type 不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| JSON パース不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| body が null / 非 object | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| userId / password 不足 | 400 | `{ "ok": false, "error": "invalid_request" }` |
+| userId 不明 | 401 | `{ "ok": false, "error": "auth_failed" }` |
+| パスワード不一致 | 401 | `{ "ok": false, "error": "auth_failed" }` |
+| lockUntil が未来 | 401 | `{ "ok": false, "error": "locked" }` |
+| 内部エラー | 500 | `{ "ok": false, "error": "internal_error" }` |
 
-- 「メール不一致」と「パスワード不一致」をレスポンス上は区別しない
-- エラー詳細はログにのみ出力し、クライアントには抽象化したエラーコードのみ返す
+ユーザー不明とパスワード不一致は、レスポンス上は区別しない。
 
 ---
 
-## 4. セキュリティ注意点
+## 4. DB 更新仕様
 
-- ログにはパスワードを記録しない。
-- 認証失敗時のメッセージは詳細化しない（メール不一致/パスワード不一致を区別しない）。
-- TOTP 必須ユーザーへのレスポンスでは、セッション Cookie を発行せず、`loginId` のみで TOTP フローへ誘導する。
-- `loginId` は推測困難なランダム値とし、短い有効期限（数分程度）を設ける。
+### 4.1 通常ログイン成功時
+
+- ログイン用 Cookie または同期トークンを発行する
+- 必要に応じて最終ログイン日時を更新する
+
+### 4.2 TOTP 必須ユーザー成功時
+
+- `LoginChallenge` を作成する
+- `LoginChallenge` には以下を含める
+  - 対象ユーザー ID
+  - 有効期限
+  - 使用済みフラグ `used=false`
+
+### 4.3 認証失敗時
+
+- 必要に応じて失敗回数やロック状態を更新する
+- 詳細な失敗理由はクライアントへ返さない
+
+---
+
+## 5. セキュリティ注意点
+
+- ログにはパスワードを記録しない
+- 認証失敗時のメッセージは詳細化しない
+- TOTP 必須ユーザーに対しては、TOTP 完了前にログイン完了用 Cookie を発行しない
+- `challengeId` は推測困難な値とし、短い有効期限を設ける
+- `LoginChallenge` は 1 回限り使用可能とする
 
 ---
 
