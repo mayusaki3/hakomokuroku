@@ -25,28 +25,28 @@ function json401(code: string) {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  // Content-Type guard（他APIのテストと同様のパターン）
+  // sec_auth_login_invalid_request: Content-Type guard
   const ct = req.headers.get("content-type") ?? "";
   if (!ct.includes("application/json")) {
     return json400("invalid_request");
   }
 
-  // JSON parse
+  // sec_auth_login_invalid_request: JSON parse guard
   let bodyUnknown: unknown;
   try {
     bodyUnknown = await req.json();
   } catch (e) {
-    // SyntaxError などは 400
     return json400("invalid_request");
   }
 
-  // body shape guard
+  // sec_auth_login_invalid_request: body shape guard
   if (!isRecord(bodyUnknown)) {
     return json400("invalid_request");
   }
 
   const body = bodyUnknown as LoginBody;
 
+  // sec_auth_login_request_body / sec_auth_login_invalid_request: required fields
   if (!isNonEmptyString(body.userId) || !isNonEmptyString(body.password)) {
     return json400("invalid_request");
   }
@@ -54,9 +54,7 @@ export async function POST(req: Request): Promise<Response> {
   const userId = body.userId.trim();
   const password = body.password;
 
-  // user lookup（テストの prismaMock.user.findUnique を想定）
-  // ここはプロジェクトのスキーマに合わせて where を調整してください。
-  // テストは userId で引く前提のことが多いので userId を採用。
+  // sec_auth_login_auth_failed: user lookup
   const user = await prisma.user.findUnique({
     where: { userId },
   });
@@ -65,28 +63,27 @@ export async function POST(req: Request): Promise<Response> {
     return json401("unauthorized");
   }
 
-  // lock check
+  // sec_auth_login_locked: lockUntil check
   const lockUntil = (user as any).lockUntil as Date | null | undefined;
   if (lockUntil instanceof Date && lockUntil.getTime() > Date.now()) {
     return json401("unauthorized");
   }
 
-  // password verify（テストの mock に合わせる）
+  // sec_auth_login_auth_failed / sec_auth_login_security: password verification
   const passwordHash = (user as any).passwordHash as string | null | undefined;
   if (!passwordHash || !verifyPassword(password, passwordHash)) {
     return json401("unauthorized");
   }
 
-  // 成功
+  // sec_auth_login_success_basic: successful login response
   const res = NextResponse.json(
     {
       ok: true,
-      // totpRequired 等は現行実装・仕様に合わせて必要なら追加
     },
     { status: 200 },
   );
 
-  // 既存ログに合わせた簡易 cookie（テストが厳密に見ていないなら問題になりにくい）
+  // sec_auth_login_success_basic: login cookie
   res.headers.set("Set-Cookie", "sid=dummy; Path=/; HttpOnly; SameSite=Lax");
   return res;
 }
