@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import crypto from "node:crypto";
+import { authenticator } from "otplib";
 import { POST } from "../src/app/api/auth/login/totp/route";
 
 type ChallengeRow = {
@@ -36,6 +37,12 @@ async function readJson(res: Response): Promise<any> {
     return null;
   }
 }
+
+const otplibMock = vi.hoisted(() => {
+  return {
+    check: vi.fn((code: string, secret: string) => code === "123456" && secret === "SECRET"),
+  };
+});
 
 const prismaMock = vi.hoisted(() => {
   const users = new Map<string, UserRow>();
@@ -129,23 +136,37 @@ vi.mock("@/server/prisma", () => {
   return { prisma: prismaMock.prisma };
 });
 
-vi.mock("@/server/totp", () => {
+vi.mock("@/server/auth", () => {
   return {
-    verifyTotpCode: async () => true,
-    verifyRecoveryCode: async () => true,
+    issueSyncToken: async () => {
+      return {
+        token: "dummy-token",
+        expiresAt: new Date(Date.now() + 3600_000),
+      };
+    },
   };
 });
 
 vi.mock("@/server/crypto", () => {
   return {
+    decryptStr: async () => "SECRET",
     randomUrlSafe: () => "dummy",
     sha256Hex: (s: string) => crypto.createHash("sha256").update(s, "utf-8").digest("hex"),
+  };
+});
+
+vi.mock("otplib", () => {
+  return {
+    authenticator: {
+      check: otplibMock.check,
+    },
   };
 });
 
 describe("POST /api/auth/login/totp", () => {
   beforeEach(() => {
     prismaMock.__state.reset();
+    otplibMock.check.mockImplementation((code: string, secret: string) => code === "123456" && secret === "SECRET");
     vi.clearAllMocks();
   });
 
@@ -190,8 +211,7 @@ describe("POST /api/auth/login/totp", () => {
   });
 
   it("AUTH_LOGIN_TOTP-TC-05: TOTP 検証失敗 -> 400/401/422", async () => {
-    const totp = await import("@/server/totp");
-    vi.spyOn(totp, "verifyTotpCode").mockResolvedValueOnce(false);
+    vi.mocked(authenticator.check).mockReturnValueOnce(false);
 
     const res = await POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any);
     expect([400, 401, 422]).toContain(res.status);
