@@ -3,36 +3,60 @@
 # ログイン2段階認証（POST /api/auth/login/totp）
 
 ## 1. 概要
-`/api/auth/login` による ID/パスワード認証後、  
-**TOTP が有効なユーザーに対して 2 段階目の認証を行い、ログインを完了させる API**。
 
-- 前段の `/api/auth/login` により **LoginChallenge（challengeId）が発行済み** であることを前提とする
-- 本 API は **challengeId 単位で認証を完了** させる
-- 検証方法は以下のいずれか
-  - TOTP 6 桁コード
-  - リカバリコード（1 回限り使用可能）
-- 認証成功時のみ
-  - LoginChallenge を **使用済みに更新**
-  - ログイン用トークンを発行し、ログインを完了させる
+`/api/auth/login` による ID/パスワード認証後、TOTP が有効なユーザーに対して 2 段階目の認証を行い、ログインを完了させる API。
 
-## 2. エンドポイント
+- 前段の `/api/auth/login` により LoginChallenge（challengeId）が発行済みであることを前提とする
+- 本 API は challengeId 単位で認証を完了させる
+- TOTP code または recoveryCode を検証する
+- 認証成功時のみ LoginChallenge を使用済みに更新し、ログイン用 token / cookie を発行する
+
+---
+
+## 2. 仕様項目
+
+| sec_id | 項目 | 検証責務 |
+|---|---|---|
+| sec_auth_login_totp_request | リクエスト | challengeId と code / recoveryCode を受け取る |
+| sec_auth_login_totp_invalid_request | 不正リクエスト | Content-Type / body / 必須項目不正を 400 にする |
+| sec_auth_login_totp_challenge_validation | challenge 検証 | challenge 不存在 / 期限切れ / 使用済みを拒否する |
+| sec_auth_login_totp_success | 認証成功 | 正しい TOTP / recoveryCode でログインを完了する |
+| sec_auth_login_totp_invalid_code | 認証コード不一致 | code / recoveryCode 不一致を拒否する |
+| sec_auth_login_totp_locked | ロック中 | lockUntil が未来なら拒否する |
+| sec_auth_login_totp_internal_error | 内部エラー | 予期しない例外を 500 にする |
+| sec_auth_login_totp_security | セキュリティ | challengeId / recoveryCode を安全に扱う |
+
+---
+
+## 3. エンドポイント
+
 - Method: POST
 - Path: `/api/auth/login/totp`
 
-## 3. 認可・前提条件
+---
+
+## 4. 認可・前提条件 {#sec_auth_login_totp_challenge_validation}
+
 - Cookie 認証は不要
-- **challengeId（LoginChallenge.id）が有効であることが必須**
-  - 失効済み
-  - 使用済み
-  - 有効期限切れ  
-  上記いずれかの場合は認証不可
+- challengeId（LoginChallenge.id）が有効であること
+  - 未失効
+  - 未使用
+  - 有効期限内
 
-## 4. リクエスト
+上記を満たさない場合は認証不可。
 
-### 4.1 ヘッダー
-- Content-Type: `application/json`（必須）
+---
 
-### 4.2 ボディ
+## 5. リクエスト
+
+### 5.1 ヘッダー {#sec_auth_login_totp_invalid_request}
+
+- Content-Type: `application/json`
+
+---
+
+### 5.2 ボディ {#sec_auth_login_totp_request}
+
 ```json
 {
   "challengeId": "xxxxxxxx",
@@ -41,116 +65,92 @@
 }
 ```
 
-#### パラメータ仕様
-- challengeId（必須）
-  - `/api/auth/login` で発行された LoginChallenge.id
-- code（任意）
-  - TOTP 6 桁コード（数字）
-- recoveryCode（任意）
-  - リカバリコード（平文）
-- **code または recoveryCode のいずれか 1 つ以上が必須**
+| 項目 | 条件 |
+|---|---|
+| challengeId | 必須 |
+| code | 任意 |
+| recoveryCode | 任意 |
 
-## 5. 処理概要
-1. Content-Type を検証（JSON 必須）
+- `code` または `recoveryCode` のいずれか 1 つ以上が必須
+- code は 6 桁数字を想定
+
+---
+
+## 6. 処理概要
+
+1. Content-Type を検証
 2. challengeId の存在・未使用・未失効を検証
 3. challengeId に紐づくユーザーを取得
 4. ユーザーの TOTP 有効状態を確認
-5. レート制限判定（ユーザー × IP）
-6. 以下の順で検証
-   1. TOTP 6 桁コード
-   2. リカバリコード（未成功時のみ）
-7. 成功時のみ
-   - LoginChallenge を使用済みに更新
-   - ログイン用トークンを発行
-   - 最終ログイン日時を更新
+5. lockUntil を確認
+6. TOTP code または recoveryCode を検証
+7. 成功時のみ LoginChallenge を使用済みに更新
+8. token / cookie を発行
 
-## 6. レスポンス
+---
 
-### 6.1 正常（200 OK）
+## 7. レスポンス
+
+### 7.1 正常（200 OK） {#sec_auth_login_totp_success}
+
 ```json
 {
+  "ok": true,
   "token": "xxxxxxxx",
   "expiresAt": "2026-03-01T00:00:00.000Z"
 }
 ```
 
 - token
-  - ログイン後に使用するアクセストークン
+  - ログイン後に使用する token
 - expiresAt
-  - トークン有効期限（ISO-8601）
-
-※ レスポンスと同時に Cookie にトークンが設定される
+  - token 有効期限（ISO-8601）
+- Set-Cookie
+  - ログイン用 Cookie を設定する
 
 ---
 
-### 6.2 異常系
+### 7.2 異常系
 
-#### 400 Bad Request
-- Content-Type 不正
-- challengeId 未指定
-- code / recoveryCode 未指定
-- 入力形式不正
-- challenge が失効・使用済み
-- 認証コード不一致
+| sec_id | 状況 | ステータス | error |
+|---|---|---:|---|
+| sec_auth_login_totp_invalid_request | Content-Type 不正 | 400 | bad_request |
+| sec_auth_login_totp_invalid_request | challengeId 未指定 | 400 | bad_request |
+| sec_auth_login_totp_invalid_request | code / recoveryCode 未指定 | 400 | bad_request |
+| sec_auth_login_totp_invalid_request | 入力形式不正 | 400 | bad_request |
+| sec_auth_login_totp_challenge_validation | challenge 期限切れ / 使用済み | 400 | expired |
+| sec_auth_login_totp_challenge_validation | challenge 不存在 | 404 | not_found |
+| sec_auth_login_totp_invalid_code | 認証コード不一致 | 400 / 401 / 422 | invalid |
+| sec_auth_login_totp_locked | lockUntil が未来 | 401 / 429 | too_many_attempts |
+| sec_auth_login_totp_internal_error | 予期しない例外 | 500 | server_error |
 
-```json
-{ "error": "bad_request" }
-```
-```json
-{ "error": "expired" }
-```
-```json
-{ "error": "invalid" }
-```
+---
 
-#### 404 Not Found
-- challengeId が存在しない
+## 8. DB 更新仕様
 
-```json
-{ "error": "not_found" }
-```
+### 8.1 認証成功時 {#sec_auth_login_totp_success}
 
-#### 409 Conflict
-- ユーザーが TOTP 未有効（totpEnabled=false）
-
-```json
-{ "error": "not_enabled" }
-```
-
-#### 429 Too Many Requests
-- 短時間での連続失敗（レート制限）
-
-```json
-{ "error": "too_many_attempts" }
-```
-
-#### 500 Internal Server Error
-- 予期しないサーバーエラー
-
-```json
-{ "error": "server_error" }
-```
-
-## 7. DB 更新仕様
-
-### 7.1 認証成功時
 - LoginChallenge.used = true
 - SyncToken 発行
 - User.lastLoginAt 更新
-- リカバリコード使用時
-  - 該当コードを `User.recoveryCodes` から削除
+- recoveryCode 使用時:
+  - 使用済みコードを削除
 
-### 7.2 認証失敗時
-- 失敗カウントを内部的に記録（実装依存）
-- レート制限判定に利用
+### 8.2 認証失敗時 {#sec_auth_login_totp_invalid_code}
+
+- 失敗回数を内部的に記録する
+- 必要に応じて lockUntil を更新する
 
 ---
 
-## 8. セキュリティ・設計上の注意
-- challengeId は **1 回限り有効**
-- TOTP / リカバリコード両方とも失敗した場合のみ `invalid`
-- リカバリコードは **必ず 1 回使用で失効**
+## 9. セキュリティ・設計上の注意 {#sec_auth_login_totp_security}
+
+- challengeId は 1 回限り有効
+- recoveryCode は 1 回使用で失効
+- challengeId は推測困難な値とする
 - レスポンスは認証失敗理由を最小限に留める
+- TOTP / recoveryCode 両方失敗時のみ invalid を返す
 
 ---
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン2段階認証（POST /api/auth/login/totp）
