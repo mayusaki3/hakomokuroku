@@ -38,6 +38,12 @@ const pushAttempt = (userId: string, ip: string) => {
   return cur.count;
 };
 
+const headerDate = (value: unknown) => {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') return value;
+  return '';
+};
+
 // ------------------------------
 // 入力正規化（全角→半角、数字6桁）
 // ------------------------------
@@ -177,8 +183,8 @@ export async function POST(req: Request) {
       `hk_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${90 * 24 * 3600}`,
     );
 
-    // expiresAt を返す実装もあるので、最低限は返しておく（テストは ok を主に見る）
-    (res as any).headers.set?.('X-Token-Expires-At', String(expiresAt ?? ''));
+    // HTTP ヘッダは ByteString 制約があるため、Date は必ず ISO 8601 へ正規化する。
+    res.headers.set('X-Token-Expires-At', headerDate(expiresAt));
 
     return res;
   } catch (e) {
