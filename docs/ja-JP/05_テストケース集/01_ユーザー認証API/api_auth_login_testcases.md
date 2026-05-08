@@ -5,46 +5,48 @@
 ## AUTH_LOGIN-TC-01 正常ログイン（TOTP 無効ユーザー）
 
 - 条件:
-  - 正しい email/password
+  - 正しい userId/password
   - 対象ユーザーの TOTP 無効（totpEnabled = false）
 - 期待:
   - ステータス: 200
   - Body:
     - ok:true
-    - user.id が返る
   - Cookie:
-    - セッション Cookie 設定あり（Set-Cookie ヘッダーにセッション ID）
+    - ログイン用 Cookie 設定あり（Set-Cookie ヘッダーあり）
 
 ---
 
-## AUTH_LOGIN-TC-02 email 不正フォーマット
+## AUTH_LOGIN-TC-02 パラメータ不足
 
 - 条件:
-  - email: "abc"（メール形式ではない）
+  - userId 未指定
+  - または password 未指定
 - 期待:
   - ステータス: 400
-  - Body: error = "invalid_request"
+  - Body: error = invalid_request
 
 ---
 
-## AUTH_LOGIN-TC-03 パラメータ不足
+## AUTH_LOGIN-TC-03 body 不正
 
 - 条件:
-  - password 未指定
+  - body が null
+  - body が object ではない
+  - JSON パース不正
 - 期待:
   - ステータス: 400
-  - Body: error = "invalid_request"
+  - Body: error = invalid_request
 
 ---
 
-## AUTH_LOGIN-TC-04 認証失敗（メール不一致）
+## AUTH_LOGIN-TC-04 認証失敗（userId 不一致）
 
 - 条件:
-  - 登録されていない email
+  - 登録されていない userId
   - 任意の password
 - 期待:
   - ステータス: 401
-  - Body: error = "auth_failed"
+  - Body: error = auth_failed
   - 「登録されていない」ことを特定できる情報は返さない
 
 ---
@@ -52,11 +54,11 @@
 ## AUTH_LOGIN-TC-05 認証失敗（パスワード不一致）
 
 - 条件:
-  - 登録済み email
+  - 登録済み userId
   - 誤った password
 - 期待:
   - ステータス: 401
-  - Body: error = "auth_failed"
+  - Body: error = auth_failed
   - 「パスワード不一致」であることを特定できる情報は返さない
 
 ---
@@ -67,27 +69,34 @@
   - prisma などの内部処理が例外を投げる
 - 期待:
   - ステータス: 500
-  - Body: error = "internal_error"
+  - Body: error = internal_error
 
 ---
 
 ## AUTH_LOGIN-TC-07 TOTP 必須ユーザー（TOTP 有効）
 
 - 条件:
-  - 正しい email/password
+  - 正しい userId/password
   - 対象ユーザーの TOTP 有効（totpEnabled = true）
 - 期待:
   - ステータス: 200
   - Body:
     - ok:true
     - totpRequired:true
-    - loginId が返る（UUID 形式または十分に長いランダム文字列）
-    - user オブジェクトは返さない（仕様に従う）
+    - challengeId が返る
   - Cookie:
-    - セッション Cookie の設定なし（Set-Cookie ヘッダーにセッション ID が含まれない）
-  - 備考:
-    - loginId は `/api/auth/login/totp` で使用される一時 ID
-    - 期限切れ・1 回限り利用などの制約は `/api/auth/login/totp` 側で検証
+    - ログイン完了用 Cookie を発行しない
+
+---
+
+## AUTH_LOGIN-TC-08 lockUntil による拒否
+
+- 条件:
+  - lockUntil が未来
+- 期待:
+  - ステータス: 401（または実装により 429）
+  - Body:
+    - locked 系エラー
 
 ---
 
