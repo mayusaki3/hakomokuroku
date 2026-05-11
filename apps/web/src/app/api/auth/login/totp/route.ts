@@ -58,38 +58,38 @@ const norm6 = (v: unknown) =>
 // ------------------------------
 export async function POST(req: Request) {
   try {
-    // Content-Type 必須
+    // sec_auth_login_totp_invalid_request: Content-Type guard
     const ct = String(req.headers.get('content-type'));
     if (!ct.includes('application/json')) {
       return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
     }
 
-    // JSON パース不正は 400
+    // sec_auth_login_totp_invalid_request: JSON parse guard
     let body: any;
     try {
       body = await req.json();
     } catch (e: any) {
-      // SyntaxError 以外でも、実装としては invalid_request に倒す
       return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
     }
 
-    // 型ガード（null / 非object）
+    // sec_auth_login_totp_invalid_request: body shape guard
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
     }
 
+    // sec_auth_login_totp_request / sec_auth_login_totp_invalid_request: required challengeId
     const { challengeId, code, recoveryCode } = body ?? {};
     if (!challengeId) {
       return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
     }
 
-    // challenge 取得（used=false & not expired をこのファイル側で保証）
+    // sec_auth_login_totp_challenge_validation: challenge lookup
     const ch = await prisma.loginChallenge.findUnique({ where: { id: String(challengeId) } });
     if (!ch) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
     }
 
-    // used / 期限切れ
+    // sec_auth_login_totp_challenge_validation: used / expired guard
     const now = new Date();
     if ((ch as any).used) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
@@ -98,23 +98,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
     }
 
+    // sec_auth_login_totp_challenge_validation: user lookup by challenge.userId
     const user = await prisma.user.findUnique({ where: { id: (ch as any).userId } });
     if (!user) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
     }
 
-    // ロック（login/route.ts 側と同じ判定に寄せる）
+    // sec_auth_login_totp_locked: lockUntil check
     if ((user as any).lockUntil && new Date((user as any).lockUntil) > now) {
-      // 実装差異があるので 401（or 429）を許容する前提
       return NextResponse.json({ ok: false, error: 'locked' }, { status: 401 });
     }
 
+    // sec_auth_login_totp_invalid_request: TOTP enabled state guard
     if (!(user as any).totpEnabled || !(user as any).totpSecretEnc) {
-      // 実装差異：400/409 のどちらでも良い（テスト側で許容）
       return NextResponse.json({ ok: false, error: 'not_enabled' }, { status: 400 });
     }
 
-    // レート制限（IP+user）
+    // sec_auth_login_totp_locked: rate limit guard
     const count = pushAttempt((user as any).id, clientIp(req));
     if (count > 5) {
       return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
@@ -122,14 +122,14 @@ export async function POST(req: Request) {
 
     let ok = false;
 
-    // ---- 6桁 TOTP コード検証 ----
+    // sec_auth_login_totp_success / sec_auth_login_totp_invalid_code: TOTP code verification
     const six = norm6(code);
     if (/^\d{6}$/.test(six)) {
       const secret = await decryptStr((user as any).totpSecretEnc);
       ok = authenticator.check(six, secret);
     }
 
-    // ---- リカバリコード検証（未成功時のみ）----
+    // sec_auth_login_totp_success / sec_auth_login_totp_invalid_code: recoveryCode verification
     const rc = typeof recoveryCode === 'string' ? recoveryCode.trim() : '';
     if (!ok && rc.length > 0) {
       const h = crypto.createHash('sha256').update(rc).digest('hex');
@@ -137,7 +137,7 @@ export async function POST(req: Request) {
       const idx = Array.isArray(list) ? list.findIndex((x) => x === h) : -1;
       if (idx >= 0) {
         ok = true;
-        // 使ったリカバリコードは消す（実装差異があっても安全側）
+        // sec_auth_login_totp_success / sec_auth_login_totp_security: recoveryCode is single-use
         const next = list.slice(0, idx).concat(list.slice(idx + 1));
         await prisma.user.update({
           where: { id: (user as any).id },
@@ -146,8 +146,8 @@ export async function POST(req: Request) {
       }
     }
 
+    // sec_auth_login_totp_invalid_code: failed verification response and failure count update
     if (!ok) {
-      // 失敗カウント更新（実装差異があるので best-effort）
       try {
         await prisma.user.update({
           where: { id: (user as any).id },
@@ -159,35 +159,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
     }
 
-    // 成功時のみチャレンジを消費（used=true）
+    // sec_auth_login_totp_success / sec_auth_login_totp_security: consume challenge once
     await prisma.loginChallenge.update({
       where: { id: String(challengeId) },
       data: { used: true },
     });
 
-    // ログイン完了：トークン発行 & 最終ログイン更新
+    // sec_auth_login_totp_success: issue login token
     const { token, expiresAt } = await issueSyncToken((user as any).id, {
       userAgent: req.headers.get('user-agent') || undefined,
       ip: clientIp(req),
     });
 
+    // sec_auth_login_totp_success: update successful login state
     await prisma.user.update({
       where: { id: (user as any).id },
       data: { lastLoginAt: new Date(), totpFailCount: 0 },
     });
 
-    // cookie（既存実装互換。Secure/SameSite は環境差異があるので、ここでは Lax 固定）
+    // sec_auth_login_totp_success: response body and cookie
     const res = NextResponse.json({ ok: true }, { status: 200 });
     res.headers.append(
       'Set-Cookie',
       `hk_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${90 * 24 * 3600}`,
     );
 
-    // HTTP ヘッダは ByteString 制約があるため、Date は必ず ISO 8601 へ正規化する。
+    // sec_auth_login_totp_success: token expiry header must be ISO-8601 to satisfy Headers ByteString constraints
     res.headers.set('X-Token-Expires-At', headerDate(expiresAt));
 
     return res;
   } catch (e) {
+    // sec_auth_login_totp_internal_error: unexpected exception mapping
     console.error('[login/totp] error', e);
     return NextResponse.json({ ok: false, error: 'server_error' }, { status: 500 });
   }
