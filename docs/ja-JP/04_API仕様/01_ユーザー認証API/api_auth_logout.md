@@ -13,52 +13,73 @@
 - 常に `{ ok: true }` を返す
 - 内部例外を返却しない（Next.js の仕様上 throw が起きた場合はフレームワーク内部処理に委ねる）
 
-## 2. エンドポイント
+---
+
+## 2. 仕様項目
+
+| sec_id | 項目 | 検証責務 |
+|---|---|---|
+| sec_auth_logout_success | 正常終了 | 常に 200 + ok:true を返す |
+| sec_auth_logout_cookie_clear | Cookie 破棄 | sid Cookie を Max-Age=0 で無効化する |
+| sec_auth_logout_idempotent | 冪等性 | セッション有無や多重実行に関係なく成功扱いにする |
+| sec_auth_logout_no_app_error | エラー方針 | アプリケーションレベルのエラー JSON を定義しない |
+
+---
+
+## 3. エンドポイント
 
 | メソッド | パス |
 |---------|------|
 | POST | /api/auth/logout |
 
-## 3. 入力
+## 4. 入力
 
 なし。
 
-## 4. 出力（レスポンス）
+## 5. 出力（レスポンス）
 
-### 4.1 成功（常に 200）
+### 5.1 成功（常に 200） {#sec_auth_logout_success}
 
 ```json
 { "ok": true }
 ```
 
-### 4.2 Cookie の無効化
+### 5.2 Cookie の無効化 {#sec_auth_logout_cookie_clear}
 
 レスポンスには sid Cookie を無効化する `Set-Cookie` が含まれる。
 
 例：
 
 ```txt
-Set-Cookie: sid=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0
+Set-Cookie: sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0
 ```
 
-## 5. ステータスコード
+## 6. ステータスコード
 
-| 状態 | ステータス | 説明 |
-|------|-----------|------|
-| 正常終了 | 200 | 常に 200（idempotent） |
+| sec_id | 状態 | ステータス | 説明 |
+|---|---|---:|---|
+| sec_auth_logout_success | 正常終了 | 200 | 常に 200 |
+| sec_auth_logout_idempotent | セッションなし / 多重ログアウト | 200 | 既にログアウト済みでも成功扱い |
 
-## 6. 挙動仕様
+## 7. 挙動仕様
 
-### 6.1 正常ケース
+### 7.1 正常ケース {#sec_auth_logout_success}
+
 - sid Cookie を Max-Age=0 で破棄する
 - セッションが存在しなくても成功扱い
 - レスポンスは `{ ok: true }`
 
-### 6.2 エラーケース
-- API は内部例外を JSON として返さない
-- 仕様上、エラーレスポンスは定義しない
+### 7.2 冪等性 {#sec_auth_logout_idempotent}
 
-## 7. 例外ケース一覧
+- 同一クライアントから複数回実行しても 200 + ok:true を返す
+- ログアウト済み状態でもエラーにしない
+
+### 7.3 エラーケース {#sec_auth_logout_no_app_error}
+
+- API は内部例外を JSON として返さない
+- 仕様上、アプリケーションレベルのエラーレスポンスは定義しない
+
+## 8. 例外ケース一覧
 
 本 API はアプリケーションレベルのエラー JSON を返さないため、例外ケース定義は削除。
 
