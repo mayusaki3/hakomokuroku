@@ -35,17 +35,35 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/tokens/revokeAll', () => {
-  it('T01: Content-Type invalid -> 400', async () => {
+  it('AUTH_TOKENS_REVOKEALL-TC-03: Content-Type invalid -> 400', async () => {
     const r = new NextRequest('http://x', { method: 'POST' });
+
     const res = await POST(r);
+
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'bad_request' });
   });
 
-  it('T02: success -> 204', async () => {
+  it('AUTH_TOKENS_REVOKEALL-TC-02: unauthorized -> 401', async () => {
+    vi.mocked(requireUserId).mockRejectedValue(new Error('unauthorized'));
+
+    await expect(POST(req())).rejects.toThrow('unauthorized');
+  });
+
+  it('AUTH_TOKENS_REVOKEALL-TC-01: success -> 204', async () => {
     const res = await POST(req());
+
     expect(res.status).toBe(204);
     expect(prisma.syncToken.deleteMany).toHaveBeenCalledWith({
       where: { userId: 'U1' },
     });
+  });
+
+  it('AUTH_TOKENS_REVOKEALL-TC-04: db error -> 500', async () => {
+    vi.mocked(prisma.syncToken.deleteMany).mockRejectedValue(new Error('DB error'));
+
+    const res = await POST(req());
+
+    expect(res.status).toBe(500);
   });
 });
