@@ -36,42 +36,93 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/tokens/revoke', () => {
-  it('T01: Content-Type invalid -> 400', async () => {
+  it('AUTH_TOKENS_REVOKE-TC-03: Content-Type invalid -> 400', async () => {
     const r = new NextRequest('http://x', { method: 'POST' });
     const res = await POST(r);
+
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'bad_request' });
   });
 
-  it('T02: id missing -> 400', async () => {
+  it('AUTH_TOKENS_REVOKE-TC-04: invalid json -> 400', async () => {
+    const r = {
+      headers: {
+        get: vi.fn().mockReturnValue('application/json'),
+      },
+      json: vi.fn().mockRejectedValue(new Error('invalid json')),
+    } as any;
+
+    const res = await POST(r);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'bad_request' });
+  });
+
+  it('AUTH_TOKENS_REVOKE-TC-05: id missing -> 400', async () => {
     const res = await POST(req({}));
+
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'bad_request' });
   });
 
-  it('T03: token not found -> 404', async () => {
+  it('AUTH_TOKENS_REVOKE-TC-05: id not string -> 400', async () => {
+    const res = await POST(req({ id: 123 }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: 'bad_request' });
+  });
+
+  it('AUTH_TOKENS_REVOKE-TC-06: token not found -> 404', async () => {
     vi.mocked(prisma.syncToken.findUnique).mockResolvedValue(null);
 
     const res = await POST(req({ id: 'T1' }));
+
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: 'not_found' });
   });
 
-  it('T04: other user token -> 404', async () => {
+  it('AUTH_TOKENS_REVOKE-TC-07: other user token -> 404', async () => {
     vi.mocked(prisma.syncToken.findUnique).mockResolvedValue({
       id: 'T1',
       userId: 'OTHER',
     } as any);
 
     const res = await POST(req({ id: 'T1' }));
+
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: 'not_found' });
   });
 
-  it('T05: success -> 204', async () => {
+  it('AUTH_TOKENS_REVOKE-TC-01: success -> 204', async () => {
     vi.mocked(prisma.syncToken.findUnique).mockResolvedValue({
       id: 'T1',
       userId: 'U1',
     } as any);
 
     const res = await POST(req({ id: 'T1' }));
+
     expect(res.status).toBe(204);
     expect(prisma.syncToken.delete).toHaveBeenCalledWith({ where: { id: 'T1' } });
+  });
+
+  it('AUTH_TOKENS_REVOKE-TC-08: findUnique db error -> 500', async () => {
+    vi.mocked(prisma.syncToken.findUnique).mockRejectedValue(new Error('DB error'));
+
+    const res = await POST(req({ id: 'T1' }));
+
+    expect(res.status).toBe(500);
+  });
+
+  it('AUTH_TOKENS_REVOKE-TC-08: delete db error -> 500', async () => {
+    vi.mocked(prisma.syncToken.findUnique).mockResolvedValue({
+      id: 'T1',
+      userId: 'U1',
+    } as any);
+
+    vi.mocked(prisma.syncToken.delete).mockRejectedValue(new Error('DB error'));
+
+    const res = await POST(req({ id: 'T1' }));
+
+    expect(res.status).toBe(500);
   });
 });
