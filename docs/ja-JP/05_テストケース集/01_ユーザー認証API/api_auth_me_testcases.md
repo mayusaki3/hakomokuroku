@@ -1,10 +1,24 @@
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > ユーザー情報取得（GET /api/auth/me）
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260513-084500Z-AUMT
+lang: ja-JP
+canonical_title: ログイン状態確認テスト仕様（GET /api/auth/me）
+document_type: testspec
+canonical_document: true
+-->
 
-# テストケース：ユーザー情報取得（GET /api/auth/me）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログイン状態確認テスト仕様（GET /api/auth/me）
 
-## 1. Traceability
+# ログイン状態確認テスト仕様（GET /api/auth/me）
 
-| テストケース | 対応 sec_id |
+本書は、ログイン状態確認 API（GET /api/auth/me）のテスト仕様を定義する。  
+apps/web/tests/api.auth.me.spec.ts の Vitest を正とする。
+
+---
+
+## 1. Traceability Matrix
+
+| testcase_id | 対応 sec_id |
 |---|---|
 | AUTH_ME-TC-01 | sec_auth_me_session_read, sec_auth_me_logged_in, sec_auth_me_no_store |
 | AUTH_ME-TC-02 | sec_auth_me_not_logged_in, sec_auth_me_no_store |
@@ -13,81 +27,102 @@
 
 ---
 
-## AUTH_ME-TC-01 正常（ログイン中）
+## 2. テストケース
 
-### 対応 sec_id
+### AUTH_ME-TC-01 正常：ログイン済み
+
+#### 対応 sec_id
 
 - sec_auth_me_session_read
 - sec_auth_me_logged_in
 - sec_auth_me_no_store
 
-### 条件
+#### 条件
 
-- 有効なセッション
+- `readSession()` がログイン済みユーザーを返す
 
-### 期待
+#### 期待結果
 
-- 200
-- ok:true
-- user が返る
-- Cache-Control:no-store
+- HTTP 200
+- `ok:true`
+- `user` が返る
+- `Cache-Control:no-store`
 
 ---
 
-## AUTH_ME-TC-02 未ログイン
+### AUTH_ME-TC-02 正常：未ログイン
 
-### 対応 sec_id
+#### 対応 sec_id
 
 - sec_auth_me_not_logged_in
 - sec_auth_me_no_store
 
-### 条件
+#### 条件
 
 - Cookie なし
-- または readSession が ok:false を返す
+- または `readSession()` が未ログイン状態を返す
 
-### 期待
+#### 期待結果
 
-- 200
-- ok:false
-- Cache-Control:no-store
+- HTTP 200
+- `ok:false`
+- `user:null`
+- `Cache-Control:no-store`
 
 ---
 
-## AUTH_ME-TC-03 readSession が例外
+### AUTH_ME-TC-03 異常：readSession が例外
 
-### 対応 sec_id
+#### 対応 sec_id
 
 - sec_auth_me_read_error
 - sec_auth_me_no_store
 
-### 条件
+#### 条件
 
-- モックで例外を投げる
+- `readSession()` モックが例外を throw
 
-### 期待
+#### 期待結果
 
-- 200
-- ok:false
-- user:null
-- Cache-Control:no-store
+- HTTP 200
+- `ok:false`
+- `user:null`
+- `Cache-Control:no-store`
+- サーバーログへ例外出力
 
 ---
 
-## AUTH_ME-TC-04 ok:true かつ user:null の挙動
+### AUTH_ME-TC-04 境界：ok:true + user:null
 
-### 対応 sec_id
+#### 対応 sec_id
 
 - sec_auth_me_not_logged_in
 
-### 条件
+#### 条件
 
-- readSession が { ok:true, user:null } を返す
+- `readSession()` が `{ ok:true, user:null }` を返す
 
-### 期待
+#### 期待結果
 
-- ステータス: 200 または 401（実装依存）
-- 200 の場合: ok:false
+- HTTP 200
+- `ok:false`
+- `user:null`
 
 ---
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > ユーザー情報取得（GET /api/auth/me）
+
+## 3. ローカル検証手順
+
+```powershell
+pnpm -C apps/web exec vitest --run
+```
+
+期待結果：
+
+```text
+Test Files  22 passed
+Tests       218 passed
+```
+
+---
+
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログイン状態確認テスト仕様（GET /api/auth/me）
