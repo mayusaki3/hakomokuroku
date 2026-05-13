@@ -1,19 +1,30 @@
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260513-085000Z-AULG
+lang: ja-JP
+canonical_title: ログイン（POST /api/auth/login）
+document_type: spec
+canonical_document: true
+-->
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > ログイン（POST /api/auth/login）
 
 # ログイン（POST /api/auth/login）
 
-ユーザーの資格情報を検証し、通常ログインまたは TOTP ログインフローへ分岐する API。
+本書は、ログイン API（POST /api/auth/login）の正式な仕様を定義する。  
+現時点の実装（apps/web/src/app/api/auth/login/route.ts）および Vitest（apps/web/tests/api.auth.login.spec.ts）を正とする。
 
 ---
 
 ## 1. 概要
 
-ログインフォームから送信された `userId` と `password` を検証し、以下のいずれかで成功レスポンスを返す。
+ログインフォームから送信された `userId` と `password` を検証し、正しい場合はログイン Cookie を返す API。
 
-1. **通常ユーザー（TOTP 無効）**: セッション Cookie を発行し、ログインを完了する
-2. **TOTP 必須ユーザー（TOTP 有効）**: セッション Cookie を発行せず、TOTP ログイン確認用の `challengeId` を返す
-
-クライアントは `totpRequired: true` を受け取った場合、`challengeId` と TOTP コードまたはリカバリコードを `/api/auth/login/totp` に送信する。
+- `Content-Type: application/json` のみ受け付ける
+- JSON body は object でなければならない
+- `userId` と `password` は空白のみではない文字列でなければならない
+- ユーザー不明、パスワード不一致、ロック中はいずれも 401 とする
+- 成功時は `Set-Cookie` で `sid` を返す
 
 ---
 
@@ -21,20 +32,27 @@
 
 | sec_id | 項目 | 検証責務 |
 |---|---|---|
-| sec_auth_login_request_body | リクエスト本文 | `userId` と `password` を受け取る |
 | sec_auth_login_invalid_request | 不正リクエスト | Content-Type / JSON / body / 必須項目不正を 400 にする |
-| sec_auth_login_success_basic | 通常ログイン成功 | TOTP 無効ユーザーで 200 + ok:true + Cookie を返す |
-| sec_auth_login_success_totp_required | TOTP 必須 | TOTP 有効ユーザーで 200 + totpRequired:true + challengeId を返す |
+| sec_auth_login_request_body | リクエスト本文 | `userId` と `password` を受け取る |
+| sec_auth_login_user_lookup | ユーザー検索 | `prisma.user.findUnique({ where: { userId } })` でユーザーを検索する |
 | sec_auth_login_auth_failed | 認証失敗 | userId 不明 / password 不一致を 401 にする |
-| sec_auth_login_locked | ロック中 | lockUntil が未来なら 401 を返す |
-| sec_auth_login_internal_error | 内部エラー | 予期しない例外を 500 にする |
+| sec_auth_login_locked | ロック中 | lockUntil が未来なら 401 にする |
+| sec_auth_login_success_basic | ログイン成功 | 200 + ok:true + Set-Cookie を返す |
 | sec_auth_login_security | セキュリティ | 認証失敗理由を詳細化しない |
 
 ---
 
-## 3. リクエスト
+## 3. エンドポイント
 
-### 3.1 Body(JSON) {#sec_auth_login_request_body}
+| メソッド | パス |
+|---|---|
+| POST | /api/auth/login |
+
+---
+
+## 4. リクエスト
+
+### 4.1 Body(JSON) {#sec_auth_login_request_body}
 
 ```json
 {
@@ -43,31 +61,21 @@
 }
 ```
 
-### 3.2 バリデーション {#sec_auth_login_invalid_request}
+### 4.2 バリデーション {#sec_auth_login_invalid_request}
 
-| 項目 | 条件 |
-|---|---|
-| Content-Type | `application/json` を含むこと |
-| body | `null` ではなく object であること |
-| userId | 必須・1文字以上の文字列 |
-| password | 必須・1文字以上の文字列 |
-
-不正な場合は `400 invalid_request` を返す。
-
----
-
-## 4. レスポンス
-
-### 4.1 共通事項
-
-- Body は JSON
-- 成功時は `ok: true`
-- 失敗時は `ok: false`
-- エラー時のフォーマットは共通仕様（`00_共通仕様.md`）の方針に従う
+| 項目 | 条件 | 不正時 |
+|---|---|---|
+| Content-Type | `application/json` を含むこと | 400 invalid_request |
+| JSON | `req.json()` が成功すること | 400 invalid_request |
+| body | `null` ではなく object であること | 400 invalid_request |
+| userId | 必須・空白のみではない文字列 | 400 invalid_request |
+| password | 必須・空白のみではない文字列 | 400 invalid_request |
 
 ---
 
-### 4.2 成功時（200）: 通常ユーザー（TOTP 無効） {#sec_auth_login_success_basic}
+## 5. レスポンス
+
+### 5.1 成功 {#sec_auth_login_success_basic}
 
 ```json
 {
@@ -75,79 +83,83 @@
 }
 ```
 
-振る舞い:
+- HTTP 200
+- `Set-Cookie` に `sid` を含める
 
-- サーバー側でログイン用 Cookie を発行する
-- レスポンスヘッダーの `Set-Cookie` にセッションまたはログイントークンを設定する
-- TOTP チャレンジは作成しない
-
----
-
-### 4.3 成功時（200）: TOTP 必須ユーザー（TOTP 有効） {#sec_auth_login_success_totp_required}
+### 5.2 不正リクエスト {#sec_auth_login_invalid_request}
 
 ```json
 {
-  "ok": true,
-  "totpRequired": true,
-  "challengeId": "string"
+  "ok": false,
+  "error": "invalid_request"
 }
 ```
 
-振る舞い:
+- HTTP 400
 
-- サーバー側で `LoginChallenge` を作成する
-- 作成した `LoginChallenge.id` を `challengeId` として返す
-- このレスポンスではログイン完了用 Cookie を発行しない
-- クライアントは `/api/auth/login/totp` に `challengeId` と TOTP コードまたはリカバリコードを送信する
+### 5.3 認証失敗 {#sec_auth_login_auth_failed}
 
----
+```json
+{
+  "ok": false,
+  "error": "unauthorized"
+}
+```
 
-### 4.4 失敗時
+- HTTP 401
+- ユーザー不明とパスワード不一致をレスポンス上で区別しない
 
-| sec_id | 状況 | ステータス | Body 例 |
-|---|---|---:|---|
-| sec_auth_login_invalid_request | Content-Type 不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| sec_auth_login_invalid_request | JSON パース不正 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| sec_auth_login_invalid_request | body が null / 非 object | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| sec_auth_login_invalid_request | userId / password 不足 | 400 | `{ "ok": false, "error": "invalid_request" }` |
-| sec_auth_login_auth_failed | userId 不明 | 401 | `{ "ok": false, "error": "auth_failed" }` |
-| sec_auth_login_auth_failed | パスワード不一致 | 401 | `{ "ok": false, "error": "auth_failed" }` |
-| sec_auth_login_locked | lockUntil が未来 | 401 | `{ "ok": false, "error": "locked" }` |
-| sec_auth_login_internal_error | 内部エラー | 500 | `{ "ok": false, "error": "internal_error" }` |
+### 5.4 ロック中 {#sec_auth_login_locked}
 
-ユーザー不明とパスワード不一致は、レスポンス上は区別しない。
+```json
+{
+  "ok": false,
+  "error": "unauthorized"
+}
+```
 
----
-
-## 5. DB 更新仕様
-
-### 5.1 通常ログイン成功時 {#sec_auth_login_success_basic}
-
-- ログイン用 Cookie または同期トークンを発行する
-- 必要に応じて最終ログイン日時を更新する
-
-### 5.2 TOTP 必須ユーザー成功時 {#sec_auth_login_success_totp_required}
-
-- `LoginChallenge` を作成する
-- `LoginChallenge` には以下を含める
-  - 対象ユーザー ID
-  - 有効期限
-  - 使用済みフラグ `used=false`
-
-### 5.3 認証失敗時 {#sec_auth_login_auth_failed}
-
-- 必要に応じて失敗回数やロック状態を更新する
-- 詳細な失敗理由はクライアントへ返さない
+- HTTP 401
+- `lockUntil` が未来の場合に返す
+- ロック理由をレスポンス上で詳細化しない
 
 ---
 
-## 6. セキュリティ注意点 {#sec_auth_login_security}
+## 6. 処理仕様
 
-- ログにはパスワードを記録しない
-- 認証失敗時のメッセージは詳細化しない
-- TOTP 必須ユーザーに対しては、TOTP 完了前にログイン完了用 Cookie を発行しない
-- `challengeId` は推測困難な値とし、短い有効期限を設ける
-- `LoginChallenge` は 1 回限り使用可能とする
+### 6.1 ユーザー検索 {#sec_auth_login_user_lookup}
+
+```ts
+await prisma.user.findUnique({
+  where: { userId },
+});
+```
+
+- `userId` は trim 後の値を使用する
+- ユーザーが存在しない場合は 401 を返す
+
+### 6.2 ロック判定 {#sec_auth_login_locked}
+
+- `lockUntil` が `Date` であり、かつ現在時刻より未来の場合は 401 を返す
+- `lockUntil` が `null` または未設定の場合はロックなしとする
+
+### 6.3 パスワード検証 {#sec_auth_login_auth_failed}
+
+- `passwordHash` が存在しない場合は 401 を返す
+- `verifyPassword(password, passwordHash)` が false の場合は 401 を返す
+
+### 6.4 Cookie 発行 {#sec_auth_login_success_basic}
+
+- 成功時のみ `Set-Cookie` を返す
+- 現実装では `sid=dummy; Path=/; HttpOnly; SameSite=Lax` を返す
+
+---
+
+## 7. セキュリティ注意点 {#sec_auth_login_security}
+
+- レスポンスにパスワードを含めてはならない
+- 認証失敗理由を詳細化してはならない
+- ユーザー不明とパスワード不一致を区別できる情報を返してはならない
+- ロック中も詳細なロック理由を返してはならない
 
 ---
 
