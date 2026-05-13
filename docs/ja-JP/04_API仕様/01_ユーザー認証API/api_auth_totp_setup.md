@@ -1,41 +1,73 @@
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260513-091000Z-AUTS
+lang: ja-JP
+canonical_title: TOTP 設定開始（POST /api/auth/totp/setup）
+document_type: spec
+canonical_document: true
+-->
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 設定開始（POST /api/auth/totp/setup）
 
 # TOTP 設定開始（POST /api/auth/totp/setup）
 
-本書は、TOTP による二要素認証の  
-**設定開始 API（POST /api/auth/totp/setup）** の正式な仕様を定義する。
+本書は、TOTP による二要素認証の設定開始 API（POST /api/auth/totp/setup）の正式な仕様を定義する。  
+現時点の実装（apps/web/src/app/api/auth/totp/setup/route.ts）および Vitest（apps/web/tests/api.auth.totp.setup.spec.ts）を正とする。
+
+---
 
 ## 1. 概要
 
-ログイン中ユーザーに対して、TOTP 設定用のシークレットを新規に生成し、  
-認証アプリで読み込むための **otpauth:// URL** を返却する。
+ログイン中ユーザーに対して、TOTP 設定用のシークレットを新規生成し、認証アプリで読み込むための `otpauth://` URL を返す API。
 
-- 要ログイン（Cookie `sid` により判定）
+- 要ログイン
 - すでに TOTP が有効なユーザーには設定開始を許可しない
-- 成功時は **200 OK + otpauthUrl**
+- 成功時は `totpPendingSecretEnc` を保存する
+- 平文 TOTP secret は DB に保存しない
+- 暗号鍵 `TOTP_SECRET_KEY` が未設定または不正な場合は 500 を返す
 
-## 2. エンドポイント
+---
+
+## 2. 仕様項目
+
+| sec_id | 項目 | 検証責務 |
+|---|---|---|
+| sec_auth_totp_setup_auth | 認証 | getCurrentUser が null の場合 401 を返す |
+| sec_auth_totp_setup_user_lookup | ユーザー取得 | DB ユーザー不在なら 404 を返す |
+| sec_auth_totp_setup_conflict | 既に有効 | totpEnabled=true の場合 409 を返す |
+| sec_auth_totp_setup_secret_generate | secret 生成 | authenticator.generateSecret を使用する |
+| sec_auth_totp_setup_encrypt | secret 暗号化 | TOTP_SECRET_KEY で AES-256-GCM 暗号化する |
+| sec_auth_totp_setup_persist | pending 保存 | totpPendingSecretEnc を DB に保存する |
+| sec_auth_totp_setup_success | 成功応答 | 200 + ok:true + otpauthUrl を返す |
+| sec_auth_totp_setup_internal_error | 内部エラー | DB 例外・鍵不備を 500 internal_error にする |
+| sec_auth_totp_setup_security | セキュリティ | 平文 secret を DB/ログ/レスポンスへ保存しない |
+
+---
+
+## 3. エンドポイント
 
 | メソッド | パス |
-|---------|------|
+|---|---|
 | POST | /api/auth/totp/setup |
 
-## 3. 入力
+---
 
-### 3.1 リクエストヘッダ
+## 4. リクエスト
 
-| 項目 | 必須 | 説明 |
-|------|------|------|
-| Cookie | 必須 | sid={セッションID} |
-| Content-Type | 任意 | 指定不要（ボディなし） |
+### 4.1 認証 {#sec_auth_totp_setup_auth}
 
-### 3.2 ボディ
+- `getCurrentUser()` によりログイン中ユーザーを取得する
+- 未ログインの場合は 401 を返す
+
+### 4.2 Body
 
 なし。
 
-## 4. 出力（レスポンス）
+---
 
-### 4.1 成功（200 OK）
+## 5. レスポンス
+
+### 5.1 成功 {#sec_auth_totp_setup_success}
 
 ```json
 {
@@ -44,50 +76,110 @@
 }
 ```
 
-- otpauthUrl
-  - 認証アプリ（Google Authenticator 等）に登録するための URL
-  - QR コード生成はクライアント側で行う
+- HTTP 200
+- `otpauthUrl` は認証アプリ登録用 URL
+- QR コード生成はクライアント側で行う
 
-### 4.2 失敗
+### 5.2 未ログイン {#sec_auth_totp_setup_auth}
 
-| 状態 | ステータス | Body |
-|------|-----------|------|
-| 未ログイン | 401 | ```json { "ok": false, "error": "unauthorized" } ``` |
-| ユーザー不明 | 404 | ```json { "ok": false, "error": "not_found" } ``` |
-| 既に TOTP 有効 | 400 | ```json { "ok": false, "error": "already_enabled" } ``` |
-| 内部エラー | 500 | （ボディなし） |
+```json
+{
+  "ok": false,
+  "error": "unauthorized"
+}
+```
 
-## 5. ステータスコード一覧
+- HTTP 401
 
-| 状態 | ステータス |
-|------|-----------|
-| 正常 | 200 |
-| 未ログイン | 401 |
-| 業務エラー | 400 |
-| ユーザー不明 | 404 |
-| 内部エラー | 500 |
+### 5.3 ユーザー不明 {#sec_auth_totp_setup_user_lookup}
 
-## 6. 挙動仕様
+```json
+{
+  "ok": false,
+  "error": "not_found"
+}
+```
 
-1. Cookie `sid` からログイン中ユーザーを取得  
-   - 取得できない場合は 401
-2. ユーザー情報を DB から取得  
-   - 存在しない場合は 404
-3. `totpEnabled === true` の場合は 400（already_enabled）
-4. 新しい TOTP シークレットを生成
-5. シークレットを環境鍵で暗号化し、以下を DB に保存
-   - `totpPendingSecretEnc`
-   - `totpPendingAt`
-   - `totpFailCount = 0`
-6. otpauth:// URL を生成
-7. 200 OK + { ok: true, otpauthUrl } を返却
+- HTTP 404
 
-## 7. セキュリティ・設計上の注意
+### 5.4 既に TOTP 有効 {#sec_auth_totp_setup_conflict}
 
-- 本 API は **TOTP 有効化前の準備専用**
-- 実際の有効化は `/api/auth/totp/verify` で行う
-- 平文シークレットはレスポンスや DB に保存しない
-- 暗号鍵（`TOTP_SECRET_KEY`）が未設定の場合は 500 となる
+```json
+{
+  "ok": false,
+  "error": "conflict"
+}
+```
+
+- HTTP 409
+
+### 5.5 内部エラー {#sec_auth_totp_setup_internal_error}
+
+```json
+{
+  "ok": false,
+  "error": "internal_error"
+}
+```
+
+- HTTP 500
+- DB 例外、`TOTP_SECRET_KEY` 未設定、鍵長不正を含む
 
 ---
+
+## 6. 処理仕様
+
+### 6.1 ユーザー取得 {#sec_auth_totp_setup_user_lookup}
+
+```ts
+const me = await getCurrentUser();
+const user = await prisma.user.findUnique({ where: { id: me.id } });
+```
+
+- `me` が null の場合は 401
+- `user` が null の場合は 404
+
+### 6.2 競合判定 {#sec_auth_totp_setup_conflict}
+
+- `user.totpEnabled === true` の場合は 409 + `conflict`
+
+### 6.3 secret 生成 {#sec_auth_totp_setup_secret_generate}
+
+- `authenticator.generateSecret()` で TOTP secret を生成する
+- `authenticator.options = { window: 1 }` とする
+
+### 6.4 暗号化 {#sec_auth_totp_setup_encrypt}
+
+- `process.env.TOTP_SECRET_KEY` を base64 として読み取る
+- 復号後の鍵長は 32 bytes 必須
+- `aes-256-gcm` で暗号化する
+- 保存形式は `iv(12) + tag(16) + enc` を base64 化した文字列
+
+### 6.5 pending 保存 {#sec_auth_totp_setup_persist}
+
+```ts
+await prisma.user.update({
+  where: { id: user.id },
+  data: { totpPendingSecretEnc: pendingEnc },
+});
+```
+
+### 6.6 otpauth URL 生成 {#sec_auth_totp_setup_success}
+
+- issuer は `HakoMokuroku`
+- label は `user:${user.id}`
+- `authenticator.keyuri(label, issuer, secret)` で生成する
+
+---
+
+## 7. セキュリティ・設計上の注意 {#sec_auth_totp_setup_security}
+
+- 本 API は TOTP 有効化前の準備専用
+- 実際の有効化は `/api/auth/totp/verify` で行う
+- 平文 secret はレスポンス、DB、ログに保存しない
+- レスポンスには暗号化済み secret を含めない
+- 暗号鍵不備は 500 internal_error とする
+
+---
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > TOTP 設定開始（POST /api/auth/totp/setup）
