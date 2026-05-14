@@ -1,87 +1,104 @@
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウト（POST /api/auth/logout）
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260513-105500Z-AULT
+lang: ja-JP
+canonical_title: ログアウトテスト仕様（POST /api/auth/logout）
+document_type: testspec
+canonical_document: true
+-->
 
-# テストケース：ログアウト（POST /api/auth/logout）
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウトテスト仕様（POST /api/auth/logout）
 
-本書は、ログアウト API（POST /api/auth/logout）のテストケース定義を示す。
+# ログアウトテスト仕様（POST /api/auth/logout）
 
-## 1. 対応仕様
-
-| テストケースID | 対応 sec_id | 検証責務 |
-|---|---|---|
-| API_AUTH_LOGOUT-TC-01 | sec_auth_logout_success | 常時 200 + ok:true |
-| API_AUTH_LOGOUT-TC-02 | sec_auth_logout_cookie_clear | sid Cookie を無効化 |
-| API_AUTH_LOGOUT-TC-03 | sec_auth_logout_idempotent | 多重ログアウト時も成功 |
+本書は、ログアウト API（POST /api/auth/logout）のテスト仕様を定義する。  
+apps/web/tests/api.auth.logout.spec.ts の 3 テストを正とする。
 
 ---
 
-## API_AUTH_LOGOUT-TC-01 正常（常に200）
+## 1. Traceability Matrix
 
-### 対応 sec_id
+| testcase_id | 対応 sec_id |
+|---|---|
+| API_AUTH_LOGOUT-TC-01 | sec_auth_logout_success |
+| API_AUTH_LOGOUT-TC-02 | sec_auth_logout_cookie_clear |
+| API_AUTH_LOGOUT-TC-03 | sec_auth_logout_idempotent / sec_auth_logout_success |
+
+---
+
+## 2. テストケース
+
+### API_AUTH_LOGOUT-TC-01 正常：200 + ok:true
+
+#### 対応 sec_id
 
 - sec_auth_logout_success
 
-### 概要
+#### 条件
 
-ログアウト要求は常に成功し、`{ ok:true }` が返る。
+- POST `/api/auth/logout`
 
-### 入力
+#### 期待結果
 
-POST /api/auth/logout
-
-### 期待結果
-
-| 種別 | 値 |
-|------|-----|
-| ステータス | 200 |
-| ボディ | { ok:true } |
+- HTTP 200
+- `{ ok:true }`
 
 ---
 
-## API_AUTH_LOGOUT-TC-02 Cookie が正しく破棄されること
+### API_AUTH_LOGOUT-TC-02 Cookie 破棄
 
-### 対応 sec_id
+#### 対応 sec_id
 
 - sec_auth_logout_cookie_clear
 
-### 概要
+#### 条件
 
-レスポンスに sid Cookie の削除が設定されていることを確認する。
+- POST `/api/auth/logout`
 
-### 期待される Set-Cookie（例）
+#### 期待結果
+
+- `Set-Cookie` に `sid=` を含む
+- `Max-Age=0` を含む
+
+例：
 
 ```txt
 sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0
 ```
 
-### 期待結果
-
-| 種別 | 値 |
-|------|-----|
-| Set-Cookie | sid が Max-Age=0 で無効化されている |
-
 ---
 
-## API_AUTH_LOGOUT-TC-03 多重ログアウト（idempotent）
+### API_AUTH_LOGOUT-TC-03 多重ログアウト（idempotent）
 
-### 対応 sec_id
+#### 対応 sec_id
 
 - sec_auth_logout_idempotent
 - sec_auth_logout_success
 
-### 概要
+#### 条件
 
-複数回ログアウトしても同じ結果になる。
+- POST → POST を連続実行
 
-### 手順
+#### 期待結果
 
-POST → POST
-
-### 期待結果（両方のレスポンス）
-
-| ステータス | ボディ |
-|------------|--------|
-| 200 | { ok:true } |
+- 両方とも HTTP 200
+- 両方とも `{ ok:true }`
 
 ---
 
-[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウト（POST /api/auth/logout）
+## 3. ローカル検証手順
+
+```powershell
+pnpm -C apps/web exec vitest --run
+```
+
+期待結果：
+
+```text
+Test Files  22 passed
+Tests       218 passed
+```
+
+---
+
+[目次](../../目次.md) > テストケース集 > ユーザー認証API > ログアウトテスト仕様（POST /api/auth/logout）
