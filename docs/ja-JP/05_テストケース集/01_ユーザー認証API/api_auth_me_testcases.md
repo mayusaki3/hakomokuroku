@@ -12,7 +12,7 @@ canonical_document: true
 # ログイン状態確認テスト仕様（GET /api/auth/me）
 
 本書は、ログイン状態確認 API（GET /api/auth/me）のテスト仕様を定義する。  
-apps/web/tests/api.auth.me.spec.ts の Vitest を正とする。
+apps/web/tests/api.auth.me.spec.ts の 4 テストを正とする。
 
 ---
 
@@ -20,9 +20,9 @@ apps/web/tests/api.auth.me.spec.ts の Vitest を正とする。
 
 | testcase_id | 対応 sec_id |
 |---|---|
-| AUTH_ME-TC-01 | sec_auth_me_session_read, sec_auth_me_logged_in, sec_auth_me_no_store |
-| AUTH_ME-TC-02 | sec_auth_me_not_logged_in, sec_auth_me_no_store |
-| AUTH_ME-TC-03 | sec_auth_me_read_error, sec_auth_me_no_store |
+| AUTH_ME-TC-01 | sec_auth_me_session_read / sec_auth_me_logged_in / sec_auth_me_no_store |
+| AUTH_ME-TC-02 | sec_auth_me_not_logged_in / sec_auth_me_no_store |
+| AUTH_ME-TC-03 | sec_auth_me_read_error / sec_auth_me_no_store |
 | AUTH_ME-TC-04 | sec_auth_me_not_logged_in |
 
 ---
@@ -59,8 +59,7 @@ apps/web/tests/api.auth.me.spec.ts の Vitest を正とする。
 
 #### 条件
 
-- Cookie なし
-- または `readSession()` が未ログイン状態を返す
+- `readSession()` が `{ ok:false, user:null }` を返す
 
 #### 期待結果
 
@@ -104,9 +103,9 @@ apps/web/tests/api.auth.me.spec.ts の Vitest を正とする。
 
 #### 期待結果
 
-- HTTP 200
-- `ok:false`
-- `user:null`
+- 現行テストは HTTP 200 または 401 を許容する
+- 現 route 実装では HTTP 200
+- HTTP 200 の場合、`ok:false`
 
 ---
 
