@@ -1,55 +1,80 @@
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260513-111000Z-AUTRR
+lang: ja-JP
+canonical_title: リカバリコード再発行（POST /api/auth/totp/recovery/reissue）
+document_type: spec
+canonical_document: true
+-->
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > リカバリコード再発行（POST /api/auth/totp/recovery/reissue）
 
 # リカバリコード再発行（POST /api/auth/totp/recovery/reissue）
 
+本書は、リカバリコード再発行 API（POST /api/auth/totp/recovery/reissue）の正式な仕様を定義する。  
+現時点の実装（apps/web/src/app/api/auth/totp/recovery/reissue/route.ts）および Vitest（apps/web/tests/api.auth.totp.recovery.reissue.spec.ts）を正とする。
+
+---
+
 ## 1. 概要
 
-TOTP を **有効化済み**のユーザーに対して、  
-リカバリコードを **再発行**する API。
+TOTP を有効化済みのログインユーザーに対して、リカバリコードを再発行する API。
 
-- 再発行を行うと **既存のリカバリコードはすべて失効**する
-- 新しいリカバリコードは **10 個**生成される
-- リカバリコードは **このレスポンスでのみ平文返却**される
-- DB には **平文保存しない**
-  - `User.recoveryCodes` には検証可能形式（例：ハッシュ）で保存する
-- 本 API の実行には **TOTP による本人確認**が必須
-
-本 API は、  
-「リカバリコードを紛失した」「残数が少なくなった」  
-といったケースを想定している。
+- 要ログイン
+- `Content-Type: application/json` 必須
+- `code` は6桁数字必須
+- TOTP 有効ユーザーのみ実行可能
+- 成功時は新しいリカバリコードを10件返す
+- DB にはリカバリコードを平文保存せず、SHA-256 hex ハッシュを保存する
+- 再発行により旧リカバリコードは全失効する
 
 ---
 
-## 2. エンドポイント
+## 2. 仕様項目
 
-| 項目 | 内容 |
-|----|----|
-| Method | POST |
-| Path | /api/auth/totp/recovery/reissue |
+| sec_id | 項目 | 検証責務 |
+|---|---|---|
+| sec_auth_totp_recovery_reissue_content_type | Content-Type 検証 | application/json 以外または未指定を 400 invalid_request にする |
+| sec_auth_totp_recovery_reissue_auth | 認証 | requireUserId 失敗を 401 unauthorized にする |
+| sec_auth_totp_recovery_reissue_json_parse | JSON parse | JSON parse 失敗を 400 invalid_request にする |
+| sec_auth_totp_recovery_reissue_code_validation | code 検証 | code 未指定/空/形式不正を 400 invalid_request にする |
+| sec_auth_totp_recovery_reissue_user_lookup | ユーザー取得 | user 不存在を 404 not_found にする |
+| sec_auth_totp_recovery_reissue_enabled | TOTP 有効状態 | totpEnabled=false または secret 無しを 409 conflict にする |
+| sec_auth_totp_recovery_reissue_verify | TOTP 検証 | code 検証失敗を 400 auth_failed にする |
+| sec_auth_totp_recovery_reissue_generate | コード生成 | 平文 recoveryCodes を10件生成する |
+| sec_auth_totp_recovery_reissue_hash_store | ハッシュ保存 | recoveryCodes を sha256hex で保存する |
+| sec_auth_totp_recovery_reissue_replace | 旧コード失効 | DB の recoveryCodes を置換する |
+| sec_auth_totp_recovery_reissue_success | 成功応答 | 200 + ok:true + recoveryCodes を返す |
+| sec_auth_totp_recovery_reissue_internal_error | 内部エラー | DB 更新例外などを 500 internal_error にする |
+| sec_auth_totp_recovery_reissue_security | セキュリティ | 平文返却は1回限り、検証失敗理由を秘匿する |
 
 ---
 
-## 3. 認可・前提条件
+## 3. エンドポイント
 
-- 要ログイン（Cookie `sid` によるセッション認証）
-- TOTP が **有効化済み**であること
-- Content-Type: application/json（必須）
-
-※ Authorization: Bearer は使用しない  
-※ 認証方式は Cookie `sid` に統一する
+| メソッド | パス |
+|---|---|
+| POST | /api/auth/totp/recovery/reissue |
 
 ---
 
 ## 4. リクエスト
 
-### 4.1 ヘッダー
+### 4.1 ヘッダー {#sec_auth_totp_recovery_reissue_content_type}
 
-| 項目 | 必須 | 説明 |
-|----|----|----|
-| Content-Type | 必須 | application/json |
-| Cookie | 必須 | sid={セッションID} |
+```txt
+Content-Type: application/json
+```
 
-### 4.2 ボディ
+- `application/json` に一致しない場合は 400
+- `headers.get('content-type')` が null の場合も 400
+
+### 4.2 認証 {#sec_auth_totp_recovery_reissue_auth}
+
+- `requireUserId()` によりログインユーザーIDを取得する
+- 例外発生時は 401 を返す
+
+### 4.3 Body(JSON) {#sec_auth_totp_recovery_reissue_code_validation}
 
 ```json
 {
@@ -57,40 +82,33 @@ TOTP を **有効化済み**のユーザーに対して、
 }
 ```
 
-- code（必須）
-  - TOTP 認証アプリが生成した **6 桁数字の文字列**
-  - 形式不正・未指定はエラー
+| 項目 | 必須 | 条件 |
+|---|---:|---|
+| code | 必須 | trim 後、数字6桁 |
+
+- code 未指定、空文字、空白のみは 400
+- 6桁数字以外は 400
 
 ---
 
 ## 5. レスポンス
 
-### 5.1 正常（200 OK）
+### 5.1 正常 {#sec_auth_totp_recovery_reissue_success}
 
 ```json
 {
   "ok": true,
   "recoveryCodes": [
-    "ABCD-1234",
-    "EFGH-5678"
+    "ABCD-1234"
   ]
 }
 ```
 
-- recoveryCodes
-  - 新規発行された **10 個**のリカバリコード
-  - **このレスポンスでのみ返却**
-  - サーバー側から再表示・再取得は不可
+- HTTP 200
+- `recoveryCodes` は10件
+- 各コードは `XXXX-XXXX` 形式
 
----
-
-### 5.2 異常系
-
-#### 400 Bad Request（invalid_request）
-
-- Content-Type 不正
-- JSON 不正
-- code 未指定 / 空 / 形式不正（6桁数字でない）
+### 5.2 invalid_request
 
 ```json
 {
@@ -99,12 +117,12 @@ TOTP を **有効化済み**のユーザーに対して、
 }
 ```
 
----
+- HTTP 400
+- Content-Type 不正
+- JSON parse 不正
+- code 未指定/空/形式不正
 
-#### 401 Unauthorized（unauthorized）
-
-- 未ログイン
-- セッション無効
+### 5.3 unauthorized
 
 ```json
 {
@@ -113,48 +131,9 @@ TOTP を **有効化済み**のユーザーに対して、
 }
 ```
 
----
+- HTTP 401
 
-#### 409 Conflict（conflict）
-
-- TOTP 未有効（`User.totpEnabled = false`）
-- TOTP 設定未完了状態（pending のみ存在する等）
-
-```json
-{
-  "ok": false,
-  "error": "conflict"
-}
-```
-
-※ 状態が原因で処理できないことを示す  
-※ 認証失敗ではない
-
----
-
-#### 400 Bad Request（auth_failed）
-
-- TOTP コード検証失敗
-  - 不一致
-  - 有効期限切れ
-
-```json
-{
-  "ok": false,
-  "error": "auth_failed"
-}
-```
-
-**重要**
-
-- 認証失敗理由の詳細は返さない
-- 正しい / 誤り を推測させないため、常に同一レスポンスとする
-
----
-
-#### 404 Not Found（not_found）
-
-- ログインユーザーが存在しない（原則想定外）
+### 5.4 not_found {#sec_auth_totp_recovery_reissue_user_lookup}
 
 ```json
 {
@@ -163,55 +142,112 @@ TOTP を **有効化済み**のユーザーに対して、
 }
 ```
 
----
+- HTTP 404
+- ログインユーザーIDに対応する User が存在しない場合
 
-#### 500 Internal Server Error（internal_error）
+### 5.5 conflict {#sec_auth_totp_recovery_reissue_enabled}
 
-- 予期しない例外
-- DB / 暗号化処理エラー等
+```json
+{
+  "ok": false,
+  "error": "conflict"
+}
+```
 
-（ボディなし、または共通エラー応答）
+- HTTP 409
+- `totpEnabled=false`
+- `totpSecretEnc` が無い
 
----
+### 5.6 auth_failed {#sec_auth_totp_recovery_reissue_verify}
 
-## 6. DB 更新仕様
+```json
+{
+  "ok": false,
+  "error": "auth_failed"
+}
+```
 
-### 成功時
+- HTTP 400
+- TOTP 検証失敗
+- DB 更新は行わない
 
-- `User.recoveryCodes`
-  - 新規 10 件を生成し保存
-  - **既存の recoveryCodes はすべて失効**
-- `User.updatedAt`
-  - 必要に応じて更新
+### 5.7 internal_error {#sec_auth_totp_recovery_reissue_internal_error}
 
-### 失敗時
+```json
+{
+  "ok": false,
+  "error": "internal_error"
+}
+```
 
-- DB 状態は変更しない
-- 認証失敗時の失敗回数管理は実装依存
-
----
-
-## 7. 処理フロー（概要）
-
-1. Content-Type を検証
-2. Cookie `sid` によりログインユーザーを特定
-3. ユーザー取得
-4. TOTP 有効状態を確認
-   - 未有効 / 未完了 → conflict
-5. TOTP コード検証
-   - 不一致 → auth_failed
-6. 新しいリカバリコードを生成
-7. 旧コードを全失効
-8. 200 OK + 新コードを返却
-
----
-
-## 8. セキュリティ・設計上の注意
-
-- リカバリコードは **平文返却 1 回限り**
-- 再発行は **本人確認（TOTP）必須**
-- 再発行により **既存コードは即時無効化**
-- brute-force 対策は `totpFailCount` 等で制御可能（実装依存）
+- HTTP 500
 
 ---
+
+## 6. 処理仕様
+
+### 6.1 ユーザー取得 {#sec_auth_totp_recovery_reissue_user_lookup}
+
+```ts
+await prisma.user.findUnique({
+  where: { id: userId },
+  select: {
+    id: true,
+    totpEnabled: true,
+    totpSecretEnc: true,
+    recoveryCodes: true,
+    totpFailCount: true,
+    lockUntil: true,
+  },
+});
+```
+
+### 6.2 TOTP 検証 {#sec_auth_totp_recovery_reissue_verify}
+
+```ts
+await verifyTotpCode(user, code);
+```
+
+- false の場合は 400 auth_failed
+- 検証失敗理由は返さない
+
+### 6.3 リカバリコード生成 {#sec_auth_totp_recovery_reissue_generate}
+
+- 10件生成する
+- 平文形式は `XXXX-XXXX`
+- 使用文字は英大文字・数字
+
+### 6.4 ハッシュ保存 {#sec_auth_totp_recovery_reissue_hash_store}
+
+```ts
+const hashedCodes = plainCodes.map((c) => sha256hex(c));
+```
+
+- DB 保存値は 64桁 lowercase hex
+- 平文は DB に保存しない
+
+### 6.5 旧コード失効 {#sec_auth_totp_recovery_reissue_replace}
+
+```ts
+await prisma.user.update({
+  where: { id: user.id },
+  data: { recoveryCodes: hashedCodes },
+});
+```
+
+- 既存 `recoveryCodes` は置換される
+- 旧コードは以後無効になる
+
+---
+
+## 7. セキュリティ・設計上の注意 {#sec_auth_totp_recovery_reissue_security}
+
+- リカバリコードの平文返却はこのレスポンス1回限り
+- 再発行には TOTP による本人確認を必須とする
+- 認証失敗理由の詳細は返さない
+- DB には平文コードを保存しない
+- 再発行により旧コードを全失効する
+
+---
+
 [目次](../../目次.md) > API仕様 > ユーザー認証API > リカバリコード再発行（POST /api/auth/totp/recovery/reissue）
