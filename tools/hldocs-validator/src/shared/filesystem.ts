@@ -4,11 +4,16 @@ import path from "node:path";
 
 import type { MarkdownFile } from "../types";
 
+const DEFAULT_DOCS_DIR = path.resolve(
+  process.cwd(),
+  "../../docs/ja-JP",
+);
+
 /**
  * Collect markdown files.
  */
 export async function collectMarkdownFiles(
-  rootDir = "docs/ja-JP",
+  rootDir = DEFAULT_DOCS_DIR,
 ): Promise<MarkdownFile[]> {
   const files = await fg("**/*.md", {
     cwd: rootDir,
@@ -21,7 +26,7 @@ export async function collectMarkdownFiles(
     const content = await readFile(file, "utf-8");
 
     results.push({
-      path: path.normalize(file),
+      path: path.relative(process.cwd(), file).replaceAll("\\", "/"),
       content,
     });
   }
