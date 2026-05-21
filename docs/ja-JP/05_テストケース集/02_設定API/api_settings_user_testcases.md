@@ -1,3 +1,12 @@
+<!--
+HLDocS:LLM-MANAGED
+doc_id: doc-20260521-api-settings-user-testcases
+lang: ja-JP
+canonical_title: ユーザー設定取得・更新（/api/settings/user）テストケース
+document_type: testspec
+canonical_document: true
+-->
+
 [目次](../../目次.md) > テストケース集 > 設定API > ユーザー設定取得・更新（/api/settings/user）
 
 # ユーザー設定取得・更新（/api/settings/user）テストケース
@@ -34,7 +43,7 @@
 | API_SETTINGS_USER-TC-14 | PUT | sec_settings_user_put_validate_display_name, sec_settings_user_no_store | displayName 未指定 | 400 |
 | API_SETTINGS_USER-TC-15 | PUT | sec_settings_user_put_parse_body, sec_settings_user_put_validate_display_name, sec_settings_user_no_store | JSONパースエラー | 400 + message |
 | API_SETTINGS_USER-TC-16 | PUT | sec_settings_user_put_validate_display_name, sec_settings_user_no_store | displayName 非string | 400 |
-| API_SETTINGS_USER-TC-17 | PUT | sec_settings_user_put_validate_display_name, sec_settings_user_no_store | displayName trim | 200 + trim済み userName |
+| API_SETTINGS_USER-TC-17 | PUT | sec_settings_user_put_validate_display_name, sec_settings_user_put_success, sec_settings_user_no_store | displayName trim | 200 + trim済み userName |
 
 ---
 
