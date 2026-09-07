@@ -40,6 +40,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
   - `serverUpdatedAt` = サーバーがそのレコードを最後に受信・更新した日時
   - `deletedAt` = 論理削除日時
 - 同期競合検出用 `revision` 採用確定
+- サーバーtombstone保持期間 = 30日
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -68,6 +69,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - アイテム「削除する」 = `deletedAt` 設定
 - 箱削除時のアイテム = `UNASSIGNED` へ移動
 - 削除伝播 = `deletedAt` による論理削除後、同期完了後に物理削除
+- サーバー上の削除tombstoneは30日保持
 - 同期競合 = `updatedAt` 比較。同時刻で内容が異なる場合はユーザー確認
 - `serverUpdatedAt` を差分同期用のサーバー時刻として採用
 - `revision` を同期競合検出用のサーバー版番号として採用
@@ -106,16 +108,14 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-`serverUpdatedAt` + `revision` 採用を前提に同期プロトコルを確定する。
+`serverUpdatedAt` + `revision` + 30日tombstone保持を前提に同期プロトコルを確定する。
 
 次の設計論点:
-- `baseRevision` 不一致時の競合判定とユーザー確認フロー
+- ローカル側tombstoneをいつ物理削除するか
+- Pullカーソルをエンティティ別 `(serverUpdatedAt, id)` 複合カーソルにするか
+- `baseRevision` 不一致時の競合保持方法
 - 新規レコードの初期revision
-- `deletedAt` の物理削除条件
-- Pullカーソルを `(serverUpdatedAt, revision/id)` の複合カーソルにするか
-- contentHashの正式計算対象
-
-これらを整理し、次の利用者判断点を提示する。
+- `contentHash` の正式計算対象
 
 ## 8. 追加作業記録
 
