@@ -45,6 +45,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - サーバーtombstone保持期間 = 30日
 - ローカルtombstone = サーバーが削除を受理するまで保持し、受理後は物理削除
 - `baseRevision` 不一致かつ `contentHash` 不一致は時刻に関係なくユーザー確認とする方針で確定
+- 未同期ローカルレコードは `revision = 0`、初回サーバー登録成功時に `revision = 1` とする方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -83,6 +84,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - ローカル側tombstoneはサーバー削除受理後に物理削除
 - `serverUpdatedAt` をサーバー受理日時として採用
 - `revision` を同期競合検出用のサーバー版番号として採用
+- 未同期ローカルは `revision = 0`、初回サーバー登録成功で `revision = 1`
 - Pullカーソルは時刻ではなくサーバー単調増加の `syncSeq` を採用
 - `SyncChangeLog` を `syncSeq` の正とし、Box / Item / BoxLocationにも最新 `syncSeq` を保持
 - 競合判定:
@@ -128,10 +130,14 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 `serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone方針を前提に同期プロトコルを確定する。
 
 現在の設計論点:
-- 新規レコードの初期revision
 - 競合発生時にどこへクライアント版/サーバー版を保持するか
 - contentHashの正式計算対象
 - `SyncChangeLog` の保持期間とtombstone purge後の扱い
+
+推奨方向:
+- 競合はサーバー側で業務レコードを上書きせず、競合情報を別テーブルに保持する。
+- 競合レコードには entityType / entityId / serverRevision / serverPayload / clientBaseRevision / clientPayload / createdAt 等を持たせ、ユーザー解決後に選択版を通常更新として適用する。
+- contentHash は業務内容 + `deletedAt` を対象とし、ID・revision・syncSeq・serverUpdatedAt等の同期メタデータは除外する方向を優先検討する。
 
 トランザクション境界はAPI全体ではなく整合性が必要な論理操作単位とする方向。通常更新では「対象レコード確認/更新 + revision更新 + syncSeq採番 + SyncChangeLog追加」を原子的に行う。箱削除では「子ItemをUNASSIGNEDへ移動 + BoxLocation削除tombstone + Box削除tombstone + 各revision/syncSeq/SyncChangeLog」を一つの論理操作として原子的に扱う。Pushバッチ全体は巨大トランザクションにせず、独立操作ごとに成功/競合/失敗を返す方向とする。
 
