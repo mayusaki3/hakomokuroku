@@ -35,6 +35,10 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - UNC-001 ～ UNC-007 の方針確定
 - アイテム「取り出す」と「削除する」の要件追加
 - LLM_WORKSPACE初期化
+- 同期時刻の責務分離方針確定
+  - `updatedAt` = データ内容の最終更新日時
+  - `serverUpdatedAt` = サーバーがそのレコードを最後に受信・更新した日時
+  - `deletedAt` = 論理削除日時
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -42,7 +46,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 特に以下を設計する。
 - Dexie ↔ Sync API ↔ Prisma の責務
 - Box / Item / BoxLocation の正式データ構造
-- `createdAt` / `updatedAt` / `deletedAt`
+- `createdAt` / `updatedAt` / `serverUpdatedAt` / `deletedAt`
 - 仮置き箱 `UNASSIGNED`
 - アイテム取り出し
 - 論理削除と物理削除
@@ -65,16 +69,17 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - 箱削除時のアイテム = `UNASSIGNED` へ移動
 - 削除伝播 = `deletedAt` による論理削除後、同期完了後に物理削除
 - 同期競合 = `updatedAt` 比較。同時刻で内容が異なる場合はユーザー確認
+- `serverUpdatedAt` を差分同期用のサーバー時刻として採用
 - バックアップIDを維持し、データ単位ハッシュで衝突判定
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
 
 ## 5. 現行実装で確認済みの主要問題
 
-1. Prisma Box / Item / BoxLocation に `deletedAt` がない。
-2. Prisma `updatedAt @updatedAt` とクライアント時刻ベース競合判定の整合を設計する必要がある。
+1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` がない。
+2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しないため、設計変更が必要。
 3. Sync Pushは現在、受信レコードを比較せずupsertする。
-4. Sync Pullは `updatedAt > since` の差分取得。
+4. Sync Pullは `updatedAt > since` の差分取得であり、`serverUpdatedAt` ベースへ変更が必要。
 5. バックアップが `thumbs` ではなく `photoThumbs` を参照する箇所がある。
 6. バックアップ対象にBoxLocationがない。
 7. replaceリストアがIDを無条件再発行する。
@@ -100,13 +105,15 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-現行 Dexie / Prisma / Sync実装を根拠に、正式な同期アーキテクチャ案を作成する。
+`serverUpdatedAt` 採用を前提に、正式な同期アーキテクチャ案を作成する。
 
-最初の設計判断点として、`updatedAt` の意味を以下のどちらにするか検討する。
-- クライアントが生成したデータ更新時刻をサーバーも保持する
-- サーバー更新時刻とクライアント更新時刻を別フィールドに分離する
+次の設計論点:
+- 端末時計ずれを許容しつつ `updatedAt` を競合判定に使う方法
+- 同一 `updatedAt` かつ内容差異時の競合レコード保持方法
+- `deletedAt` 論理削除をいつ物理削除可能と判定するか
+- Pullカーソルを `serverUpdatedAt` だけで安全に扱うか、タイブレーカーを追加するか
 
-競合判定・差分同期・時計ずれに影響するため、案を整理した時点で利用者確認を行う。
+これらを整理した時点で、次の利用者判断点を提示する。
 
 ## 8. 追加作業記録
 
