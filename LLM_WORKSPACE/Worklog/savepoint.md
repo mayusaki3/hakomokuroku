@@ -39,20 +39,20 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
   - `updatedAt` = データ内容の最終更新日時
   - `serverUpdatedAt` = サーバーがそのレコードを最後に受信・更新した日時
   - `deletedAt` = 論理削除日時
+- 同期競合検出用 `revision` 採用確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
 
-特に以下を設計する。
-- Dexie ↔ Sync API ↔ Prisma の責務
-- Box / Item / BoxLocation の正式データ構造
-- `createdAt` / `updatedAt` / `serverUpdatedAt` / `deletedAt`
-- 仮置き箱 `UNASSIGNED`
-- アイテム取り出し
-- 論理削除と物理削除
-- 複数端末同期
-- `updatedAt` 同時刻競合とユーザー確認
-- バックアップのID・ハッシュ
+正式同期メタデータ候補:
+- `createdAt`
+- `updatedAt`
+- `deletedAt`
+- `serverUpdatedAt`
+- `revision`
+- `contentHash`
+
+`revision` はサーバー管理の版番号とし、端末は編集元となったサーバー版を `baseRevision` としてPush時に提示する方式を設計基礎とする。
 
 ## 4. 確定事項
 
@@ -70,13 +70,14 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - 削除伝播 = `deletedAt` による論理削除後、同期完了後に物理削除
 - 同期競合 = `updatedAt` 比較。同時刻で内容が異なる場合はユーザー確認
 - `serverUpdatedAt` を差分同期用のサーバー時刻として採用
+- `revision` を同期競合検出用のサーバー版番号として採用
 - バックアップIDを維持し、データ単位ハッシュで衝突判定
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
 
 ## 5. 現行実装で確認済みの主要問題
 
-1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` がない。
+1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` がない。
 2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しないため、設計変更が必要。
 3. Sync Pushは現在、受信レコードを比較せずupsertする。
 4. Sync Pullは `updatedAt > since` の差分取得であり、`serverUpdatedAt` ベースへ変更が必要。
@@ -105,15 +106,16 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-`serverUpdatedAt` 採用を前提に、正式な同期アーキテクチャ案を作成する。
+`serverUpdatedAt` + `revision` 採用を前提に同期プロトコルを確定する。
 
 次の設計論点:
-- 端末時計ずれを許容しつつ `updatedAt` を競合判定に使う方法
-- 同一 `updatedAt` かつ内容差異時の競合レコード保持方法
-- `deletedAt` 論理削除をいつ物理削除可能と判定するか
-- Pullカーソルを `serverUpdatedAt` だけで安全に扱うか、タイブレーカーを追加するか
+- `baseRevision` 不一致時の競合判定とユーザー確認フロー
+- 新規レコードの初期revision
+- `deletedAt` の物理削除条件
+- Pullカーソルを `(serverUpdatedAt, revision/id)` の複合カーソルにするか
+- contentHashの正式計算対象
 
-これらを整理した時点で、次の利用者判断点を提示する。
+これらを整理し、次の利用者判断点を提示する。
 
 ## 8. 追加作業記録
 
