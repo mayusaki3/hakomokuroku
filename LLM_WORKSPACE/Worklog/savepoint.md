@@ -41,6 +41,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
   - `deletedAt` = 論理削除日時
 - 同期競合検出用 `revision` 採用確定
 - サーバーtombstone保持期間 = 30日
+- ローカルtombstone = サーバーが削除を受理するまで保持し、受理後は物理削除
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -69,7 +70,8 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - アイテム「削除する」 = `deletedAt` 設定
 - 箱削除時のアイテム = `UNASSIGNED` へ移動
 - 削除伝播 = `deletedAt` による論理削除後、同期完了後に物理削除
-- サーバー上の削除tombstoneは30日保持
+- サーバー側tombstoneは30日保持
+- ローカル側tombstoneはサーバー削除受理後に物理削除
 - 同期競合 = `updatedAt` 比較。同時刻で内容が異なる場合はユーザー確認
 - `serverUpdatedAt` を差分同期用のサーバー時刻として採用
 - `revision` を同期競合検出用のサーバー版番号として採用
@@ -82,7 +84,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` がない。
 2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しないため、設計変更が必要。
 3. Sync Pushは現在、受信レコードを比較せずupsertする。
-4. Sync Pullは `updatedAt > since` の差分取得であり、`serverUpdatedAt` ベースへ変更が必要。
+4. Sync Pullは `updatedAt > since` の差分取得であり、設計変更が必要。
 5. バックアップが `thumbs` ではなく `photoThumbs` を参照する箇所がある。
 6. バックアップ対象にBoxLocationがない。
 7. replaceリストアがIDを無条件再発行する。
@@ -108,14 +110,15 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-`serverUpdatedAt` + `revision` + 30日tombstone保持を前提に同期プロトコルを確定する。
+`serverUpdatedAt` + `revision` + tombstone方針を前提に同期プロトコルを確定する。
 
-次の設計論点:
-- ローカル側tombstoneをいつ物理削除するか
-- Pullカーソルをエンティティ別 `(serverUpdatedAt, id)` 複合カーソルにするか
-- `baseRevision` 不一致時の競合保持方法
+現在の設計論点:
+- Pullカーソルの安全な実装
+- `baseRevision` 不一致時の競合保持とユーザー確認フロー
 - 新規レコードの初期revision
-- `contentHash` の正式計算対象
+- contentHashの正式計算対象
+
+Pullについて、`serverUpdatedAt` 単独カーソルは同一時刻更新の取りこぼしリスクがあるため、サーバー単調増加の変更シーケンス（例: `syncSeq` / SyncChangeLog）を追加し、Pullカーソルをシーケンス番号とする案を優先検討する。
 
 ## 8. 追加作業記録
 
