@@ -46,6 +46,8 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - ローカルtombstone = サーバーが削除を受理するまで保持し、受理後は物理削除
 - `baseRevision` 不一致かつ `contentHash` 不一致は時刻に関係なくユーザー確認とする方針で確定
 - 未同期ローカルレコードは `revision = 0`、初回サーバー登録成功時に `revision = 1` とする方針で確定
+- `SyncConflict` を競合一時バッファ兼再送冪等性管理として使用する方針で確定
+- 競合解決要求時に現在の `revision` を再確認し、競合表示時点から進んでいれば最新サーバー版と再確認する方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -65,6 +67,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - `syncSeq` = サーバー側の変更順序。Pull差分カーソルとして使用
 - `SyncChangeLog` = 同期変更履歴の正本。Pullはここを基準に差分取得
 - 各業務レコードの `syncSeq` = そのレコードに適用された最新変更のシーケンス
+- `SyncConflict` = 未解決クライアント変更の一時保持、再送重複防止、競合発生時点の比較スナップショット
 
 ## 4. 確定事項
 
@@ -92,6 +95,10 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
   - `baseRevision != server.revision` かつ `contentHash` 同一 → 実質同一内容として競合扱いしない
   - `baseRevision != server.revision` かつ `contentHash` 不一致 → `updatedAt` の新旧に関係なくユーザー確認
 - `updatedAt` は競合時の補助情報・表示情報として保持するが、自動勝者決定には使わない
+- 競合は `SyncConflict` に別保持し、正本を即時上書きしない
+- 同一競合の再送は同じ競合として扱い、競合レコードを増殖させない
+- 同じentityに複数端末由来の未解決競合が並存することを許容する
+- 競合解決時は `serverRevisionAtConflict` と現在のrevisionを比較し、不一致なら最新サーバー版との再確認へ戻す
 - バックアップIDを維持し、データ単位ハッシュで衝突判定
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
@@ -127,17 +134,14 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-`serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone方針を前提に同期プロトコルを確定する。
+`serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone + `SyncConflict` 方針を前提に同期プロトコルを確定する。
 
 現在の設計論点:
-- 競合発生時にどこへクライアント版/サーバー版を保持するか
-- contentHashの正式計算対象
+- `contentHash` の正式計算対象
 - `SyncChangeLog` の保持期間とtombstone purge後の扱い
+- `SyncConflict` の解決済みデータ保持期間
 
-推奨方向:
-- 競合はサーバー側で業務レコードを上書きせず、競合情報を別テーブルに保持する。
-- 競合レコードには entityType / entityId / serverRevision / serverPayload / clientBaseRevision / clientPayload / createdAt 等を持たせ、ユーザー解決後に選択版を通常更新として適用する。
-- contentHash は業務内容 + `deletedAt` を対象とし、ID・revision・syncSeq・serverUpdatedAt等の同期メタデータは除外する方向を優先検討する。
+`contentHash` は業務内容 + 削除状態を対象とし、同期制御メタデータを除外する方向を優先検討する。候補として `createdAt` / `updatedAt` もハッシュから除外し、「利用者から見た実質内容が同じなら同一hash」とする。
 
 トランザクション境界はAPI全体ではなく整合性が必要な論理操作単位とする方向。通常更新では「対象レコード確認/更新 + revision更新 + syncSeq採番 + SyncChangeLog追加」を原子的に行う。箱削除では「子ItemをUNASSIGNEDへ移動 + BoxLocation削除tombstone + Box削除tombstone + 各revision/syncSeq/SyncChangeLog」を一つの論理操作として原子的に扱う。Pushバッチ全体は巨大トランザクションにせず、独立操作ごとに成功/競合/失敗を返す方向とする。
 
