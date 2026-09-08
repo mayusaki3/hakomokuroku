@@ -173,6 +173,48 @@ CREATE送信済みだがresponse lostのケースも同じDELETE経路で安全�
 
 根拠: DELETE経路を一本化でき、未送信・送信結果不明を区別する追加stateが不要になるため。
 
+### ID_COLLISION 回復
+`baseRevision=0` のCREATE/UPDATEで同一user scopeの同一IDがserverに既存の場合:
+
+```text
+server contentHash == client contentHash
+→ UNCHANGED
+→ 過去のCREATE成功後response lost等として吸収
+
+server contentHash != client contentHash
+→ REJECTED
+→ errorCode=ID_COLLISION
+→ retryable=false
+```
+
+`ID_COLLISION` は通常CONFLICTにせず、client winsによる既存server record上書きを許可しない。
+
+Push responseは回復に必要なserver canonicalを返す:
+- serverPayload
+- revision
+- syncSeq
+- contentHash
+
+clientは同一IndexedDB transactionで以下を実施:
+1. 衝突したlocal candidateの旧ID Aを新ID Bへ再割り当て
+2. Aを参照するlocal business recordをB参照へ変更
+3. 参照変更したentityのcontentHashを再計算
+4. 関連OutboxのentityId/payload/contentHashを更新しoutboxVersionを進める
+5. 旧ID Aにはresponseで得たserver canonicalを配置
+6. AのSyncStateをserver metadataで作成/更新
+7. Bは新規local entityとしてbaseRevision=0で次回Push
+
+主な参照remap:
+- Box A→B: `Item.boxId A→B`
+- BoxLocation A→B: `Box.locationId A→B`
+- Itemは現行確定モデルでは下位entity参照なし
+
+既に同期済みの参照元entityをremapした場合、その変更は通常のlocal業務変更としてOutboxへ反映し、参照元のbaseRevisionは元の同期baselineを維持する。
+
+通常Pullだけにserver canonical復元を依存しない。衝突server recordのsyncSeqが現在cursorより古い場合、通常Pullでは取得されないため。
+
+根拠: local candidate保存・参照整合性・server canonical復元を一度に保証し、ID衝突から自動回復可能にするため。
+
 ## 7. Push API
 
 Request:
@@ -200,6 +242,7 @@ contentHash
 conflictId
 errorCode
 retryable
+serverPayload  // ID_COLLISION等、必要時
 ```
 
 - batch全体はall-or-nothingにしない
@@ -415,9 +458,12 @@ INITIAL_SYNCは閲覧/検索可、書込不可。通信系失敗ならOFFLINE_RE
 ## 15. 次のアクション
 
 次の設計判断点:
-**baseRevision=0 のCREATE/UPDATEが、同じIDのserver既存entityと衝突した場合の扱いを確定する。**
+**ID_COLLISION remap中に、参照元entity自身にも同時にID_COLLISIONやCONFLICTがある場合の処理境界を確定する。**
 
-既決方針では、同一authenticated user scope内で新規IDがserverに既に存在する場合はID collisionであり、通常上書きしない。次に、そのAPI結果とlocal recovery方法を確定する。
+推奨候補:
+- remap自体はlocal transactionで完了させる
+- 参照元Outboxのserver側競合状態は消さず、新しいpayload/contentHash/outboxVersionで次回Pushに再評価
+- 既存SyncConflictがある参照元は、そのlocal candidate更新後に同じconflict rowを最新client snapshotへ更新する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
