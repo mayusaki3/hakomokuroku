@@ -155,7 +155,31 @@ Full Resync通信失敗
 
 この判定は単にDBが存在するかではなく、**有効なcanonical/cursorが一度確立済みか**で行う。
 
-根拠: 新規空DBをOFFLINE_READYにすると、server上の既存Box/Locationを知らないまま新規登録でき、後の同期で技術的には統合可能でも利用者レベルの重複を作りやすい。最初のcanonical取得までは書き込みを止め、その後はoffline-firstとして動作させる。
+### 既存canonicalありのFull Resync失敗
+**確定:** 既存user DBでcursor失効等によりFull Resyncが必要になった場合、Full Resyncはstagingへ取得し、完了するまで既存Business / SyncState / cursor / Outboxを変更しない。
+
+```text
+既存canonicalあり
+↓
+FULL_RESYNC_REQUIRED
+↓
+Full Resyncをstagingへ取得
+↓
+通信途中で失敗
+↓
+未完成stagingはcanonicalとして採用しない
+既存Business / SyncState / cursor / Outboxは維持
+↓
+OFFLINE_READY
+```
+
+- 旧cursorは通常Pullには無効でも、既存canonicalのlocal利用状態を表すためFull Resync完了まで保持する
+- 通信復帰後はFull Resyncを再開またはsnapshot期限切れなら新規snapshotで再試行する
+- offline中の編集は通常どおりBusiness + Outboxへ反映する
+- Full Resync完了時は、保存していたOutboxを新canonicalへreapplyしてからPushし、final Pullで収束する
+- stagingの一部pageをBusiness tableへ逐次混在させない
+
+根拠: Full Resyncが未完了の段階で旧canonicalを破棄すると、一時的な通信障害だけで既存のoffline利用能力まで失う。stagingとcanonicalを分離し、完全snapshotのみ原子的採用することで安全にoffline-first動作を維持できる。
 
 ### tombstone / SyncChangeLog purge
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -208,9 +232,9 @@ Full Resync通信失敗
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**既存user DBでcursorが失効して `FULL_RESYNC_REQUIRED` になった際、Full Resyncが通信途中で失敗した場合も、既存canonicalを使ってOFFLINE_READYを維持するかを確定する。**
+**Full Resync中に利用者がlocal編集を行った場合、その編集を許可するかを確定する。**
 
-推奨候補は、既存canonicalを破棄せずstagingを別領域に保持する設計なので、Full Resync完了までは旧canonicalをそのまま利用し、通信失敗時はOFFLINE_READYへ戻す方式。Outboxも保持する。Full Resyncが最後まで完了して原子的採用されるまでは既存Business/SyncState/cursorを変更しない。
+推奨候補は、既存canonicalを持つDBではFull Resyncのstaging取得中も通常編集を許可し、編集はBusiness + Outboxへ保存する方式。Full Resync snapshot採用時に、その時点の最新Outboxを新canonicalへreapplyするため、取得開始後の編集も失われない。新規DBは既存確定どおり初回Full Resync完了まで書き込み不可。
 
 ## 7. HLDocS運用上の注意
 
