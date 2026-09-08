@@ -334,7 +334,25 @@ DELETE発生
 - stale local entityはFull Resyncのcanonical rebuildで消える
 - reserved UNASSIGNEDはpurge対象外
 
-根拠: 30日を超えてtombstoneを保持し続けずにDB負荷を抑えつつ、90日以内の端末には通常PullだけでDELETEを伝播できる。90日を超える端末はFull Resyncで安全にcanonicalへ収束できる。
+### SyncChangeLog retentionとdevice cursor
+
+**確定:** v0.8ではSyncChangeLogの保持期間をdeviceごとのcursor状態に応じて延長しない。作成時点から固定90日でpurge可能とする。
+
+```text
+SyncChangeLog age <= 90日
+→ 通常Pull対象として保持
+
+SyncChangeLog age > 90日
+→ purge可能
+→ その範囲を必要とするcursorはFULL_RESYNC_REQUIRED
+```
+
+- device registryは導入しない
+- per-device lease / last-seen / cursor retention pinningは導入しない
+- 長期間未同期deviceのためにlogを無期限延長しない
+- 90日を超えて復帰したdeviceはFull Resyncでactive canonicalへ収束させる
+
+根拠: Full Resyncが既に安全な復帰経路として設計されているため、device単位の保持延長を導入する必要がない。固定retentionによりserver状態、purge条件、テスト条件を単純化できる。
 
 ## 15. 認証・状態
 
@@ -398,9 +416,9 @@ ONLINE復帰時は自動でPull→Push→Pull。手動syncはfallback。
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**SyncChangeLog purge判定を「作成時刻90日」だけで行うか、各Userのcursor状態を考慮して延長保持するかを確定する。**
+**SyncChangeLogのretention境界ちょうど90日を、inclusive/exclusiveのどちらとして扱うか、およびpurge jobとPullが競合した場合の判定基準を確定する。**
 
-推奨候補は、v0.8では固定90日retentionとし、個々のdevice cursorに応じた保持延長は行わない。90日を超えたdeviceはFull Resyncへ送る。device registryやper-device leaseを持たずに済み、現在の単純な同期モデルを維持できるため。
+推奨候補は、時刻そのものより「そのuserのcursorが必要とする最小syncSeqがまだ保持されているか」でPull可否を判断し、purgeとPullの競合ではserver transaction/読み取り時点のretained logを基準にする方式。保持可否の実装詳細を時刻境界に依存させず、欠落可能性がある場合はFULL_RESYNC_REQUIREDへ倒す。
 
 ## 20. HLDocS運用上の注意
 
