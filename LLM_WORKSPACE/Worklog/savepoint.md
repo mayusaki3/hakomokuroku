@@ -110,7 +110,7 @@ online auth → Pull → Outbox reapply → Push → Pull
 
 baseRevision=0 DELETE:
 ```text
-server同IDなし   → UNCHANGED
+server同IDなし    → UNCHANGED
 server active同ID → REJECTED / ID_COLLISION / retryable=false
 ```
 
@@ -235,6 +235,7 @@ payload
 - page適用 + cursor更新は可能な限り同一local transaction
 - Outboxありならserver baseline/SyncState更新後にOutbox payloadを再適用
 - server DELETEでもOutboxありならlocal candidateを破棄しない
+- 通常Pullは有効なcursorを持つclientのみ使用する
 
 ## 13. Full Resync
 
@@ -252,6 +253,33 @@ payload
 - local採用成功後のみ `/sync/full/{snapshotId}/complete`
 - complete通知失敗はlocal採用をrollbackせずTTL cleanup
 
+### 新規client DBの初回同期
+
+**確定:** 新規client DBではcursorを未設定とし、初回同期に通常Pullを使用しない。必ずFull Resyncから開始する。
+
+```text
+新規 user DB
+cursor = 未設定
+↓
+Full Resync
+↓
+current active canonical取得
+↓
+staging完了後local canonicalへ原子的採用
+↓
+cursor = snapshotSeq
+↓
+以後通常Pull
+```
+
+- `cursor=0` を初回同期用の特別値として使用しない
+- cursor未設定はFull Resync必須状態を表す
+- Full Resync完了前に通常Pullへ移行しない
+- Full Resync完了時に初めて有効なcursorを保存する
+- 以後の通常同期はそのcursorを基準にPull→Push→Pull
+
+根拠: SyncChangeLogは90日保持のため、cursor=0から履歴だけを再生しても90日より前に作成され現在もactiveなentityを新規clientへ復元できない。新規clientは履歴ではなく現在canonicalから開始する必要がある。
+
 ## 14. tombstone / SyncChangeLog purge
 
 保持:
@@ -268,10 +296,7 @@ payload
 - purge済みtombstoneのstale local entityはFull Resyncのcanonical rebuildで消える
 - reserved UNASSIGNEDはpurge対象外
 
-### Pull可否とpurge競合
-
-**確定:** 通常Pull可否は「90日ちょうど」のinclusive/exclusive判定ではなく、対象Userのcursor以降に必要なSyncChangeLogが実際に保持されているかで判定する。
-
+Pull可否:
 ```text
 必要なchangeがすべて保持されている
 → 通常Pull
@@ -280,12 +305,9 @@ payload
 → FULL_RESYNC_REQUIRED
 ```
 
-- 90日はpurge jobの保持目安であり、同期プロトコルの安全性判定そのものではない
-- Pullとpurgeが競合した場合はserverのtransaction/読み取り時点で保持されているlog範囲を基準とする
-- purgeとPullの競合で欠落可能性がある場合は通常Pullを続行せずFull Resyncへ倒す
-- cursor有効性はDB全体の最古syncSeqではなく、そのUserについて必要なretained logが連続して存在するかで評価する
-
-根拠: 時刻境界の微差やpurge job実行タイミングをclient-visible protocolへ持ち込まず、change欠落を起こさないことを優先するため。
+- 90日はpurge jobの保持目安でありprotocol安全性判定そのものではない
+- Pullとpurgeが競合した場合はserverのtransaction/読み取り時点のretained logを基準とする
+- cursor有効性は対象Userについて必要なretained logが連続して存在するかで評価する
 
 ## 15. 認証・状態
 
@@ -349,9 +371,9 @@ ONLINE復帰時は自動でPull→Push→Pull。手動syncはfallback。
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**Pull cursorの初期値と「初回通常Pull」をどう定義するかを確定する。**
+**新規clientの初回Full Resyncが通信失敗した場合に、既存の「INITIAL_SYNC通信失敗 → OFFLINE_READY」規則をそのまま適用するかを確定する。**
 
-推奨候補は、新規client DBではcursorを持たず、初回同期は通常Pullの `cursor=0` 相当ではなくFull Resyncを使用する方式。これにより過去90日分だけのSyncChangeLogから新規clientを再構築する問題を避け、常に現在canonicalから開始できる。Full Resync完了後にcursor=snapshotSeqを設定し、以後通常Pullへ移る。
+初回DBはまだserver canonicalを一度も取得していないため、空DBのままOFFLINE_READYへ遷移して新規データを作成可能にすると、その後のFull Resync + Outbox reapplyで安全に統合できる一方、初回の既存serverデータを利用者が見られない状態で作業開始することになる。
 
 ## 20. HLDocS運用上の注意
 
