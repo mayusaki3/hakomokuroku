@@ -158,17 +158,37 @@ retryable=true
 - 無関係dependency branchは処理継続
 
 ### 親CONFLICT解決後の子Outbox再評価
-**確定:** conflict resolve responseをlocalへ適用する時点で、その親に依存するlocal dependency branchを再評価する。
-
-- 親の解決結果で子のbusiness payload/参照が変わる場合、Businessを更新する
-- 対応するOutbox.payloadを最新化する
-- contentHashを再計算する
+- conflict resolve responseをlocalへ適用する時点で、その親に依存するlocal dependency branchを再評価
+- 親の解決結果で子のbusiness payload/参照が変わる場合、Businessを更新
+- Outbox.payloadを最新化
+- contentHash再計算
 - outboxVersionを進める
-- 子自身のbaseRevisionは、子自身のlast known server baselineを維持する
+- 子自身のbaseRevisionはlast known server baselineを維持
 - 親解決を理由に子baseRevisionを前進させない
-- その後のPushで子自身について通常のrevision/contentHash規則により再評価する
+- 次回Pushで子自身のrevision/contentHash規則により再評価
 
-根拠: 親の解決結果は子の業務内容には影響し得るが、子自身のserver baselineが更新されたことにはならないため。baseRevisionを前進させると子自身の競合を隠す可能性がある。
+### 親CONFLICTをSERVER winsで解決し親がDELETE済みの場合
+**確定:** 親がserver側でDELETE済みと確定した場合、依存するlocal子entityの参照を予約 `UNASSIGNED` へ補正する。
+
+```text
+Box DELETE確定
+→ 参照するItem.boxId = UNASSIGNED
+
+BoxLocation DELETE確定
+→ 参照するBox.locationId = UNASSIGNED
+```
+
+補正は子entityの通常のlocal業務変更として扱う:
+- Business更新
+- Outboxを作成またはpayload更新
+- contentHash再計算
+- outboxVersion更新
+- 子自身のbaseRevisionは維持
+- 次回Pushで子自身の競合有無を通常判定
+
+子が既にCONFLICT中でも、参照補正は行い、最新local candidateとして既存CONFLICTへ引き継ぐ。
+
+根拠: 削除済み親を参照するlocal recordを残さず参照整合性を維持しつつ、子自身の別端末更新との競合検出を失わないため。
 
 ## 5. Push API
 
@@ -298,14 +318,14 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**親CONFLICTのSERVER winsで親がDELETE状態だった場合、依存する子の参照をどう補正するかを確定する。**
+**server側の親DELETE操作で子参照をUNASSIGNEDへ変更するとき、その子更新をSyncChangeLogへどう記録するかを確定する。**
 
 推奨候補:
-- Boxがserver DELETEで確定した場合、そのBoxを参照するlocal Itemは `boxId=UNASSIGNED` へ補正
-- BoxLocationがserver DELETEで確定した場合、そのLocationを参照するlocal Boxは `locationId=UNASSIGNED` へ補正
-- これらはlocal業務変更としてBusiness/Outbox/contentHash/outboxVersionを更新
-- 子自身のbaseRevisionは維持
-- その後のPushで子自身の競合有無を通常判定
+- 親DELETEと同一server transactionで、影響する各子entityを通常UPDATEとしてrevision+1
+- 各子に個別syncSeqを採番し、SyncChangeLogへUPSERTを記録
+- 親DELETE自身にも別syncSeqを採番しDELETEを記録
+- これにより他deviceはPullだけで参照補正結果を再現できる
+- transaction内の採番順は「子参照補正 → 親DELETE」を推奨し、Pull適用途中でも削除済み親を参照する時間を最小化する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
