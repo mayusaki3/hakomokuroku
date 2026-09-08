@@ -141,29 +141,32 @@ BoxLocation → Box → Item
 - remapは再入可能・反復可能な同期回復処理
 
 ### 同一Push batch内の親ID_COLLISION
-確定:
 - 親operationが `ID_COLLISION` になったdependency branchでは、旧親IDを参照する子operationをserverは適用しない
-- 子operationは以下を返す
+- 子operation:
+```text
+REJECTED
+errorCode=DEPENDENCY_NOT_AVAILABLE
+retryable=true
+```
+- clientは親のlocal ID remap完了後、更新済みOutboxから次回Pushで子を再送
+- 無関係branchは処理継続
 
+### 同一Push batch内の親CONFLICT
+**確定:** 親operationが `CONFLICT` になったdependency branchでは、未解決の親を参照する子operationを適用しない。
+
+子operation:
 ```text
 REJECTED
 errorCode=DEPENDENCY_NOT_AVAILABLE
 retryable=true
 ```
 
-- clientは親のlocal ID remapを完了後、更新済みOutboxから次回Pushで子を再送
+- 親CONFLICT解決後、clientは最新local Outbox状態で子operationを再Pushする
+- 親がSERVER winsなら、その解決後に採用されたserver canonicalを基準に子の参照/Outboxを再評価する
+- 親がCLIENT winsなら、確定した親canonicalを基準に子を再送する
 - 無関係dependency branchは処理継続
 
-例:
-```text
-Box A → ID_COLLISION
-Item A1 → DEPENDENCY_NOT_AVAILABLE
-
-Box C → APPLIED
-Item C1 → APPLIED
-```
-
-根拠: serverは同batch内ではclient側の新IDを知らないため、旧ID参照の子を適用すると参照整合性を壊す。既存の「失敗はdependency branchだけを止める」原則にも一致する。
+根拠: 親のcanonical内容・存在状態が未確定な段階で子を先に適用すると、競合解決結果と参照関係が食い違う可能性があるため。既存の「失敗はdependency branchだけを止める」原則にも一致する。
 
 ## 5. Push API
 
@@ -198,6 +201,7 @@ serverPayload // 必要時
 - idempotencyは revision + contentHash + SyncConflict
 - create/update依存順 = BoxLocation → Box → Item
 - 一つの失敗は依存branchだけを止める
+- 親がID_COLLISION/CONFLICTなら同batchの依存子はDEPENDENCY_NOT_AVAILABLE
 
 ## 6. SyncConflict
 
@@ -257,7 +261,7 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 - active論理データのみ
 - tombstone / Outbox / SyncConflict / SyncChangeLog / cursor / revision / syncSeq等は含めない
 - restoreは通常activeデータとして扱う
-- 同一ID + 同一hash = 同一
+- 同一ID + 同一hash = 同一データ
 - 同一ID + 異なるhash = import側で新ID発行 + 参照remap
 
 ## 10. 現行実装との主要差異
@@ -292,13 +296,13 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**親operationがCONFLICTになった同一Push batchで、その親を参照する子operationをどう扱うかを確定する。**
+**親CONFLICT解決後に、子Outboxの参照内容やbaseRevisionをどの時点で再評価するかを確定する。**
 
 推奨候補:
-- ID_COLLISIONと同様、親CONFLICTが未解決の間は子operationを適用しない
-- 子は `DEPENDENCY_NOT_AVAILABLE / retryable=true`
-- 親CONFLICT解決後、local Outboxの最新参照状態で子を再Push
-- 無関係branchは継続
+- conflict resolve response適用時に、影響するlocal dependency branchを再評価する
+- 子のbusiness payloadが親の解決結果により変化する場合はOutbox.payload/contentHash/outboxVersionを更新
+- 子自身のbaseRevisionは、子自身のlast known server baselineを維持し、親解決を理由に前進させない
+- その後のPushで通常のrevision/contentHash規則により再評価
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
