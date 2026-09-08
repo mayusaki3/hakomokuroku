@@ -93,8 +93,34 @@ PullだけでOutbox.baseRevisionを前進させない。
 - CREATE送信成功・response lost後のlocal DELETEも同じ経路で吸収
 - `hasBeenPushed` 等の追加状態は持たない
 
+### baseRevision=0 DELETEとserver active同ID
+**確定:** `baseRevision=0` のDELETE Pushで、serverに同じIDのactive entityが存在する場合、そのserver entityは削除しない。
+
+```text
+serverに同IDなし
+→ UNCHANGED
+
+serverに同ID activeあり
+→ REJECTED
+   errorCode=ID_COLLISION
+   retryable=false
+```
+
+背景には次の2ケースがあり、現在の `revision + contentHash` だけでは安全に区別できない。
+
+```text
+A: CREATEがserverで成功 → response lost → local DELETE
+B: 未送信local entityをDELETE → 偶然serverに別entityが同IDで存在
+```
+
+Aなら削除したいが、Bで削除すると別entityを誤削除する。このためv0.8では誤削除防止を優先する。
+
+clientは既存のID_COLLISION回復処理を適用し、local candidate側を新IDへremapする。persistentなprocessed-operationId履歴や追加の「CREATE成功証跡」は導入しない。
+
+根拠: response lostを完全吸収するためだけに永続idempotency履歴を追加すると同期モデルが複雑化する。一方、誤削除は回復困難なデータ損失につながるため、安全側に倒す。
+
 ### ID_COLLISION
-baseRevision=0で同じIDがserverに存在:
+baseRevision=0で同じIDがserverに存在するCREATE/UPDATE:
 ```text
 hash同一 → UNCHANGED
 hash不一致 → REJECTED / ID_COLLISION / retryable=false
@@ -215,7 +241,7 @@ DB transactionのcommit順を基準に処理し、同時実行専用の別競合
 8. 親DELETEを続行して同一transactionでcommit
 
 ### cascade後にConflict内容が一致した場合
-**確定:** cascade等によりSyncConflictのserver snapshotを更新した結果、`serverContentHash == clientContentHash` になった場合、そのSyncConflictは実質的に消滅したものとして自動解決する。
+cascade等によりSyncConflictのserver snapshotを更新した結果、`serverContentHash == clientContentHash` になった場合、そのSyncConflictは実質的に消滅したものとして自動解決する。
 
 server側:
 ```text
@@ -232,8 +258,6 @@ client側Outbox:
 - `current outboxVersion > candidate outboxVersion` の場合は、競合発生後の新しいlocal編集が存在するためOutboxを削除しない
 - newer Outboxは最新candidateとして次回Push/競合再評価へ回す
 - hashが異なる場合はSyncConflictを維持する
-
-根拠: 内容が既に一致している場合に利用者へ不要な競合確認を要求せず、一方でoutboxVersionによって競合発生後の新しいlocal編集を保護するため。
 
 ## 5. Push API
 
@@ -364,15 +388,12 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 
 ## 12. 次のアクション
 
-次の設計判断点:
-**baseRevision=0 のDELETE Pushで、serverに同じIDのactive entityが存在する場合の扱いを確定する。**
+同期設計の主要未確定点を再点検する。特に以下を確認する:
+- `ID_COLLISION` 回復後のDELETE candidateの扱いに矛盾がないか
+- reserved `UNASSIGNED` entityのserver/local同期上の生成・保護方法
+- SyncChangeLog / tombstone purge / Full Resync境界に未定義が残っていないか
 
-背景:
-- 未同期新規entityを削除した場合もOutbox DELETEを送る方針
-- 一方、CREATEがserverで成功したがresponse lostした直後にlocal DELETEされた場合、serverには同じIDのactive entityが存在し得る
-- true ID collisionとの区別が、現在の `revision + contentHash` だけでは曖昧
-
-このDELETE固有ケースを確定後、同期設計の主要未確定点を再点検する。
+問題がなければ、全体アーキテクチャ確定から「データモデル・同期仕様確定」へ進む。
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
