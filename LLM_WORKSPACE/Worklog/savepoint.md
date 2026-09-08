@@ -171,15 +171,12 @@ server側:
 
 CREATE送信済みだがresponse lostのケースも同じDELETE経路で安全に吸収する。`hasBeenPushed` 等の追加状態は持たない。IDは再利用しない。
 
-根拠: DELETE経路を一本化でき、未送信・送信結果不明を区別する追加stateが不要になるため。
-
 ### ID_COLLISION 回復
 `baseRevision=0` のCREATE/UPDATEで同一user scopeの同一IDがserverに既存の場合:
 
 ```text
 server contentHash == client contentHash
 → UNCHANGED
-→ 過去のCREATE成功後response lost等として吸収
 
 server contentHash != client contentHash
 → REJECTED
@@ -195,12 +192,12 @@ Push responseは回復に必要なserver canonicalを返す:
 - syncSeq
 - contentHash
 
-clientは同一IndexedDB transactionで以下を実施:
-1. 衝突したlocal candidateの旧ID Aを新ID Bへ再割り当て
+clientは同一IndexedDB transactionで:
+1. 衝突local candidateの旧ID Aを新ID Bへ再割り当て
 2. Aを参照するlocal business recordをB参照へ変更
 3. 参照変更したentityのcontentHashを再計算
 4. 関連OutboxのentityId/payload/contentHashを更新しoutboxVersionを進める
-5. 旧ID Aにはresponseで得たserver canonicalを配置
+5. 旧ID Aにはresponseのserver canonicalを配置
 6. AのSyncStateをserver metadataで作成/更新
 7. Bは新規local entityとしてbaseRevision=0で次回Push
 
@@ -213,7 +210,30 @@ clientは同一IndexedDB transactionで以下を実施:
 
 通常Pullだけにserver canonical復元を依存しない。衝突server recordのsyncSeqが現在cursorより古い場合、通常Pullでは取得されないため。
 
-根拠: local candidate保存・参照整合性・server canonical復元を一度に保証し、ID衝突から自動回復可能にするため。
+### ID remap時の既存CONFLICT引継ぎ
+参照元entity自身が既にCONFLICT中でも、ID remapを止めない。
+
+例:
+```text
+Box A → Bへremap
+Item X は既にCONFLICT中
+Item X.boxId = A → B
+```
+
+clientはlocal transaction内で:
+- Businessの参照をBへ更新
+- Outbox.payloadを最新candidateへ更新
+- contentHash再計算
+- outboxVersionを進める
+- baseRevisionは元の同期baselineを維持
+- 既存SyncConflictは削除しない
+
+次回Push時に同一entityのSyncConflict client snapshotを最新candidateへ更新し、最新server状態と再比較する。
+
+原則:
+**ID remapはlocal参照整合性のため必ず完了し、既存の同期CONFLICTとは独立して扱う。remapによる変更は最新local candidateとして競合処理へ引き継ぐ。**
+
+根拠: Aを参照したままのrecordを残さず、同時に本来の競合情報も失わないため。
 
 ## 7. Push API
 
@@ -458,12 +478,13 @@ INITIAL_SYNCは閲覧/検索可、書込不可。通信系失敗ならOFFLINE_RE
 ## 15. 次のアクション
 
 次の設計判断点:
-**ID_COLLISION remap中に、参照元entity自身にも同時にID_COLLISIONやCONFLICTがある場合の処理境界を確定する。**
+**ID_COLLISION remapが複数entityへ連鎖する場合の処理方法を確定する。**
 
 推奨候補:
-- remap自体はlocal transactionで完了させる
-- 参照元Outboxのserver側競合状態は消さず、新しいpayload/contentHash/outboxVersionで次回Pushに再評価
-- 既存SyncConflictがある参照元は、そのlocal candidate更新後に同じconflict rowを最新client snapshotへ更新する
+- remapは単一entityだけでなく、参照関係を辿ってlocal dependency graph単位で処理する
+- 1回のlocal transaction内で可能な範囲の全remapとOutbox更新を原子的に完了する
+- 新しく割り当てたID自体がlocal DB内で衝突した場合は再生成し、server照合は次回Pushで行う
+- server側でさらにID_COLLISIONが起きれば同じ手順を再適用する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
