@@ -107,33 +107,47 @@ snapshotにも有効な親Outboxにも親なし
 - baseRevision維持
 
 ### Outbox親DELETE時の正規化
-**確定:** parentのlatest Outbox operationがDELETEの場合、そのparentは参照可能な親として扱わない。子entity本体は保持し、参照のみreserved `UNASSIGNED`へ補正する。
+parentのlatest Outbox operationがDELETEの場合、そのparentは参照可能な親として扱わない。子entity本体は保持し、参照のみreserved `UNASSIGNED`へ補正する。
 
+### Outbox operation畳み込み
+**確定:** Outboxは履歴ではなく「latest unsynced candidate」を保持する。同一entityにつき1 rowとし、operationも最新local intentへ畳み込む。
+
+畳み込み規則:
 ```text
-Box-A Outbox = DELETE
-Item-A Outbox = CREATE/UPDATE
-Item-A.boxId = Box-A
-↓
-Box-Aは参照可能親ではない
-↓
-Item-Aは保持
-Item-A.boxId = UNASSIGNED
-Outbox.payload更新
-contentHash再計算
-outboxVersion++
-baseRevision維持
+CREATE + 編集
+→ CREATEのままpayloadを最新化
+→ baseRevision=0維持
+
+CREATE + DELETE
+→ DELETEへ変更
+→ baseRevision=0維持
+
+UPDATE + 編集
+→ UPDATEのままpayloadを最新化
+→ baseRevision維持
+
+UPDATE + DELETE
+→ DELETEへ変更
+→ baseRevision維持
+
+DELETE + 明示的復活
+→ UPDATEへ変更
+→ 元のbaseRevision維持
 ```
 
-BoxLocation DELETEとBoxの関係も同じ:
-```text
-BoxLocation-A Outbox = DELETE
-Box-A.locationId = BoxLocation-A
-→ Box-A.locationId = UNASSIGNED
-```
+共通規則:
+- 同一 `(entityType, entityId)` につきOutbox 1 row
+- local操作のたびに `outboxVersion++`
+- CREATE/UPDATEでは最新business payloadを保存しcontentHash再計算
+- DELETEではdelete-state contentHashを保存しpayloadは原則null
+- `createdAt` はそのOutbox rowが最初に作られた時刻として保持し、畳み込みごとに作り直さない
+- baseRevisionは、そのlocal change chainが開始したserver baselineを維持する
+- Pullを受けただけではbaseRevisionを変更しない
+- Push成功時だけ、outboxVersion一致を確認したうえでOutbox削除または新しいcandidateのbaseline前進を行う
 
-この処理はFull Resync採用transaction内で行う。通常の親DELETE cascadeと同一の意味に統一し、Full Resync固有の別解釈は作らない。
+特に `CREATE → DELETE` でもOutbox row自体を消さない。Push CREATE成功後にresponseだけ失われている可能性があるため、baseRevision=0 DELETEをserverへ送信し、server側の既定規則で `server absent → UNCHANGED / server active same ID → ID_COLLISION` と判定する。
 
-根拠: DELETEはその親を消すというlocalの最新意図であり、同じOutboxに存在することだけを理由に参照可能な親として復元するとlocal意図と矛盾する。子のbusiness contentを保持しつつ参照のみUNASSIGNEDへ補正することで、データ損失を避けながら参照整合性を維持できる。
+根拠: Outboxをevent log化せずlatest candidateに限定することで、sync state transitionを単純化できる。一方でCREATE直後のDELETEを消してしまうと、既にserverへCREATEが反映済みでresponseのみ失われたケースでserver entityが残存するため、DELETE candidateは保持する必要がある。
 
 ### retention
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -175,16 +189,9 @@ Box-A.locationId = BoxLocation-A
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**同一entityのOutbox operationをCREATE / UPDATE / DELETE間でどう正規化するかを確定する。**
+**DELETE後に明示的復活したentityで、Business側のcreatedAtを元の値として維持するか、復活時刻へ更新するかを確定する。**
 
-推奨候補:
-- CREATE後の編集 → CREATEのままpayloadを最新化
-- CREATE後のDELETE → DELETEへ置換し、baseRevision=0を維持
-- UPDATE後の再編集 → UPDATEのままpayloadを最新化
-- UPDATE後のDELETE → DELETEへ置換、既存baseRevision維持
-- DELETE後に同じentityを明示的に復活させた場合 → UPDATEへ戻し、元のbaseRevisionを維持
-
-Outboxは履歴ではなく「latest unsynced candidate」であるため、同一entityにつき1rowを維持し、operationも最新local intentへ畳み込む方式を推奨する。
+推奨候補は、同一IDの復活は同一business entityの継続として扱い、`createdAt` は元の値を維持、`updatedAt` のみ復活操作時刻へ更新する方式。server側でもCLIENT winsでdeleted entityを復活させる際にcreatedAtを維持する。これによりcreatedAtの意味を「このIDのentityが最初に生成された時刻」と一貫させられる。
 
 ## 7. HLDocS運用上の注意
 
