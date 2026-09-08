@@ -143,20 +143,10 @@ Full Resync通信失敗
 → online復帰後Full Resync再試行
 ```
 
-一方、過去にFull Resyncまたは有効な同期でcanonicalを確立済みの既存user DBでは、INITIAL_SYNC中に通信系失敗した場合:
-
-```text
-既存DB / canonical確立済み
-同期通信失敗
-→ OFFLINE_READY
-→ 閲覧・編集可
-→ local変更はOutboxへ保存
-```
-
-この判定は単にDBが存在するかではなく、**有効なcanonical/cursorが一度確立済みか**で行う。
+既存user DBではcanonical確立済みなら通信系失敗時に `OFFLINE_READY` へ移行し、閲覧・編集を継続できる。
 
 ### 既存canonicalありのFull Resync失敗
-**確定:** 既存user DBでcursor失効等によりFull Resyncが必要になった場合、Full Resyncはstagingへ取得し、完了するまで既存Business / SyncState / cursor / Outboxを変更しない。
+**確定:** cursor失効等でFull Resyncが必要になっても、完了するまで既存Business / SyncState / cursor / Outboxを変更しない。
 
 ```text
 既存canonicalあり
@@ -167,19 +157,41 @@ Full Resyncをstagingへ取得
 ↓
 通信途中で失敗
 ↓
-未完成stagingはcanonicalとして採用しない
-既存Business / SyncState / cursor / Outboxは維持
+未完成stagingは未採用
+既存Business / SyncState / cursor / Outbox維持
 ↓
 OFFLINE_READY
 ```
 
-- 旧cursorは通常Pullには無効でも、既存canonicalのlocal利用状態を表すためFull Resync完了まで保持する
-- 通信復帰後はFull Resyncを再開またはsnapshot期限切れなら新規snapshotで再試行する
-- offline中の編集は通常どおりBusiness + Outboxへ反映する
-- Full Resync完了時は、保存していたOutboxを新canonicalへreapplyしてからPushし、final Pullで収束する
-- stagingの一部pageをBusiness tableへ逐次混在させない
+### Full Resync中のlocal編集
+**確定:** 既存canonicalを持つuser DBでは、Full Resyncのstaging取得中も通常編集を許可する。
 
-根拠: Full Resyncが未完了の段階で旧canonicalを破棄すると、一時的な通信障害だけで既存のoffline利用能力まで失う。stagingとcanonicalを分離し、完全snapshotのみ原子的採用することで安全にoffline-first動作を維持できる。
+```text
+既存canonical
+↓
+Full Resync開始
+├─ server snapshot → stagingへ取得
+└─ user編集 → Business + Outboxへ保存
+↓
+Full Resync取得完了
+↓
+stagingを新canonicalとして採用
+↓
+その時点の最新Outboxをreapply
+↓
+Push
+↓
+final Pull
+```
+
+- Full Resync取得中も既存Businessをuser-visible working stateとして使用する
+- local編集は通常どおりBusiness + Outboxを同一transactionで更新する
+- snapshot開始後に作成・編集・削除されたcandidateも最新Outboxとして保持する
+- stagingへ取得したserver snapshotにlocal編集を直接混ぜない
+- snapshot採用時にその時点の最新Outboxを新canonicalへreapplyする
+- 新規DBの初回Full Resyncだけは既存確定どおり完了まで書き込み不可
+
+根拠: stagingとOutboxを分離すれば、Full Resync取得中にアプリ全体を読み取り専用にする必要がなく、長時間同期でもoffline-firstの操作性を維持できる。local編集はOutboxに残るためsnapshot採用で失われない。
 
 ### tombstone / SyncChangeLog purge
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -232,9 +244,9 @@ OFFLINE_READY
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**Full Resync中に利用者がlocal編集を行った場合、その編集を許可するかを確定する。**
+**Full Resync snapshot採用と、その時点の最新Outbox reapply / cursor更新をどのlocal transaction境界で行うかを確定する。**
 
-推奨候補は、既存canonicalを持つDBではFull Resyncのstaging取得中も通常編集を許可し、編集はBusiness + Outboxへ保存する方式。Full Resync snapshot採用時に、その時点の最新Outboxを新canonicalへreapplyするため、取得開始後の編集も失われない。新規DBは既存確定どおり初回Full Resync完了まで書き込み不可。
+推奨候補は、`staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に行う方式。user編集transactionと直列化されるため、採用直前にcommit済みの編集はlatest Outboxとしてreapplyされ、採用transaction後にcommitする編集は新canonical上へ通常編集として適用される。これによりsnapshot採用とlocal編集のraceで編集が消える隙間を作らない。
 
 ## 7. HLDocS運用上の注意
 
