@@ -19,26 +19,37 @@
 - v0.8 / v1.0 リリース区分決定
 - 主要要件ドラフト整理
 - アイテム「取り出す」と「削除する」の区別
-- 同期時刻の責務分離
 - revision / baseRevisionによる競合検出
 - contentHashによる内容比較
 - syncSeq / SyncChangeLogによる差分Pull
 - tombstone保持方針
 - SyncConflictによる競合一時保持・再送冪等性
 - stale SyncConflictの最新化・再比較方針
+- SyncConflictは1 entityにつき未解決1件、statusなし
 - SyncChangeLog 90日、tombstone 30日、古いcursorはFULL_RESYNC_REQUIRED
 - ローカルOutboxとfull resync時の再適用
+- 同期中再編集を保護するOutbox snapshot / outboxVersion
 - マルチユーザー `(userId,id)` 識別
 - Box / BoxLocationそれぞれの予約 `UNASSIGNED`
 - BoxLocationを独立したフラットな置き場所マスタとする方針
 - BoxLocation.nameのユーザー内一意・後勝ち自動改名
+- BoxLocation.nameのtrim + Unicode NFC正規化
+- BoxLocationを `id / name / note / thumbs + 共通同期メタデータ` とする方針
+- BoxLocation写真はv1.0 Vision対象外
 - バックアップhashを同期contentHashと共通化
+- 通常バックアップはactiveな論理データのみを対象とし、tombstone・Outbox・SyncConflict・SyncChangeLog・cursor等の同期内部状態を含めない
 - ローカルIndexedDBをログインユーザーごとに分離する方針
 - IndexedDB分離キーとして既存Prisma `User.id` の不変IDを使用する方針
+- 新DB名を概念上 `hk-local-v2-<User.id>` とし、旧 `hk-local-v1` は移行せず破棄可能とする方針
 - オフライン利用はオンライン認証成功後の実行セッション中のみ許可
 - アプリ終了後は再度オンライン認証必須
 - オフライン中の変更はOutboxへ保持し、次回オンライン認証成功直後に同期
 - 通常同期順序を `Pull → Push → Pull` とする方針
+- 初回同期中は閲覧可・編集不可、通信系失敗時はOFFLINE_READYへ移行して編集可
+- 通信復旧時は自動同期、手動同期ボタンをフォールバックとして持つ
+- 認証状態・通信状態・同期状態・利用フェーズを分離して管理する方針
+- 通信系エラーと認証・データ・競合エラーを分離する方針
+- PullはsyncSeqでページングし、各ページのローカル適用成功後だけcursorを進める方針
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -71,11 +82,16 @@
 - 新規Boxは `locationId=UNASSIGNED`
 - UNASSIGNED BoxLocationは予約レコードで通常削除・編集不可
 - BoxLocation削除 = 参照BoxをUNASSIGNEDへ移動後、場所をtombstone化
-- 基本項目: id, name, note, thumbs, meta, aiState, aiUpdatedAt + 共通同期メタデータ
+- 基本項目: `id`, `name`, `note`, `thumbs` + 共通同期メタデータ
+- `meta`, `aiState`, `aiUpdatedAt` はBoxLocation固有項目として持たせない
 - codeは持たない
+- v1.0 Vision対象は箱写真・アイテム写真とし、場所写真は対象外
 - nameはユーザー内一意
+- nameは前後空白trim後にUnicode NFC正規化し、大小文字は区別、内部空白等は保持
+- UNASSIGNED予約判定も同じ正規化後の値で行う
 - 同名発生時は後からサーバー受理する名称を優先し、既存側を `name(n)` へ自動改名
 - nは未使用の最小正整数
+- suffixは正規化済み名称全体へ追加し、既存末尾 `(n)` は解析・除去しない
 - 後勝ちはupdatedAtではなくサーバー受理順
 - 自動改名は通常の業務更新としてrevision/contentHash/syncSeq等を更新し、新規/変更側の保存と同一トランザクション
 - UNASSIGNEDは予約名で通常レコードには使用不可
@@ -84,8 +100,7 @@
 - BoxLocationの目的は「どの部屋・棚等に箱があるか」を表すことで、階層管理自体は目的ではない。
 - フラット構造なら登録・移動・削除・同期・バックアップ・UIを単純化できる。
 - 引っ越しでは箱詰め時点で置き場所未定が通常なのでUNASSIGNEDを通常状態として扱う。
-- 名前一意により階層なしでも選択肢を識別できる。
-- 同名時の後勝ち自動改名により、複数端末のオフライン作成でもユーザー操作を止めず一意性を維持できる。
+- 場所写真は確認用途として保持するが、Vision対象まで広げるとv1.0の実装・プロンプト・テスト範囲が増える割に主要用途への効果が小さい。
 
 ### 同期メタデータ
 Box / Item / BoxLocation:
@@ -98,6 +113,7 @@ Box / Item / BoxLocation:
 - syncSeq
 
 未同期新規 = revision 0、初回サーバー登録成功 = revision 1。
+`baseRevision` はPush/クライアント同期状態として扱う。
 
 ### 競合
 ```text
@@ -112,19 +128,25 @@ baseRevision != server.revision
 
 updatedAtは競合勝者決定には使用しない。
 
+### SyncConflict
+- 監査履歴ではなく未解決競合の一時保持領域
+- `(userId, entityType, entityId)` ごとに未解決1行のみ
+- statusは持たない
+- 解決時は行を削除
+- 同じPush再送は同じconflictIdを返す
+- 最新client候補が再送された場合は同じ行を更新する
+- client勝ち時は正本更新 + revision + syncSeq + SyncChangeLog + conflict削除を原子的に実行
+- server勝ち時は正本を変更せずconflictを削除
+
 ### stale SyncConflict
 - 解決時にcurrent server revisionとserverRevisionAtConflictを再確認
 - 同じなら通常解決
 - 進んでいれば既存SyncConflictのserver snapshotを最新正本へ更新
 - 新しいSyncConflict行は増やさない
 - 最新contentHashで再比較
-- 同一なら自動解消しSyncConflictとOutboxを削除
+- 同一なら自動解消しSyncConflictを削除し、該当Outbox snapshotを成功扱い
 - 不一致なら最新client/server版を再提示
 - 古いsnapshotによる上書きを禁止
-
-根拠:
-- 競合表示後に別端末更新が入ってもデータを失わないため。
-- SyncConflictは監査履歴ではなく未解決状態の保持領域なのでstaleごとに履歴行を増やす必要がないため。
 
 ### SyncChangeLog / syncSeq
 - SyncChangeLogが変更履歴の正本
@@ -132,7 +154,29 @@ updatedAtは競合勝者決定には使用しない。
 - PullはuserIdで絞り `syncSeq > cursor`
 - SyncChangeLog保持90日
 - stale cursorはFULL_RESYNC_REQUIRED
+- cursor有効性は対象ユーザーの保持ログで判断
 - syncEpochなし
+- record更新とchange log追加は同一トランザクション
+
+### Pullページング / cursor
+Pull response概念:
+
+```text
+changes[]
+nextCursor
+hasMore
+```
+
+- syncSeq順でページングする
+- 1ページの固定上限を設ける（初期候補500件程度）
+- cursorはレスポンス受信時には更新しない
+- そのページのIndexedDBへの適用が正常完了した後にだけ `cursor = nextCursor` とする
+- ローカル適用失敗時は旧cursorを維持し、同じ変更を再取得可能にする
+- ページ適用とcursor更新は可能な限り同一ローカルトランザクション境界で扱う
+
+根拠:
+- 取得済みだが保存できなかった変更の取りこぼしを防ぐため。
+- SyncChangeLogが大量でもレスポンスサイズを制御できるため。
 
 ### 削除
 - deletedAtでtombstone化
@@ -145,53 +189,58 @@ updatedAtは競合勝者決定には使用しない。
 - 同一entityの未同期変更は最新状態へ集約、最初のbaseRevision維持
 - 成功/競合解決まで保持、自動期限削除なし
 - full resyncでも保持して再適用
+- 各entityのOutboxにdevice-local単調増加 `outboxVersion` を持つ
+- 同期開始時に送信対象Outboxをsnapshot化する
+- Push成功時、現在のOutbox.outboxVersionが送信snapshotと一致する場合のみ削除する
+- 同期中に再編集されversionが進んでいた場合、新しいOutboxを保持する
+- 先行version成功で返ったserver revisionを、後続versionのbaseRevisionへ安全に前進させることができる
+- entityIdだけを条件にPush成功後のOutboxを削除してはならない
 
-### contentHash / backup
+### contentHash
 - 業務内容 + active/deleted状態をhash対象
 - ID/userId/各種時刻/revision/syncSeq/contentHash自身は除外
+- deletedAtは時刻値ではなく削除状態だけ反映
+- 順序非依存配列はソート
+- object key順を決定化
 - canonical JSON + SHA-256等
-- backupの衝突判定も完全に同一アルゴリズム
-- backupは元ID維持。同一ID+同一hashは同一、同一ID+異なるhashはimport側へ新ID
-- ID変更時はItem.boxId、Box.locationId等を再マッピング
+
+### backup
+- 同期と完全に同じcontentHashアルゴリズムを利用
+- 元IDを維持
+- 同一ID+同一hashは同一データ
+- 同一ID+異なるhashはimport側へ新IDを発行し参照を再マッピング
+- 通常バックアップは `deletedAt == null` の現在有効な論理データのみを含む
+- tombstoneは含めない
+- Outbox / SyncConflict / SyncChangeLog / sync cursor / revision / syncSeq等の同期内部状態は含めない
+- リストアされたデータは移行先の通常データとして扱い、同期状態は移行先で再構築する
 
 ### ユーザー分離
 - サーバー上の業務レコード識別 = `(userId,id)`
+- ここでサーバー内部ユーザー識別には既存Prisma `User.id` を用いる
+- ログイン用 `User.userId` と内部 `User.id` を仕様上明確に区別する
 - 同一ユーザー複数端末は同一データ空間
 - 異なるユーザーは同一id可
 - PushのuserIdはpayloadではなく認証結果から確定
 
 ### ローカルユーザー分離
-- 1つのIndexedDBをuserId列で共有せず、ログインユーザーごとにIndexedDB自体を分離する。
-- DB分離キーにはサーバー内部の不変ユーザーIDを使用する。
-- 現行Prismaには `User.id String @id @default(cuid())` とログイン用 `User.userId String @unique` が既に分離されているため、新しい識別子は追加せず既存 `User.id` を不変IDとして再利用する。
-- IndexedDB名の概念例: `hk-local-v1-<User.id>`。
-- boxes / items / boxLocations / tags / Outbox / sync cursor等は、そのユーザー専用DBまたはそのユーザー専用同期状態として保持する。
-- ログアウトしてもユーザー専用DBは削除せず、再ログイン時に同じDBを再利用する。
-- 別ユーザーへログインした場合は別DBを開き、前ユーザーのローカルデータを参照・Pushしない。
-
-根拠:
-- ログインIDや表示名が変更されてもローカルDBとの対応を維持できるため。
-- 新しいID体系を増やさず既存User主キーを再利用できるため。
-- オフライン未同期データをアカウント切替後もユーザーごとに安全に保持するため。
-- Outboxやcursorのユーザー取り違えによる誤Pushを防ぎやすいため。
+- 1つのIndexedDBをuserId列で共有せず、ログインユーザーごとにIndexedDB自体を分離する
+- DB分離キーには既存Prisma `User.id` を使用する
+- 新DB名の概念: `hk-local-v2-<User.id>`
+- 旧固定DB `hk-local-v1` の現データは破棄可能で、移行処理を実装しない
+- 旧DBが残存していても新実装では読み取らない
+- boxes / items / boxLocations / tags / Outbox / sync cursor等はユーザー専用DB/状態に保持
+- ログアウトしてもユーザー専用DBは削除せず、再ログイン時に再利用
+- 別ユーザーへログインした場合は別DBを開き、前ユーザーのローカルデータを参照・Pushしない
 
 ### オフライン利用と再認証
-- オフライン利用は、その起動中にオンライン認証へ成功したユーザーだけに許可する。
-- オンライン認証成功後は、通信断になっても同じ実行セッション中であればローカルDBを利用できる。
-- アプリ終了・再起動後は、ローカルDBが残っていてもオンライン認証に成功するまで利用不可とする。
-- オフライン用PINや永続オフライン認証情報は持たない。
-- オフライン中の登録・変更・削除はユーザー専用IndexedDBへ保存し、Outboxへ記録する。
-- アプリ終了時も未同期データとOutboxは削除しない。
-- 次回オンライン認証成功後、認証された `User.id` に対応するIndexedDBを開き、未同期Outboxを同期対象とする。
-- 認証されたユーザーと異なるIndexedDB/Outboxは開かず同期しない。
-
-根拠:
-- オフラインログイン機構を別途実装せず、オンライン認証をセキュリティ境界として明確にできるため。
-- 通信断中の作業継続というPWA要件を維持できるため。
-- アプリ終了後も未同期作業を失わず、次回の正規認証後に同期できるため。
+- オフライン利用は、その起動中にオンライン認証へ成功したユーザーだけに許可
+- オンライン認証成功後は、通信断になっても同じ実行セッション中であればローカルDBを利用可能
+- アプリ終了・再起動後はオンライン認証成功まで利用不可
+- オフライン用PINや永続オフライン認証情報は持たない
+- オフライン中の登録・変更・削除はOutboxへ記録
+- アプリ終了時も未同期データとOutboxは削除しない
 
 ### 通常同期サイクル
-通常の同期順序は以下とする。
 
 ```text
 オンライン認証成功
@@ -207,16 +256,90 @@ Pull
 同期完了
 ```
 
-- 最初のPullで他端末・サーバー側の最新変更を取得する。
-- Pull適用後もOutboxは保持し、未同期ローカル変更を再適用する。
-- PushではbaseRevision/revision/contentHashによる通常の競合判定を行う。
-- 最後のPullでPush結果、BoxLocation自動改名、他のサーバー側正規化結果をローカルへ反映する。
-- 最初のPullで `FULL_RESYNC_REQUIRED` の場合は、Outboxを保持したままFull Resync → Outbox再適用 → Push → 最終Pullへ移行する。
+- 最初のPullで他端末・サーバー側の最新変更を取得
+- Pull適用後もOutboxを保持し未同期ローカル変更を再適用
+- PushではbaseRevision/revision/contentHashによる競合判定
+- 最後のPullでPush結果・BoxLocation自動改名・server revision/syncSeq等を反映
+- FULL_RESYNC_REQUIRED時はOutbox保持 → Full Resync → Outbox再適用 → Push → 最終Pull
 
-根拠:
-- Push前に最新サーバー状態を取得することで、競合判定を最新正本に対して行えるため。
-- Push後に再Pullすることで、サーバー側で確定したrevision/syncSeqや自動改名等を端末へ確実に戻せるため。
-- Outboxを同期中も保持することで、オフライン変更を失わないため。
+### 状態管理
+1つの巨大な複合状態機械にはせず、責務を分離する。
+
+認証状態:
+```text
+LOCKED
+AUTHENTICATED
+```
+
+通信状態:
+```text
+ONLINE
+OFFLINE
+```
+
+同期状態:
+```text
+IDLE
+SYNCING
+SYNC_ERROR
+CONFLICT
+```
+
+利用フェーズ:
+```text
+LOCKED
+INITIAL_SYNC
+READY
+OFFLINE_READY
+```
+
+操作可否:
+- LOCKED: 閲覧不可、編集不可
+- INITIAL_SYNC: 閲覧・検索可、登録・編集・削除不可
+- READY: 閲覧・編集可
+- OFFLINE_READY: 閲覧・編集可
+- 初回以外のSYNCING / SYNC_ERROR / CONFLICTでは原則として通常操作を継続可能
+
+初回同期:
+```text
+LOCKED
+  ↓ online auth success
+INITIAL_SYNC
+  ├─ sync success → READY
+  ├─ 通信系失敗 → OFFLINE_READY
+  ├─ 401/403 → 認証再評価、必要ならLOCKED
+  ├─ データ不正/整合性エラー → 編集を解放せず初回同期エラー
+  └─ conflict → CONFLICT保持、アプリ全体はブロックしない
+```
+
+通信復旧:
+```text
+OFFLINE_READY
+  ↓ ONLINE検出
+SYNCING
+  ↓ Pull → Push → Pull
+READY
+```
+
+- 通信復旧時は自動同期
+- 手動同期ボタンをフォールバックとして用意
+
+### エラー分類
+OFFLINE系へ扱う一時障害:
+- ネットワーク断
+- DNS失敗
+- timeout
+- connection refused
+- 5xx等の一時的サーバー到達不能
+
+OFFLINE扱いにしない:
+- 401 / 403
+- 入力不正
+- データ整合性エラー
+- 仕様上のエラー
+- 競合
+
+401/403は認証再評価、競合はCONFLICTとして保持する。
 
 ## 5. 現行実装の主要差異
 
@@ -224,18 +347,24 @@ Pull
 2. Prisma `updatedAt @updatedAt` は確定したupdatedAt意味と不一致。
 3. Pushはrevision/contentHash競合未対応。
 4. Pullはtimestamp since方式。
-5. Outbox未実装。
-6. backupのphotoThumbs/thumbs不整合。
-7. backupにBoxLocationなし。
-8. replace restoreがIDを無条件再発行。
-9. Box削除がローカル物理削除。
-10. PrismaのBox / Item / BoxLocation idが全ユーザー共通PK。
-11. Push `where:{id}` + userId書換えに所有権侵害リスク。
-12. 現行BoxLocationはboxIdを持つBox従属モデルだが、確定要件では独立マスタ。
-13. 現行Box.location自由文字列は `locationId` 参照へ変更が必要。
-14. 現行Dexieは固定DB名 `hk-local-v1` を全ユーザーで共有する構造であり、ユーザー別DB分離への変更が必要。
-15. オフライン再起動時に認証なしでユーザーDBを開く方式は採用しない。
-16. 現行同期は `Pull → Push → Pull` とOutbox再適用を前提とした同期サイクルになっていない。
+5. PullのsyncSeqページング・適用成功後cursor更新が未実装。
+6. Outbox未実装。
+7. Outbox snapshot / outboxVersion未実装。
+8. backupのphotoThumbs/thumbs不整合。
+9. backupにBoxLocationなし。
+10. backupが確定したactive-only / sync内部状態除外方式になっていない。
+11. replace restoreがIDを無条件再発行。
+12. Box削除がローカル物理削除。
+13. PrismaのBox / Item / BoxLocation idが全ユーザー共通PK。
+14. Push `where:{id}` + userId書換えに所有権侵害リスク。
+15. 現行BoxLocationはboxIdを持つBox従属モデルだが、確定要件では独立マスタ。
+16. 現行Box.location自由文字列は `locationId` 参照へ変更が必要。
+17. 現行BoxLocationのmeta/AI関連項目は確定モデルと不一致。
+18. 現行Dexieは固定DB名 `hk-local-v1` を全ユーザーで共有する構造であり、ユーザー別 `hk-local-v2-<User.id>` への変更が必要。
+19. 旧 `hk-local-v1` の移行処理は不要。
+20. オフライン再起動時に認証なしでユーザーDBを開く方式は採用しない。
+21. 現行同期は `Pull → Push → Pull` とOutbox再適用を前提とした同期サイクルになっていない。
+22. 認証・通信・同期・利用フェーズの分離状態管理が未実装。
 
 ## 6. ロードマップ
 
@@ -257,17 +386,9 @@ Pull
 ## 7. 次のアクション
 
 次の設計判断点:
-**オンライン認証成功直後の初回同期が完了する前に、ユーザー操作を許可するか。**
+**Push APIのレスポンス形式・部分成功・再送冪等性を確定する。**
 
-候補:
-1. 初回同期完了まで編集操作を待たせる。
-   - ローカル状態と最新サーバー状態をそろえてから操作開始でき、競合とUI状態を単純化できる。
-2. 初回同期と並行して操作を許可する。
-   - 体感速度はよいが、Pull適用中の編集・Outbox生成・同一レコード更新の競合制御が複雑になる。
-3. 閲覧のみ先に許可し、編集は同期完了後に許可する。
-   - 起動体感と整合性の中間案。
-
-推奨は3。ローカルDBの一覧・検索は早く表示しつつ、登録・編集・削除など同期状態を変える操作は初回同期完了後に解放する。同期失敗・通信断の場合は、オンライン認証自体は成功済みなので、その実行セッションではオフライン編集モードへ移行可能とする余地がある。
+論理操作単位で独立処理する既決方針に合わせ、Pushバッチ全体をall-or-nothingにはせず、各Outbox snapshotごとに成功・競合・失敗を返す方式を検討する。
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
