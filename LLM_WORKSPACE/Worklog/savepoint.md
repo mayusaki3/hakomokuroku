@@ -30,162 +30,40 @@
 - BoxLocationは独立フラットマスタ。Boxが `locationId` を参照
 - Vision対象はBox/Item写真のみ
 
-### Server同期
+### 同期アーキテクチャ
 - business identity = `(User.id, entityId)`
-- 共通同期メタデータ = `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
+- server同期メタデータ = `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 - 未同期新規 = revision 0 / baseRevision 0
 - revision不一致時はcontentHash比較。同一=UNCHANGED、異なる=CONFLICT
-- updatedAtで勝者を決めない
 - SyncChangeLogがPull差分履歴の正本
 - syncSeqはDB全体で一意な単調増加signed 64-bit
-
-### Local同期
-- user別DB = `hk-local-v2-<User.id>`
-- 旧 `hk-local-v1` は移行しない
-- 3層 = Business / SyncState / Outbox
+- user別local DB = `hk-local-v2-<User.id>`
+- local 3層 = Business / SyncState / Outbox
 - local業務変更とOutbox更新は同一IndexedDB transaction
-- PushはOutbox基準
-- sync中再編集はoutboxVersionで保護
-- PullだけでOutbox.baseRevisionを前進させない
+- PushはOutbox基準、sync中再編集はoutboxVersionで保護
 - 通常同期 = Pull → Outbox reapply → Push → Pull
 
-### DELETE / CONFLICT
-- local DELETEはBusinessから即時除去しOutbox DELETEを残す
-- server DELETE済み + local UPDATE = CONFLICT
-- local DELETE + newer server UPDATE = CONFLICT
-- local DELETE + server DELETE = hash同一ならUNCHANGED
-- CLIENT winsでserver DELETEを覆す場合のみ明示的復活
-
-### baseRevision=0 DELETE
-```text
-server同IDなし    → UNCHANGED
-server active同ID → REJECTED / ID_COLLISION / retryable=false
-```
-CREATE成功response lostと真のID衝突を安全に区別できないため、誤削除防止を優先する。
-
-### ID_COLLISION
-- baseRevision=0 CREATE/UPDATEでserver同ID + hash同一 → UNCHANGED
-- hash異なる → `REJECTED / ID_COLLISION / retryable=false`
-- Push responseは `serverPayload / revision / syncSeq / contentHash` を返す
-- clientはlocal candidateを新IDへremapし、参照・Outbox・contentHashを更新
-- remapは既存CONFLICT中でも止めない
-- remapは再入可能・反復可能
-- parent ID_COLLISION/CONFLICT時、同batch依存子は `DEPENDENCY_NOT_AVAILABLE / retryable=true`
-
-### SyncConflict
-- `(userId, entityType, entityId)` に未解決1row
-- statusなし、解決後削除
-- stale server snapshot = CONFLICT_UPDATED
-- stale client candidate = `STALE_CLIENT_CANDIDATE / retryable=false`
-- cascade等でserver snapshot更新後にserver/client hashが一致した場合は自動解決
-- current Outboxが新versionならOutboxは保持
-
-### 親DELETE cascade
+### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId = UNASSIGNED
 - BoxLocation DELETE → child Box.locationId = UNASSIGNED
-- v0.8では親DELETE + 全子参照補正を1 server transaction
-- syncSeq/log順 = 子補正UPSERT → 親DELETE
-- 子が未解決SyncConflictを持っていても親DELETEをブロックしない
+- server parent DELETE + child補正は1 transaction、子UPSERT log → 親DELETE log
+- reserved `Box(id=UNASSIGNED)` / `BoxLocation(id=UNASSIGNED)` を各Userで保証
+- reserved entityはclient変更禁止、serverは `RESERVED_ENTITY / retryable=false`
+- SyncConflictは `(userId, entityType, entityId)` につき未解決1row、statusなし、解決後削除
 
-### reserved UNASSIGNED
-各Userについてserverが必ず保証:
-```text
-Box(id=UNASSIGNED)
-BoxLocation(id=UNASSIGNED)
-```
-- 通常Pull / Full Resyncに含める
-- localでは正式参照先として保持
-- client CREATE/UPDATE/DELETE禁止
-- serverは `REJECTED / RESERVED_ENTITY / retryable=false`
-- tombstone/purge/ID remap対象外
+### Pull / Full Resync
+- Pull = `changes[] / nextCursor / hasMore`、syncSeq順、page適用成功後のみcursor更新
+- cursor未設定の新規DBは必ずFull Resyncから開始
+- Full Resyncはcurrent active canonicalのみ
+- snapshot開始時に `snapshotSeq=N` と内容Nを固定
+- entity type別paging、snapshot TTL約30分
+- staging全完了後のみlocal canonicalへ採用
+- 新規DBは初回Full Resync成功まで書き込み不可
+- 既存canonicalありならFull Resync途中失敗後も旧canonicalを保持してOFFLINE_READYへ戻れる
+- 既存canonicalありならFull Resync staging取得中もlocal編集可
 
-### Pull
-- `changes[] / nextCursor / hasMore`
-- syncSeq順、同一entity changeは圧縮しない
-- page適用成功後のみcursor更新
-- Outboxありならserver baseline更新後にOutbox payloadを再適用
-- 通常Pullは有効なcursorを持つclientのみ使用
-
-### Full Resync
-- current active server canonicalのみ
-- snapshot開始時に `snapshotSeq=N` と内容Nを同じ短時間DB transactionで固定
-- entity type別paging、同一snapshotSeq
-- snapshot TTL約30分
-- staging全完了後だけlocal canonicalへ原子的採用しcursor=N
-- Outbox保持 → reapply → Push → final Pull
-- local採用成功後のみ `/sync/full/{snapshotId}/complete`
-
-### 新規client DB
-**確定:** cursor未設定の新規clientは通常Pullを使わず必ずFull Resyncから開始する。
-
-```text
-新規 user DB
-cursor未設定
-↓
-Full Resync
-↓
-current canonical採用
-↓
-cursor=snapshotSeq
-↓
-以後通常Pull
-```
-
-### 初回Full Resync失敗時のoffline利用
-**確定:** 新規client DBでは、そのuser DBで最低1回Full Resyncが正常完了するまでoffline編集を許可しない。
-
-```text
-新規DB / canonical未確立
-Full Resync通信失敗
-→ INITIAL_SYNC維持
-→ 閲覧可能範囲は現local内容のみ
-→ 書き込み不可
-→ online復帰後Full Resync再試行
-```
-
-既存user DBではcanonical確立済みなら通信系失敗時に `OFFLINE_READY` へ移行し、閲覧・編集を継続できる。
-
-### 既存canonicalありのFull Resync失敗
-**確定:** cursor失効等でFull Resyncが必要になっても、完了するまで既存Business / SyncState / cursor / Outboxを変更しない。
-
-```text
-既存canonicalあり
-↓
-FULL_RESYNC_REQUIRED
-↓
-Full Resyncをstagingへ取得
-↓
-通信途中で失敗
-↓
-未完成stagingは未採用
-既存Business / SyncState / cursor / Outbox維持
-↓
-OFFLINE_READY
-```
-
-### Full Resync中のlocal編集
-**確定:** 既存canonicalを持つuser DBでは、Full Resyncのstaging取得中も通常編集を許可する。
-
-```text
-既存canonical
-↓
-Full Resync開始
-├─ server snapshot → stagingへ取得
-└─ user編集 → Business + Outboxへ保存
-↓
-Full Resync取得完了
-↓
-stagingを新canonicalとして採用
-↓
-その時点の最新Outboxをreapply
-↓
-Push
-↓
-final Pull
-```
-
-### Full Resync snapshot採用transaction
-**確定:** `staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に実行する。
+### Full Resync採用transaction
+`staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に行う。
 
 ```text
 BEGIN IndexedDB transaction
@@ -193,98 +71,75 @@ BEGIN IndexedDB transaction
 2. Businessをsnapshot canonicalへ置換
 3. SyncStateをsnapshot metadataへ置換
 4. latest Outboxを読む
-5. Outbox payloadをBusinessへreapply
-6. cursor = snapshotSeq
+5. Outboxを依存順にreapply
+6. 必要な参照補正を行う
+7. cursor = snapshotSeq
 COMMIT
 ```
 
-- user編集transactionとFull Resync採用transactionはIndexedDB transaction境界で直列化する
-- 採用transaction前にcommit済みの編集はlatest Outboxとしてreapplyされる
-- 採用transaction後にcommitする編集は新canonical上への通常編集になる
-- snapshot採用transaction失敗時は全体rollbackし、旧canonical / old cursor / Outboxを維持する
-- `/sync/full/{snapshotId}/complete` はlocal採用transaction成功後にのみ送信する
+- user編集transactionと採用transactionはIndexedDB transaction境界で直列化
+- transaction失敗時は旧canonical / old cursor / Outboxを維持
+- `/sync/full/{snapshotId}/complete` はlocal採用成功後のみ送信
 
-### Full Resync後の参照補正
-**確定:** Full Resync snapshot採用時に最新Outboxをreapplyする際、local candidate本体は保持する。親参照の有効性は **snapshot + latest Outbox** の両方で判定する。
-
+### Full Resync時のOutbox reapplyと参照判定
 Outbox reapply順:
 ```text
 BoxLocation → Box → Item
 ```
 
-参照判定:
+親参照判定:
 ```text
 snapshotに親あり
 → snapshot親を参照
 
-snapshotに親なし
-latest Outboxに有効な親candidateあり
-→ parent candidateを先にBusinessへreapplyし、子のlocal親参照を維持
+snapshotに親なし + latest Outboxに有効な親CREATE/UPDATE candidateあり
+→ parent candidateを先にreapplyし、local親子関係を維持
 
-snapshotにもlatest Outboxにも親なし
-→ 子candidate自体は保持し、親参照だけUNASSIGNEDへ補正
+snapshotにも有効な親Outboxにも親なし
+→ 子candidate本体は保持し、参照だけUNASSIGNEDへ補正
 ```
 
-例:
-```text
-offlineで新規 Location-A
-↓
-新規 Box-A(locationId=Location-A)
-↓
-新規 Item-A(boxId=Box-A)
+補正時:
+- Businessを補正
+- Outbox.payload更新
+- contentHash再計算
+- outboxVersion++
+- baseRevision維持
 
-Full Resync snapshotには3件とも存在しない
-↓
-Location-A Outboxをreapply
-↓
-Box-A OutboxをreapplyしlocationId=Location-Aを維持
-↓
-Item-A OutboxをreapplyしboxId=Box-Aを維持
-```
+### Outbox親DELETE時の正規化
+**確定:** parentのlatest Outbox operationがDELETEの場合、そのparentは参照可能な親として扱わない。子entity本体は保持し、参照のみreserved `UNASSIGNED`へ補正する。
 
-本当に親が消失している場合:
 ```text
-Item candidate.boxId = BOX-A
-snapshotにBOX-Aなし
-OutboxにもBOX-Aの有効candidateなし
+Box-A Outbox = DELETE
+Item-A Outbox = CREATE/UPDATE
+Item-A.boxId = Box-A
 ↓
-Item candidateは保持
-boxId = UNASSIGNED
+Box-Aは参照可能親ではない
+↓
+Item-Aは保持
+Item-A.boxId = UNASSIGNED
 Outbox.payload更新
 contentHash再計算
 outboxVersion++
 baseRevision維持
 ```
 
-Boxについても同様に、参照先BoxLocationがsnapshotにも有効なOutboxにも存在しない場合だけ `locationId=UNASSIGNED` へ補正する。
+BoxLocation DELETEとBoxの関係も同じ:
+```text
+BoxLocation-A Outbox = DELETE
+Box-A.locationId = BoxLocation-A
+→ Box-A.locationId = UNASSIGNED
+```
 
-規則:
-- candidateの非参照business contentは失わない
-- local parent candidateが存在する場合は、そのparent-child関係をFull Resyncで壊さない
-- parentの有効性はOutbox operationも考慮し、DELETE candidateは参照可能な親として扱わない
-- 親参照補正はFull Resync採用transaction内で行う
-- 補正時はBusiness / Outbox.payload / contentHash / outboxVersionを更新する
-- baseRevisionはcandidate自身のserver baselineなので変更しない
-- reserved UNASSIGNEDは補正先として常に利用可能
+この処理はFull Resync採用transaction内で行う。通常の親DELETE cascadeと同一の意味に統一し、Full Resync固有の別解釈は作らない。
 
-根拠: Full Resyncはserver active canonicalだけを返すため、serverから消えた親と、単に未同期でserverにまだ存在しないlocal親をsnapshotだけでは区別できない。latest Outboxを合わせて判定することで、offlineで作成した一連のLocation→Box→Itemを維持しながら、本当に孤児となった参照だけを安全に補正できる。
+根拠: DELETEはその親を消すというlocalの最新意図であり、同じOutboxに存在することだけを理由に参照可能な親として復元するとlocal意図と矛盾する。子のbusiness contentを保持しつつ参照のみUNASSIGNEDへ補正することで、データ損失を避けながら参照整合性を維持できる。
 
-### tombstone / SyncChangeLog purge
+### retention
 - tombstone = deletedAt + 30日後に物理削除可能
-- SyncChangeLog = 作成から固定90日保持
-- device cursorによる保持延長なし
-- Pull可否は90日という時刻境界ではなく、対象Userのcursor以降に必要なlogが実際に保持されているかで判断
-- 欠落済み、または欠落していないことを保証できない場合は `FULL_RESYNC_REQUIRED`
-- Full Resyncはactive canonicalのみ。purge済みtombstone由来のstale localはcanonical rebuildで消える
-
-### 認証・状態
-- online auth成功後、その実行session内のみoffline利用可
-- app再起動後はonline auth必須
-- Auth: LOCKED / AUTHENTICATED
-- Connectivity: ONLINE / OFFLINE
-- Sync: IDLE / SYNCING / SYNC_ERROR / CONFLICT
-- Usage: LOCKED / INITIAL_SYNC / READY / OFFLINE_READY
-- data/consistency/protocol errorはordinary offline扱いにしない
+- SyncChangeLog = 固定90日保持、device cursorによる延長なし
+- Pull可否は対象Userのcursor以降に必要なlogが実際に保持されているかで判定
+- 欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
 
 ## 4. 現行実装との差異
 
@@ -320,9 +175,16 @@ Boxについても同様に、参照先BoxLocationがsnapshotにも有効なOutb
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**Full Resync採用時、Outbox上で親がDELETE、子がその親を参照したUPDATE/CREATEのまま残っている矛盾したlocal stateをどう正規化するかを確定する。**
+**同一entityのOutbox operationをCREATE / UPDATE / DELETE間でどう正規化するかを確定する。**
 
-推奨候補は、親DELETEをlocal意図として優先し、親DELETE candidateは参照可能親として扱わない。子は削除せず、参照だけUNASSIGNEDへ補正し、子Outbox payload/contentHash/outboxVersionを更新する。これは通常の親DELETE時cascade規則と同じ意味になるため、Full Resync時だけ別ルールを作らずに済む。
+推奨候補:
+- CREATE後の編集 → CREATEのままpayloadを最新化
+- CREATE後のDELETE → DELETEへ置換し、baseRevision=0を維持
+- UPDATE後の再編集 → UPDATEのままpayloadを最新化
+- UPDATE後のDELETE → DELETEへ置換、既存baseRevision維持
+- DELETE後に同じentityを明示的に復活させた場合 → UPDATEへ戻し、元のbaseRevisionを維持
+
+Outboxは履歴ではなく「latest unsynced candidate」であるため、同一entityにつき1rowを維持し、operationも最新local intentへ畳み込む方式を推奨する。
 
 ## 7. HLDocS運用上の注意
 
