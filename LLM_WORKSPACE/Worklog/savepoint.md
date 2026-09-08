@@ -152,21 +152,23 @@ retryable=true
 - 無関係branchは処理継続
 
 ### 同一Push batch内の親CONFLICT
-**確定:** 親operationが `CONFLICT` になったdependency branchでは、未解決の親を参照する子operationを適用しない。
-
-子operation:
-```text
-REJECTED
-errorCode=DEPENDENCY_NOT_AVAILABLE
-retryable=true
-```
-
-- 親CONFLICT解決後、clientは最新local Outbox状態で子operationを再Pushする
-- 親がSERVER winsなら、その解決後に採用されたserver canonicalを基準に子の参照/Outboxを再評価する
-- 親がCLIENT winsなら、確定した親canonicalを基準に子を再送する
+- 親operationが `CONFLICT` になったdependency branchでは、未解決の親を参照する子operationを適用しない
+- 子operationは `DEPENDENCY_NOT_AVAILABLE / retryable=true`
+- 親CONFLICT解決後、最新local Outbox状態で子operationを再Push
 - 無関係dependency branchは処理継続
 
-根拠: 親のcanonical内容・存在状態が未確定な段階で子を先に適用すると、競合解決結果と参照関係が食い違う可能性があるため。既存の「失敗はdependency branchだけを止める」原則にも一致する。
+### 親CONFLICT解決後の子Outbox再評価
+**確定:** conflict resolve responseをlocalへ適用する時点で、その親に依存するlocal dependency branchを再評価する。
+
+- 親の解決結果で子のbusiness payload/参照が変わる場合、Businessを更新する
+- 対応するOutbox.payloadを最新化する
+- contentHashを再計算する
+- outboxVersionを進める
+- 子自身のbaseRevisionは、子自身のlast known server baselineを維持する
+- 親解決を理由に子baseRevisionを前進させない
+- その後のPushで子自身について通常のrevision/contentHash規則により再評価する
+
+根拠: 親の解決結果は子の業務内容には影響し得るが、子自身のserver baselineが更新されたことにはならないため。baseRevisionを前進させると子自身の競合を隠す可能性がある。
 
 ## 5. Push API
 
@@ -296,13 +298,14 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**親CONFLICT解決後に、子Outboxの参照内容やbaseRevisionをどの時点で再評価するかを確定する。**
+**親CONFLICTのSERVER winsで親がDELETE状態だった場合、依存する子の参照をどう補正するかを確定する。**
 
 推奨候補:
-- conflict resolve response適用時に、影響するlocal dependency branchを再評価する
-- 子のbusiness payloadが親の解決結果により変化する場合はOutbox.payload/contentHash/outboxVersionを更新
-- 子自身のbaseRevisionは、子自身のlast known server baselineを維持し、親解決を理由に前進させない
-- その後のPushで通常のrevision/contentHash規則により再評価
+- Boxがserver DELETEで確定した場合、そのBoxを参照するlocal Itemは `boxId=UNASSIGNED` へ補正
+- BoxLocationがserver DELETEで確定した場合、そのLocationを参照するlocal Boxは `locationId=UNASSIGNED` へ補正
+- これらはlocal業務変更としてBusiness/Outbox/contentHash/outboxVersionを更新
+- 子自身のbaseRevisionは維持
+- その後のPushで子自身の競合有無を通常判定
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
