@@ -33,6 +33,10 @@
 - `syncSeq` はDB全体で一意・単調増加する64bit符号付き整数として確定
 - 非常時の `syncSeq` 0リセットでは端末同期情報を全破棄し、全端末full resync。`syncEpoch` は採用しない
 - ローカル未同期変更はOutboxで明示管理し、full resyncでも保持・再適用する方針で確定
+- サーバーはマルチユーザー構成とし、同一ユーザーの複数端末が同じデータ集合を同期する方針を再確認
+- Box / Item / BoxLocation のサーバー上の識別単位を `(userId, id)` とする方針で確定
+- `UNASSIGNED` は各ユーザーが `id=UNASSIGNED` として持つ通常のBoxレコードとする方針で確定
+- Push / Pull / Conflict / SyncChangeLog / Outbox の既存同期設計は `(userId,id)` 化後も基本仕様変更なしと再確認
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -47,6 +51,10 @@
 - アイテム「取り出す」 = `UNASSIGNED` へ移動
 - アイテム「削除する」 = `deletedAt` 設定
 - 箱削除時のアイテム = `UNASSIGNED` へ移動
+- `UNASSIGNED` = 各ユーザーが持つ通常Box。`id=UNASSIGNED`, `code=UNASSIGNED`
+- サーバー上の業務レコード識別 = `(userId, id)`
+- 同一ユーザーの複数端末 = 同じサーバーデータ空間を共有
+- 異なるユーザー = 同一 `id` を持ってよい
 - サーバーtombstone保持期間 = 30日
 - ローカルtombstone = サーバーが削除を受理するまで保持し、受理後に物理削除
 - `updatedAt` = 実データ内容の最終更新日時
@@ -62,8 +70,9 @@
   - `baseRevision == server.revision` → 通常更新
   - 不一致かつ `contentHash` 同一 → 実質同一内容
   - 不一致かつ `contentHash` 不一致 → 時刻に関係なくユーザー確認
-- `contentHash` = 業務内容 + 削除状態。ID・時刻・同期メタデータは除外。canonical JSON + SHA-256等
+- `contentHash` = 業務内容 + 削除状態。ID・userId・時刻・同期メタデータは除外。canonical JSON + SHA-256等
 - `SyncConflict` は未解決中のみ保持し、解決成功時に削除
+- `SyncConflict` の対象識別には `userId + entityType + entityId` を使用
 - 競合解決時は最新revisionを再確認し、表示時から進んでいれば最新サーバー版との比較へ戻す
 - トランザクション境界 = 整合性を保つ必要がある論理操作単位
 - 通常更新では、revision確認 → データ更新 → revision更新 → serverUpdatedAt更新 → syncSeq採番 → SyncChangeLog追加を原子的に実行
@@ -71,6 +80,8 @@
 - Pushバッチ全体は巨大トランザクションにせず、各論理操作ごとに成功/競合/失敗を返す
 - 競合発生時の `SyncConflict` 作成も競合判定と同一トランザクション
 - 競合解決時の正本更新・revision/syncSeq/SyncChangeLog更新・SyncConflict削除も同一トランザクション
+- Pushで使用する `userId` はクライアントpayloadではなく認証結果からサーバー側で確定する
+- Pullは認証済み `userId` で `SyncChangeLog` を絞り、`syncSeq > cursor` のみ返す
 - バックアップIDを維持し、データ単位ハッシュで衝突判定
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
@@ -106,7 +117,21 @@
 - 箱目録の想定データ量では、同一エンティティ1件への集約でOutbox肥大化は実用上許容できるため
 - 未同期データを期間で自動削除するとデータ消失につながるため
 
-## 7. 現行実装で確認済みの主要問題
+## 7. ユーザー分離と所有権
+
+サーバー1つに複数ユーザーのデータを保持し、`userId` でデータ空間を分離する。同一ユーザーの複数端末は同じデータ空間を同期する。
+
+Box / Item / BoxLocation のサーバー上の識別単位は `(userId, id)` とする。
+
+根拠:
+- クライアント生成IDはユーザー内で一意であれば十分であり、別ユーザーとのID衝突をエラーにする必要がないため
+- 各ユーザーが固定ID `UNASSIGNED` の仮置き箱を持つ要件を自然に表現できるため
+- Item→Box等の参照を同一userId内に限定し、別ユーザーのデータ参照をDBレベルで防止できるため
+- 現行の `where: { id }` Pushは別ユーザー同一IDへの更新リスクがあり、マルチユーザー想定と整合しないため
+
+APIではクライアントpayload内の `userId` を所有権判定に使用せず、認証結果からサーバー側で `userId` を確定する。
+
+## 8. 現行実装で確認済みの主要問題
 
 1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` / `syncSeq` がない。
 2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しない。
@@ -116,9 +141,10 @@
 6. バックアップ対象にBoxLocationがない。
 7. replaceリストアがIDを無条件再発行する。
 8. 箱削除は現在ローカル物理削除。
-9. `UNASSIGNED` 基盤はローカルに存在するが、サーバーの `Box.id` が全ユーザー共通主キーのため、複数ユーザーが同一 `id=UNASSIGNED` を持てない。
+9. 現行Prismaでは Box / Item / BoxLocation の `id` が全ユーザー共通主キーであり、想定しているユーザー別データ空間と不整合。
+10. 現行Pushは `where: { id }` でupsertし、update時に `userId` も書き換えるため、別ユーザー同一IDとの衝突・所有権侵害リスクがある。
 
-## 8. ロードマップ
+## 9. ロードマップ
 
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
@@ -135,17 +161,17 @@
 12. Vision/LLM実装完成
 13. v1.0完成・受入
 
-## 9. 次のアクション
+## 10. 次のアクション
 
-次の設計判断点は `UNASSIGNED` のサーバー表現。
+次の設計判断点は、バックアップのレコード衝突判定hashを同期用 `contentHash` と同一のcanonical化・hash計算仕様に共通化するか。
 
 その後:
-1. 所有権チェック方式とID衝突時処理
-2. バックアップhashと同期`contentHash`の共通化可否
-3. BoxLocationを含む削除・同期ライフサイクル
+1. BoxLocationを含む削除・同期ライフサイクル
+2. stale SyncConflictの扱い
+3. 正式な全体アーキテクチャ / データモデル / 同期仕様への反映
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
-## 10. HLDocS運用上の注意
+## 11. HLDocS運用上の注意
 
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
