@@ -30,6 +30,9 @@
 - `SyncChangeLog` 90日、tombstone 30日、古いcursorは `FULL_RESYNC_REQUIRED`
 - `SyncConflict` は未解決中のみ保持し、解決成功時に削除
 - トランザクション境界はAPI単位ではなく論理操作単位。Pushバッチ全体は非原子的
+- `syncSeq` はDB全体で一意・単調増加する64bit符号付き整数として確定
+- 非常時の `syncSeq` 0リセットでは端末同期情報を全破棄し、全端末full resync。`syncEpoch` は採用しない
+- ローカル未同期変更はOutboxで明示管理し、full resyncでも保持・再適用する方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -52,6 +55,7 @@
 - 未同期ローカル = `revision = 0`、初回サーバー登録成功 = `revision = 1`
 - `SyncChangeLog` = 同期変更履歴の正本
 - 各Box / Item / BoxLocationにも最新 `syncSeq` を保持し、正本と同一トランザクションで更新
+- `syncSeq` = DB全体で一意・単調増加する64bit符号付き整数
 - `SyncChangeLog` 保持期間 = 90日
 - 端末cursorが保持範囲より古い場合、差分Pullを拒否し `FULL_RESYNC_REQUIRED`
 - 競合判定:
@@ -71,20 +75,38 @@
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
 
-## 5. syncSeq 方針検討
+## 5. syncSeq 根拠・非常時リセット
 
-候補はDB全体で一意・単調増加する64bit符号付き整数。
+`syncSeq` はDB全体で一意・単調増加する64bit符号付き整数とする。
 
 根拠:
 - SQLite `INTEGER` は64bit符号付き整数で、最大値は 9,223,372,036,854,775,807。
 - 仮に毎秒100万件を採番しても最大値到達まで約29万年を要するため、通常運用でのオーバーフローは実質的に発生しない。
 - ユーザー別カウンタを持たずに済み、Box / Item / BoxLocationを同一時系列で扱える。
+- seqの欠番はPullの `syncSeq > cursor` 判定に影響しない。
 
-オーバーフロー等で `syncSeq` を再初期化する非常時は、端末アクセスを停止したうえで既存端末の同期情報・cursorをすべて破棄し、SyncChangeLogおよびレコード側syncSeqを再構築して0から採番し直す。復旧後の端末は新規同期状態としてfull resyncする。この運用では旧cursorとの世代判定が不要なため `syncEpoch` は採用しない。
+オーバーフローやDB再構築等で再初期化する非常時は、端末アクセスを停止し、既存端末の同期情報・cursorをすべて破棄する。その後SyncChangeLogおよびレコード側syncSeqを再構築して0から採番し直し、端末アクセス再開後は全端末を新規同期状態としてfull resyncする。旧cursorを保持しない運用のため `syncEpoch` は不要。
 
-`syncSeq` は通常運用中にロールオーバーしない。非常時の0リセットは通常同期処理ではなく管理上の全同期状態再初期化として扱う。
+## 6. ローカルOutbox
 
-## 6. 現行実装で確認済みの主要問題
+ローカル未同期変更はOutboxで明示管理する。
+
+- Outbox = サーバーがまだ受理していない端末側変更の一時保持領域
+- 業務レコード更新とOutbox更新は同一ローカルトランザクションで行う
+- Push対象は `updatedAt > lastPushAt` ではなくOutboxから取得する
+- 同一エンティティへの未同期変更は原則1件に集約し、最新状態を保持する
+- 集約時も最初の編集元である `baseRevision` は維持する
+- Push成功または競合解決成功まで保持する
+- 保存期間による自動削除は行わない
+- full resync時もOutboxを破棄せず、サーバー正本再構築後に再適用して通常のrevision/contentHash競合判定へ戻す
+
+根拠:
+- `updatedAt` は実データ変更日時であり、未同期状態を表す責務を持たせないため
+- full resyncで未Push変更・削除要求を失わないため
+- 箱目録の想定データ量では、同一エンティティ1件への集約でOutbox肥大化は実用上許容できるため
+- 未同期データを期間で自動削除するとデータ消失につながるため
+
+## 7. 現行実装で確認済みの主要問題
 
 1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` / `syncSeq` がない。
 2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しない。
@@ -94,9 +116,9 @@
 6. バックアップ対象にBoxLocationがない。
 7. replaceリストアがIDを無条件再発行する。
 8. 箱削除は現在ローカル物理削除。
-9. `UNASSIGNED` 基盤は既に存在する。
+9. `UNASSIGNED` 基盤はローカルに存在するが、サーバーの `Box.id` が全ユーザー共通主キーのため、複数ユーザーが同一 `id=UNASSIGNED` を持てない。
 
-## 7. ロードマップ
+## 8. ロードマップ
 
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
@@ -113,18 +135,17 @@
 12. Vision/LLM実装完成
 13. v1.0完成・受入
 
-## 8. 次のアクション
+## 9. 次のアクション
 
-`syncSeq` のDB全体グローバル採番方式を正式確定した後、以下を順に決める。
+次の設計判断点は `UNASSIGNED` のサーバー表現。
 
-1. full resync時の未同期ローカル変更保護方式（outbox / pending mutation）
-2. `UNASSIGNED` のサーバー表現
-3. 所有権チェック方式とID衝突時処理
-4. バックアップhashと同期`contentHash`の共通化可否
-5. BoxLocationを含む削除・同期ライフサイクル
+その後:
+1. 所有権チェック方式とID衝突時処理
+2. バックアップhashと同期`contentHash`の共通化可否
+3. BoxLocationを含む削除・同期ライフサイクル
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
-## 9. HLDocS運用上の注意
+## 10. HLDocS運用上の注意
 
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
