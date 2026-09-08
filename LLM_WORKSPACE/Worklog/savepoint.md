@@ -191,7 +191,30 @@ final Pull
 - snapshot採用時にその時点の最新Outboxを新canonicalへreapplyする
 - 新規DBの初回Full Resyncだけは既存確定どおり完了まで書き込み不可
 
-根拠: stagingとOutboxを分離すれば、Full Resync取得中にアプリ全体を読み取り専用にする必要がなく、長時間同期でもoffline-firstの操作性を維持できる。local編集はOutboxに残るためsnapshot採用で失われない。
+### Full Resync snapshot採用transaction
+**確定:** `staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に実行する。
+
+```text
+BEGIN IndexedDB transaction
+
+1. staging snapshotを読む
+2. Businessをsnapshot canonicalへ置換
+3. SyncStateをsnapshot metadataへ置換
+4. latest Outboxを読む
+5. Outbox payloadをBusinessへreapply
+6. cursor = snapshotSeq
+
+COMMIT
+```
+
+- user編集transactionとFull Resync採用transactionはIndexedDB transaction境界で直列化する
+- 採用transaction前にcommit済みの編集はlatest Outboxとしてreapplyされる
+- 採用transaction後にcommitする編集は新canonical上への通常編集になる
+- Business / SyncState / cursorの一部だけが新snapshotへ切り替わる中間状態を作らない
+- snapshot採用transaction失敗時は全体rollbackし、旧canonical / old cursor / Outboxを維持する
+- serverへの `/sync/full/{snapshotId}/complete` はlocal採用transaction成功後にのみ送信する
+
+根拠: snapshot切替とuser編集のraceでlocal変更が消える隙間を作らず、cursorとcanonicalの対応関係を常に原子的に維持するため。
 
 ### tombstone / SyncChangeLog purge
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -244,9 +267,9 @@ final Pull
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**Full Resync snapshot採用と、その時点の最新Outbox reapply / cursor更新をどのlocal transaction境界で行うかを確定する。**
+**Full Resync採用transaction中に、staging snapshot内にOutboxが参照する親entityが存在しない場合のreapply規則を確定する。**
 
-推奨候補は、`staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に行う方式。user編集transactionと直列化されるため、採用直前にcommit済みの編集はlatest Outboxとしてreapplyされ、採用transaction後にcommitする編集は新canonical上へ通常編集として適用される。これによりsnapshot採用とlocal編集のraceで編集が消える隙間を作らない。
+推奨候補は、Outboxのlatest local candidateを失わないことを優先し、参照先親がsnapshotに存在しない場合もBusinessへcandidateをreapplyする。ただし参照整合性が壊れる場合は、既存の親DELETE規則に従い参照を `UNASSIGNED` へ補正し、その補正をBusiness変更 + Outbox更新 + contentHash再計算 + outboxVersion++として同じ採用transaction内で行う方式。これによりpurge済みparentやserver側deleteをFull Resyncで取り込んでもlocal candidateを孤児化させない。
 
 ## 7. HLDocS運用上の注意
 
