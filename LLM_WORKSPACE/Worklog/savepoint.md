@@ -49,6 +49,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - `SyncConflict` を競合一時バッファ兼再送冪等性管理として使用する方針で確定
 - 競合解決要求時に現在の `revision` を再確認し、競合表示時点から進んでいれば最新サーバー版と再確認する方針で確定
 - `contentHash` は業務内容 + 削除状態を対象とし、ID・時刻・同期メタデータを除外する方針で確定
+- `SyncChangeLog` は90日保持、tombstoneは30日保持、保持範囲より古いcursorは差分Pullを拒否して full resync を要求する方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -91,6 +92,10 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - 未同期ローカルは `revision = 0`、初回サーバー登録成功で `revision = 1`
 - Pullカーソルは時刻ではなくサーバー単調増加の `syncSeq` を採用
 - `SyncChangeLog` を `syncSeq` の正とし、Box / Item / BoxLocationにも最新 `syncSeq` を保持
+- `SyncChangeLog` 保持期間 = 90日
+- tombstone 保持期間 = 30日
+- 端末cursorが保持中の最古ログより古い場合、差分Pullは実行せず `FULL_RESYNC_REQUIRED` を返す
+- full resyncではサーバー正本を基準にローカル全体を再整合するため、すでに物理削除済みの古いtombstoneも問題なく反映できる
 - 競合判定:
   - `baseRevision == server.revision` → 通常更新
   - `baseRevision != server.revision` かつ `contentHash` 同一 → 実質同一内容として競合扱いしない
@@ -144,13 +149,15 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 `serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone + `SyncConflict` + `contentHash` 方針を前提に同期プロトコルを確定する。
 
 現在の設計論点:
-- `SyncChangeLog` の保持期間とtombstone purge後の扱い
 - `SyncConflict` の解決済みデータ保持期間
 - トランザクション境界の正式確定
+- `syncSeq` の採番スコープ（DB全体単調増加かユーザー単位か）
+- UNASSIGNED のサーバー表現
+- 所有権チェック方式
 
-`SyncChangeLog` は Pull 差分の正本であるため、単純に30日で削除すると30日以上オフラインだった端末が削除イベントを取り逃す。候補方針は、変更ログを一定期間保持しつつ、端末カーソルが保持範囲より古い場合は差分Pullを拒否して full resync を要求する方式。
-
-トランザクション境界はAPI全体ではなく整合性が必要な論理操作単位とする方向。通常更新では「対象レコード確認/更新 + revision更新 + syncSeq採番 + SyncChangeLog追加」を原子的に行う。箱削除では「子ItemをUNASSIGNEDへ移動 + BoxLocation削除tombstone + Box削除tombstone + 各revision/syncSeq/SyncChangeLog」を一つの論理操作として原子的に扱う。Pushバッチ全体は巨大トランザクションにせず、独立操作ごとに成功/競合/失敗を返す方向とする。
+推奨方向:
+- `SyncConflict` は未解決中のみ業務上必要。解決後は監査用途として短期間保持するか、即時削除するかを決定する。
+- トランザクション境界はAPI全体ではなく整合性が必要な論理操作単位とする。通常更新では「対象レコード確認/更新 + revision更新 + syncSeq採番 + SyncChangeLog追加」を原子的に行う。箱削除では「子ItemをUNASSIGNEDへ移動 + BoxLocation削除tombstone + Box削除tombstone + 各revision/syncSeq/SyncChangeLog」を一つの論理操作として原子的に扱う。Pushバッチ全体は巨大トランザクションにせず、独立操作ごとに成功/競合/失敗を返す。
 
 ## 8. 追加作業記録
 
