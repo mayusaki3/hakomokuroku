@@ -213,27 +213,45 @@ clientは同一IndexedDB transactionで:
 ### ID remap時の既存CONFLICT引継ぎ
 参照元entity自身が既にCONFLICT中でも、ID remapを止めない。
 
-例:
-```text
-Box A → Bへremap
-Item X は既にCONFLICT中
-Item X.boxId = A → B
-```
-
-clientはlocal transaction内で:
-- Businessの参照をBへ更新
+- Businessの参照を新IDへ更新
 - Outbox.payloadを最新candidateへ更新
 - contentHash再計算
 - outboxVersionを進める
-- baseRevisionは元の同期baselineを維持
+- baseRevisionは維持
 - 既存SyncConflictは削除しない
-
-次回Push時に同一entityのSyncConflict client snapshotを最新candidateへ更新し、最新server状態と再比較する。
+- 次回Pushで同じSyncConflictのclient snapshotを最新candidateへ更新して再比較
 
 原則:
-**ID remapはlocal参照整合性のため必ず完了し、既存の同期CONFLICTとは独立して扱う。remapによる変更は最新local candidateとして競合処理へ引き継ぐ。**
+**ID remapはlocal参照整合性のため必ず完了し、既存の同期CONFLICTとは独立して扱う。**
 
-根拠: Aを参照したままのrecordを残さず、同時に本来の競合情報も失わないため。
+### ID remapの連鎖処理
+ID_COLLISIONによるremapが参照関係を通じて複数entityへ影響する場合、local dependency graph単位で処理する。
+
+依存方向:
+```text
+BoxLocation → Box → Item
+```
+
+例:
+```text
+BoxLocation L1 → L2
+↓
+Box B1.locationId L1 → L2
+↓
+Box B1自身が後でID_COLLISIONなら B1 → B2
+↓
+Item I1.boxId B1 → B2
+```
+
+規則:
+- 1回のremap処理で直接・間接に影響するlocal business record、Outbox、contentHash、outboxVersionを可能な範囲で同一IndexedDB transaction内に更新
+- 新規IDがlocal DB内で衝突した場合はその場で再生成
+- serverへのID事前予約/照合APIは設けない
+- 新IDのserver衝突は次回Pushで検出
+- server側でも再度ID_COLLISIONなら同じremap手順を再適用
+- remap処理は再入可能・反復可能な通常同期回復処理として実装する
+
+根拠: UUID等の衝突は極めて低確率であり、ID予約APIを追加するより、既存Push/回復経路で安全に吸収する方が単純でテスト可能なため。
 
 ## 7. Push API
 
@@ -478,13 +496,13 @@ INITIAL_SYNCは閲覧/検索可、書込不可。通信系失敗ならOFFLINE_RE
 ## 15. 次のアクション
 
 次の設計判断点:
-**ID_COLLISION remapが複数entityへ連鎖する場合の処理方法を確定する。**
+**同じPush batch内で、親entityがID_COLLISIONによりclient側でremap対象になったとき、同batchに含まれる子entity operationをどう扱うかを確定する。**
 
 推奨候補:
-- remapは単一entityだけでなく、参照関係を辿ってlocal dependency graph単位で処理する
-- 1回のlocal transaction内で可能な範囲の全remapとOutbox更新を原子的に完了する
-- 新しく割り当てたID自体がlocal DB内で衝突した場合は再生成し、server照合は次回Pushで行う
-- server側でさらにID_COLLISIONが起きれば同じ手順を再適用する
+- serverはbatch途中でclient側の新IDを知らないため、旧親IDを参照する子operationは適用しない
+- 親ID_COLLISIONを受けたdependency branchの子operationは `DEPENDENCY_NOT_AVAILABLE / retryable=true`
+- clientがlocal remap完了後、更新済みOutboxから次回Pushで再送
+- 無関係branchはそのまま処理継続
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
