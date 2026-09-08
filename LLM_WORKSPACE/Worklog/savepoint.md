@@ -10,7 +10,7 @@
 
 ## 2. 作業原則
 
-機能単位で原則として、要件確認 → 利用者確認 → 設計 → 利用者確認 → テストケース → 利用者確認 → テストコード → 実装 → 検証の順で進める。重要な設計判断点では利用者確認を行う。
+機能単位で原則として、要件確認 → 利用者確認 → 設計 → 利用者確認 → テストケース → 利用者確認 → テストコード → 実装 → 検証の順で進める。重要な設計判断点では利用者確認を行う。仕様には判断結果だけでなく根拠も記録する。
 
 ## 3. 現在位置
 
@@ -18,174 +18,159 @@
 - 現行 `develop` の機能棚卸し
 - v0.8 / v1.0 リリース区分決定
 - 主要要件ドラフト整理
-- UNC-001 ～ UNC-007 の方針確定
-- アイテム「取り出す」と「削除する」の要件追加
-- LLM_WORKSPACE初期化
+- アイテム「取り出す」と「削除する」の区別
 - 同期時刻の責務分離
-- `revision` / `baseRevision` による競合検出方針
-- `syncSeq` / `SyncChangeLog` による差分Pull方針
+- revision / baseRevisionによる競合検出
+- contentHashによる内容比較
+- syncSeq / SyncChangeLogによる差分Pull
 - tombstone保持方針
-- `SyncConflict` による競合一時保持・再送冪等性方針
-- `contentHash` の対象・除外・正規化方針
-- `SyncChangeLog` 90日、tombstone 30日、古いcursorは `FULL_RESYNC_REQUIRED`
-- `SyncConflict` は未解決中のみ保持し、解決成功時に削除
-- トランザクション境界はAPI単位ではなく論理操作単位。Pushバッチ全体は非原子的
-- `syncSeq` はDB全体で一意・単調増加する64bit符号付き整数として確定
-- 非常時の `syncSeq` 0リセットでは端末同期情報を全破棄し、全端末full resync。`syncEpoch` は採用しない
-- ローカル未同期変更はOutboxで明示管理し、full resyncでも保持・再適用する方針で確定
-- サーバーはマルチユーザー構成とし、同一ユーザーの複数端末が同じデータ集合を同期する方針を再確認
-- Box / Item / BoxLocation のサーバー上の識別単位を `(userId, id)` とする方針で確定
-- `UNASSIGNED` は各ユーザーが `id=UNASSIGNED` として持つ通常のBoxレコードとする方針で確定
-- Push / Pull / Conflict / SyncChangeLog / Outbox の既存同期設計は `(userId,id)` 化後も基本仕様変更なしと再確認
-- バックアップのレコード衝突判定hashは同期用 `contentHash` と同一仕様を使用する方針で確定
-- BoxLocationはBox従属1:1ではなく、複数Boxから参照される独立した置き場所マスタとして扱う方針で確定
-- BoxLocationにも予約レコード `UNASSIGNED` を設け、置き場所未定を通常状態として表現する方針で確定
+- SyncConflictによる競合一時保持・再送冪等性
+- stale SyncConflictの最新化・再比較方針
+- SyncChangeLog 90日、tombstone 30日、古いcursorはFULL_RESYNC_REQUIRED
+- ローカルOutboxとfull resync時の再適用
+- マルチユーザー `(userId,id)` 識別
+- Box / BoxLocationそれぞれの予約 `UNASSIGNED`
+- BoxLocationを独立したフラットな置き場所マスタとする方針
+- BoxLocation.nameのユーザー内一意・後勝ち自動改名
+- バックアップhashを同期contentHashと共通化
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
 
 ## 4. 主要確定事項
 
+### リリース
 - v0.8 = Vision以外の完成版
 - v1.0 = v0.8 + Vision/LLM画像認識
-- 登録順序 = 箱登録 → アイテム → 箱写真 → ラベル → 場所
-- 写真フィールド = `thumbs`
-- QR payload = 箱コードのみ
-- アイテム「取り出す」 = `UNASSIGNED` へ移動
-- アイテム「削除する」 = `deletedAt` 設定
-- 箱削除時のアイテム = `UNASSIGNED` へ移動
-- `UNASSIGNED` Box = 各ユーザーが持つ予約Box。`id=UNASSIGNED`, `code=UNASSIGNED`
-- `UNASSIGNED` BoxLocation = 各ユーザーが持つ予約置き場所。置き場所未定のBoxが参照する
-- BoxLocation = 部屋・押入れ・棚などの置き場所そのものを表す独立エンティティ
-- Box と BoxLocation の関係 = 多対1。Boxが `locationId` でBoxLocationを参照する
-- 新規Boxの `locationId` = `UNASSIGNED`
-- BoxLocation削除時は、その場所を参照するBoxを `UNASSIGNED` へ移動してからBoxLocationをtombstone化する
-- `UNASSIGNED` BoxLocation自体は削除不可・通常編集不可
-- サーバー上の業務レコード識別 = `(userId, id)`
-- 同一ユーザーの複数端末 = 同じサーバーデータ空間を共有
-- 異なるユーザー = 同一 `id` を持ってよい
-- サーバーtombstone保持期間 = 30日
-- ローカルtombstone = サーバーが削除を受理するまで保持し、受理後に物理削除
-- `updatedAt` = 実データ内容の最終更新日時
-- `serverUpdatedAt` = サーバー受理・更新日時
-- `revision` = レコード単位のサーバー版番号
-- 未同期ローカル = `revision = 0`、初回サーバー登録成功 = `revision = 1`
-- `SyncChangeLog` = 同期変更履歴の正本
-- 各Box / Item / BoxLocationにも最新 `syncSeq` を保持し、正本と同一トランザクションで更新
-- `syncSeq` = DB全体で一意・単調増加する64bit符号付き整数
-- `SyncChangeLog` 保持期間 = 90日
-- 端末cursorが保持範囲より古い場合、差分Pullを拒否し `FULL_RESYNC_REQUIRED`
-- 競合判定:
-  - `baseRevision == server.revision` → 通常更新
-  - 不一致かつ `contentHash` 同一 → 実質同一内容
-  - 不一致かつ `contentHash` 不一致 → 時刻に関係なくユーザー確認
-- `contentHash` = 業務内容 + 削除状態。ID・userId・時刻・同期メタデータは除外。canonical JSON + SHA-256等
-- バックアップhash = 同期用 `contentHash` と同一のcanonical化・hash計算仕様を使用
-- `SyncConflict` は未解決中のみ保持し、解決成功時に削除
-- `SyncConflict` の対象識別には `userId + entityType + entityId` を使用
-- 競合解決時は最新revisionを再確認し、表示時から進んでいれば最新サーバー版との比較へ戻す
-- トランザクション境界 = 整合性を保つ必要がある論理操作単位
-- 通常更新では、revision確認 → データ更新 → revision更新 → serverUpdatedAt更新 → syncSeq採番 → SyncChangeLog追加を原子的に実行
-- 箱削除では、子ItemのUNASSIGNED移動、各Item更新、Box tombstone、各SyncChangeLog追加を一つの論理操作として原子的に実行。BoxLocationは独立マスタなので箱削除では削除しない
-- BoxLocation削除では、参照BoxのlocationIdをUNASSIGNEDへ更新、各Boxのrevision/syncSeq更新、BoxLocation tombstone、SyncChangeLog追加を一つの論理操作として原子的に実行
-- Pushバッチ全体は巨大トランザクションにせず、各論理操作ごとに成功/競合/失敗を返す
-- 競合発生時の `SyncConflict` 作成も競合判定と同一トランザクション
-- 競合解決時の正本更新・revision/syncSeq/SyncChangeLog更新・SyncConflict削除も同一トランザクション
-- Pushで使用する `userId` はクライアントpayloadではなく認証結果からサーバー側で確定する
-- Pullは認証済み `userId` で `SyncChangeLog` を絞り、`syncSeq > cursor` のみ返す
-- バックアップIDを維持し、同一ID+同一contentHashなら同一データとしてID維持、同一ID+異なるcontentHashならインポート側に新IDを発行する
-- Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
 
-## 5. syncSeq 根拠・非常時リセット
+### 登録・QR・写真
+- 登録順序 = 箱登録 → アイテム → 箱写真 → ラベル → 場所
+- 場所は未設定のまま完了可能
+- 写真フィールド = `thumbs`
+- QR payload = Box.codeのみ
 
-`syncSeq` はDB全体で一意・単調増加する64bit符号付き整数とする。
+### Box / Item
+- Item「取り出す」 = `boxId=UNASSIGNED`
+- Item「削除する」 = tombstone化
+- Box削除 = 子ItemをUNASSIGNEDへ移動後、Boxをtombstone化
+- Box削除ではBoxLocationを削除しない
+- UNASSIGNED Boxは予約レコードで通常削除・編集不可
 
-根拠:
-- SQLite `INTEGER` は64bit符号付き整数で、最大値は 9,223,372,036,854,775,807。
-- 仮に毎秒100万件を採番しても最大値到達まで約29万年を要するため、通常運用でのオーバーフローは実質的に発生しない。
-- ユーザー別カウンタを持たずに済み、Box / Item / BoxLocationを同一時系列で扱える。
-- seqの欠番はPullの `syncSeq > cursor` 判定に影響しない。
-
-オーバーフローやDB再構築等で再初期化する非常時は、端末アクセスを停止し、既存端末の同期情報・cursorをすべて破棄する。その後SyncChangeLogおよびレコード側syncSeqを再構築して0から採番し直し、端末アクセス再開後は全端末を新規同期状態としてfull resyncする。旧cursorを保持しない運用のため `syncEpoch` は不要。
-
-## 6. ローカルOutbox
-
-ローカル未同期変更はOutboxで明示管理する。
-
-- Outbox = サーバーがまだ受理していない端末側変更の一時保持領域
-- 業務レコード更新とOutbox更新は同一ローカルトランザクションで行う
-- Push対象は `updatedAt > lastPushAt` ではなくOutboxから取得する
-- 同一エンティティへの未同期変更は原則1件に集約し、最新状態を保持する
-- 集約時も最初の編集元である `baseRevision` は維持する
-- Push成功または競合解決成功まで保持する
-- 保存期間による自動削除は行わない
-- full resync時もOutboxを破棄せず、サーバー正本再構築後に再適用して通常のrevision/contentHash競合判定へ戻す
-
-根拠:
-- `updatedAt` は実データ変更日時であり、未同期状態を表す責務を持たせないため
-- full resyncで未Push変更・削除要求を失わないため
-- 箱目録の想定データ量では、同一エンティティ1件への集約でOutbox肥大化は実用上許容できるため
-- 未同期データを期間で自動削除するとデータ消失につながるため
-
-## 7. ユーザー分離と所有権
-
-サーバー1つに複数ユーザーのデータを保持し、`userId` でデータ空間を分離する。同一ユーザーの複数端末は同じデータ空間を同期する。
-
-Box / Item / BoxLocation のサーバー上の識別単位は `(userId, id)` とする。
+### BoxLocation
+- 独立した置き場所マスタ
+- 階層なし
+- Box : BoxLocation = 多対1
+- Boxが `locationId` で参照
+- 新規Boxは `locationId=UNASSIGNED`
+- UNASSIGNED BoxLocationは予約レコードで通常削除・編集不可
+- BoxLocation削除 = 参照BoxをUNASSIGNEDへ移動後、場所をtombstone化
+- 基本項目: id, name, note, thumbs, meta, aiState, aiUpdatedAt + 共通同期メタデータ
+- codeは持たない
+- nameはユーザー内一意
+- 同名発生時は後からサーバー受理する名称を優先し、既存側を `name(n)` へ自動改名
+- nは未使用の最小正整数
+- 後勝ちはupdatedAtではなくサーバー受理順
+- 自動改名は通常の業務更新としてrevision/contentHash/syncSeq等を更新し、新規/変更側の保存と同一トランザクション
+- UNASSIGNEDは予約名で通常レコードには使用不可
 
 根拠:
-- クライアント生成IDはユーザー内で一意であれば十分であり、別ユーザーとのID衝突をエラーにする必要がないため
-- 各ユーザーが固定ID `UNASSIGNED` の仮置き箱を持つ要件を自然に表現できるため
-- 各ユーザーが固定ID `UNASSIGNED` の未設定BoxLocationも持てるため
-- Item→Box、Box→BoxLocation等の参照を同一userId内に限定し、別ユーザーのデータ参照をDBレベルで防止できるため
-- 現行の `where: { id }` Pushは別ユーザー同一IDへの更新リスクがあり、マルチユーザー想定と整合しないため
+- BoxLocationの目的は「どの部屋・棚等に箱があるか」を表すことで、階層管理自体は目的ではない。
+- フラット構造なら登録・移動・削除・同期・バックアップ・UIを単純化できる。
+- 引っ越しでは箱詰め時点で置き場所未定が通常なのでUNASSIGNEDを通常状態として扱う。
+- 名前一意により階層なしでも選択肢を識別できる。
+- 同名時の後勝ち自動改名により、複数端末のオフライン作成でもユーザー操作を止めず一意性を維持できる。
 
-APIではクライアントpayload内の `userId` を所有権判定に使用せず、認証結果からサーバー側で `userId` を確定する。
+### 同期メタデータ
+Box / Item / BoxLocation:
+- createdAt
+- updatedAt
+- deletedAt
+- serverUpdatedAt
+- revision
+- contentHash
+- syncSeq
 
-## 8. BoxLocationと実運用
+未同期新規 = revision 0、初回サーバー登録成功 = revision 1。
 
-BoxLocationは、Boxに付随する1件の補助情報ではなく、部屋・押入れ・棚などの「置き場所」そのものを表す独立マスタとする。複数のBoxが同じBoxLocationを参照できる。
-
-各ユーザーに予約BoxLocation `UNASSIGNED` を必ず用意し、Box登録時の `locationId` は原則 `UNASSIGNED` とする。
-
-根拠:
-- 箱詰め時点では置き場所を決めず、まず箱を作って内容物を登録する運用が自然であるため
-- 引っ越しでは、移動前に多数の箱を先に作成し、引っ越し後に未開封の箱だけ置き場所を決めるケースが一般的に想定されるため
-- 「置き場所未定」をnullや例外状態にせず、通常の参照関係として扱えるため
-- 置き場所未定の箱を一覧・検索しやすくなるため
-
-想定フロー:
-
+### 競合
 ```text
-箱登録
-  ↓
-locationId = UNASSIGNED
-  ↓
-アイテム登録・箱写真・ラベル
-  ↓
-必要に応じて場所を後から決定
-  ↓
-Box.locationId = 選択したBoxLocation.id
+baseRevision == server.revision
+→ 通常更新
+
+baseRevision != server.revision
+→ contentHash比較
+  同一 → 実質同一内容
+  不一致 → ユーザー確認
 ```
 
-箱を開封して中身を処理する場合と、未開封のまま保管場所を決める場合を分離して扱える。
+updatedAtは競合勝者決定には使用しない。
 
-## 9. 現行実装で確認済みの主要問題
+### stale SyncConflict
+- 解決時にcurrent server revisionとserverRevisionAtConflictを再確認
+- 同じなら通常解決
+- 進んでいれば既存SyncConflictのserver snapshotを最新正本へ更新
+- 新しいSyncConflict行は増やさない
+- 最新contentHashで再比較
+- 同一なら自動解消しSyncConflictとOutboxを削除
+- 不一致なら最新client/server版を再提示
+- 古いsnapshotによる上書きを禁止
 
-1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` / `syncSeq` がない。
-2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しない。
-3. Sync Pushは受信レコードを比較せずupsertする。
-4. Sync Pullは `updatedAt > since` ベース。
-5. バックアップに `photoThumbs` / `thumbs` 不整合がある。
-6. バックアップ対象にBoxLocationがない。
-7. replaceリストアがIDを無条件再発行する。
-8. 箱削除は現在ローカル物理削除。
-9. 現行Prismaでは Box / Item / BoxLocation の `id` が全ユーザー共通主キーであり、想定しているユーザー別データ空間と不整合。
-10. 現行Pushは `where: { id }` でupsertし、update時に `userId` も書き換えるため、別ユーザー同一IDとの衝突・所有権侵害リスクがある。
-11. 現行BoxLocationは `boxId` を持つBox従属モデルだが、要件上は独立した置き場所マスタであり、Box側から `locationId` 参照する構造へ変更が必要。
+根拠:
+- 競合表示後に別端末更新が入ってもデータを失わないため。
+- SyncConflictは監査履歴ではなく未解決状態の保持領域なのでstaleごとに履歴行を増やす必要がないため。
 
-## 10. ロードマップ
+### SyncChangeLog / syncSeq
+- SyncChangeLogが変更履歴の正本
+- syncSeqはDB全体で一意・単調増加する64bit符号付き整数
+- PullはuserIdで絞り `syncSeq > cursor`
+- SyncChangeLog保持90日
+- stale cursorはFULL_RESYNC_REQUIRED
+- syncEpochなし
+
+### 削除
+- deletedAtでtombstone化
+- サーバーtombstone保持30日
+- ローカルtombstoneはサーバー受理まで保持し、受理後物理削除
+
+### Outbox
+- 業務更新と同一ローカルトランザクション
+- PushはOutbox基準
+- 同一entityの未同期変更は最新状態へ集約、最初のbaseRevision維持
+- 成功/競合解決まで保持、自動期限削除なし
+- full resyncでも保持して再適用
+
+### contentHash / backup
+- 業務内容 + active/deleted状態をhash対象
+- ID/userId/各種時刻/revision/syncSeq/contentHash自身は除外
+- canonical JSON + SHA-256等
+- backupの衝突判定も完全に同一アルゴリズム
+- backupは元ID維持。同一ID+同一hashは同一、同一ID+異なるhashはimport側へ新ID
+- ID変更時はItem.boxId、Box.locationId等を再マッピング
+
+### ユーザー分離
+- サーバー上の業務レコード識別 = `(userId,id)`
+- 同一ユーザー複数端末は同一データ空間
+- 異なるユーザーは同一id可
+- PushのuserIdはpayloadではなく認証結果から確定
+
+## 5. 現行実装の主要差異
+
+1. Prisma Box / Item / BoxLocationに同期メタデータが不足。
+2. Prisma `updatedAt @updatedAt` は確定したupdatedAt意味と不一致。
+3. Pushはrevision/contentHash競合未対応。
+4. Pullはtimestamp since方式。
+5. Outbox未実装。
+6. backupのphotoThumbs/thumbs不整合。
+7. backupにBoxLocationなし。
+8. replace restoreがIDを無条件再発行。
+9. Box削除がローカル物理削除。
+10. PrismaのBox / Item / BoxLocation idが全ユーザー共通PK。
+11. Push `where:{id}` + userId書換えに所有権侵害リスク。
+12. 現行BoxLocationはboxIdを持つBox従属モデルだが、確定要件では独立マスタ。
+13. 現行Box.location自由文字列は `locationId` 参照へ変更が必要。
+
+## 6. ロードマップ
 
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
@@ -202,16 +187,19 @@ Box.locationId = 選択したBoxLocation.id
 12. Vision/LLM実装完成
 13. v1.0完成・受入
 
-## 11. 次のアクション
+## 7. 次のアクション
 
-次の設計判断点は、BoxLocationの具体的なデータ項目と階層構造をどこまでv0.8で持たせるか。
+次の設計判断点:
+**ローカルIndexedDB / Outbox / sync cursorを複数ログインユーザー間でどう分離するか。**
 
-その後:
-1. stale SyncConflictの扱い
-2. 正式な全体アーキテクチャ / データモデル / 同期仕様への反映
+候補:
+1. ユーザーごとにIndexedDB自体を分離する。
+2. 1つのIndexedDB内でuserIdを各レコード/Outbox/cursorに持たせて分離する。
+
+この判断後、正式な全体アーキテクチャ / データモデル / 同期仕様へ進む。
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
-## 12. HLDocS運用上の注意
+## 8. HLDocS運用上の注意
 
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
