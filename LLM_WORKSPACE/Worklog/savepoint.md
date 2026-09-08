@@ -37,6 +37,9 @@
 - Box / Item / BoxLocation のサーバー上の識別単位を `(userId, id)` とする方針で確定
 - `UNASSIGNED` は各ユーザーが `id=UNASSIGNED` として持つ通常のBoxレコードとする方針で確定
 - Push / Pull / Conflict / SyncChangeLog / Outbox の既存同期設計は `(userId,id)` 化後も基本仕様変更なしと再確認
+- バックアップのレコード衝突判定hashは同期用 `contentHash` と同一仕様を使用する方針で確定
+- BoxLocationはBox従属1:1ではなく、複数Boxから参照される独立した置き場所マスタとして扱う方針で確定
+- BoxLocationにも予約レコード `UNASSIGNED` を設け、置き場所未定を通常状態として表現する方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -51,7 +54,13 @@
 - アイテム「取り出す」 = `UNASSIGNED` へ移動
 - アイテム「削除する」 = `deletedAt` 設定
 - 箱削除時のアイテム = `UNASSIGNED` へ移動
-- `UNASSIGNED` = 各ユーザーが持つ通常Box。`id=UNASSIGNED`, `code=UNASSIGNED`
+- `UNASSIGNED` Box = 各ユーザーが持つ予約Box。`id=UNASSIGNED`, `code=UNASSIGNED`
+- `UNASSIGNED` BoxLocation = 各ユーザーが持つ予約置き場所。置き場所未定のBoxが参照する
+- BoxLocation = 部屋・押入れ・棚などの置き場所そのものを表す独立エンティティ
+- Box と BoxLocation の関係 = 多対1。Boxが `locationId` でBoxLocationを参照する
+- 新規Boxの `locationId` = `UNASSIGNED`
+- BoxLocation削除時は、その場所を参照するBoxを `UNASSIGNED` へ移動してからBoxLocationをtombstone化する
+- `UNASSIGNED` BoxLocation自体は削除不可・通常編集不可
 - サーバー上の業務レコード識別 = `(userId, id)`
 - 同一ユーザーの複数端末 = 同じサーバーデータ空間を共有
 - 異なるユーザー = 同一 `id` を持ってよい
@@ -71,18 +80,20 @@
   - 不一致かつ `contentHash` 同一 → 実質同一内容
   - 不一致かつ `contentHash` 不一致 → 時刻に関係なくユーザー確認
 - `contentHash` = 業務内容 + 削除状態。ID・userId・時刻・同期メタデータは除外。canonical JSON + SHA-256等
+- バックアップhash = 同期用 `contentHash` と同一のcanonical化・hash計算仕様を使用
 - `SyncConflict` は未解決中のみ保持し、解決成功時に削除
 - `SyncConflict` の対象識別には `userId + entityType + entityId` を使用
 - 競合解決時は最新revisionを再確認し、表示時から進んでいれば最新サーバー版との比較へ戻す
 - トランザクション境界 = 整合性を保つ必要がある論理操作単位
 - 通常更新では、revision確認 → データ更新 → revision更新 → serverUpdatedAt更新 → syncSeq採番 → SyncChangeLog追加を原子的に実行
-- 箱削除では、子ItemのUNASSIGNED移動、各Item更新、BoxLocation tombstone、Box tombstone、各SyncChangeLog追加を一つの論理操作として原子的に実行
+- 箱削除では、子ItemのUNASSIGNED移動、各Item更新、Box tombstone、各SyncChangeLog追加を一つの論理操作として原子的に実行。BoxLocationは独立マスタなので箱削除では削除しない
+- BoxLocation削除では、参照BoxのlocationIdをUNASSIGNEDへ更新、各Boxのrevision/syncSeq更新、BoxLocation tombstone、SyncChangeLog追加を一つの論理操作として原子的に実行
 - Pushバッチ全体は巨大トランザクションにせず、各論理操作ごとに成功/競合/失敗を返す
 - 競合発生時の `SyncConflict` 作成も競合判定と同一トランザクション
 - 競合解決時の正本更新・revision/syncSeq/SyncChangeLog更新・SyncConflict削除も同一トランザクション
 - Pushで使用する `userId` はクライアントpayloadではなく認証結果からサーバー側で確定する
 - Pullは認証済み `userId` で `SyncChangeLog` を絞り、`syncSeq > cursor` のみ返す
-- バックアップIDを維持し、データ単位ハッシュで衝突判定
+- バックアップIDを維持し、同一ID+同一contentHashなら同一データとしてID維持、同一ID+異なるcontentHashならインポート側に新IDを発行する
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
 
@@ -126,12 +137,41 @@ Box / Item / BoxLocation のサーバー上の識別単位は `(userId, id)` と
 根拠:
 - クライアント生成IDはユーザー内で一意であれば十分であり、別ユーザーとのID衝突をエラーにする必要がないため
 - 各ユーザーが固定ID `UNASSIGNED` の仮置き箱を持つ要件を自然に表現できるため
-- Item→Box等の参照を同一userId内に限定し、別ユーザーのデータ参照をDBレベルで防止できるため
+- 各ユーザーが固定ID `UNASSIGNED` の未設定BoxLocationも持てるため
+- Item→Box、Box→BoxLocation等の参照を同一userId内に限定し、別ユーザーのデータ参照をDBレベルで防止できるため
 - 現行の `where: { id }` Pushは別ユーザー同一IDへの更新リスクがあり、マルチユーザー想定と整合しないため
 
 APIではクライアントpayload内の `userId` を所有権判定に使用せず、認証結果からサーバー側で `userId` を確定する。
 
-## 8. 現行実装で確認済みの主要問題
+## 8. BoxLocationと実運用
+
+BoxLocationは、Boxに付随する1件の補助情報ではなく、部屋・押入れ・棚などの「置き場所」そのものを表す独立マスタとする。複数のBoxが同じBoxLocationを参照できる。
+
+各ユーザーに予約BoxLocation `UNASSIGNED` を必ず用意し、Box登録時の `locationId` は原則 `UNASSIGNED` とする。
+
+根拠:
+- 箱詰め時点では置き場所を決めず、まず箱を作って内容物を登録する運用が自然であるため
+- 引っ越しでは、移動前に多数の箱を先に作成し、引っ越し後に未開封の箱だけ置き場所を決めるケースが一般的に想定されるため
+- 「置き場所未定」をnullや例外状態にせず、通常の参照関係として扱えるため
+- 置き場所未定の箱を一覧・検索しやすくなるため
+
+想定フロー:
+
+```text
+箱登録
+  ↓
+locationId = UNASSIGNED
+  ↓
+アイテム登録・箱写真・ラベル
+  ↓
+必要に応じて場所を後から決定
+  ↓
+Box.locationId = 選択したBoxLocation.id
+```
+
+箱を開封して中身を処理する場合と、未開封のまま保管場所を決める場合を分離して扱える。
+
+## 9. 現行実装で確認済みの主要問題
 
 1. Prisma Box / Item / BoxLocation に `deletedAt` / `serverUpdatedAt` / `revision` / `syncSeq` がない。
 2. Prisma `updatedAt @updatedAt` は要件上の `updatedAt` と意味が一致しない。
@@ -143,8 +183,9 @@ APIではクライアントpayload内の `userId` を所有権判定に使用せ
 8. 箱削除は現在ローカル物理削除。
 9. 現行Prismaでは Box / Item / BoxLocation の `id` が全ユーザー共通主キーであり、想定しているユーザー別データ空間と不整合。
 10. 現行Pushは `where: { id }` でupsertし、update時に `userId` も書き換えるため、別ユーザー同一IDとの衝突・所有権侵害リスクがある。
+11. 現行BoxLocationは `boxId` を持つBox従属モデルだが、要件上は独立した置き場所マスタであり、Box側から `locationId` 参照する構造へ変更が必要。
 
-## 9. ロードマップ
+## 10. ロードマップ
 
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
@@ -161,17 +202,16 @@ APIではクライアントpayload内の `userId` を所有権判定に使用せ
 12. Vision/LLM実装完成
 13. v1.0完成・受入
 
-## 10. 次のアクション
+## 11. 次のアクション
 
-次の設計判断点は、バックアップのレコード衝突判定hashを同期用 `contentHash` と同一のcanonical化・hash計算仕様に共通化するか。
+次の設計判断点は、BoxLocationの具体的なデータ項目と階層構造をどこまでv0.8で持たせるか。
 
 その後:
-1. BoxLocationを含む削除・同期ライフサイクル
-2. stale SyncConflictの扱い
-3. 正式な全体アーキテクチャ / データモデル / 同期仕様への反映
+1. stale SyncConflictの扱い
+2. 正式な全体アーキテクチャ / データモデル / 同期仕様への反映
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
-## 11. HLDocS運用上の注意
+## 12. HLDocS運用上の注意
 
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
