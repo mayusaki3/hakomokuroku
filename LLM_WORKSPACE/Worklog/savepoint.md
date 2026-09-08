@@ -195,39 +195,43 @@ v0.8では、親DELETEと、そのDELETEに伴う全子参照補正を原則1 se
 - 将来、実測でtransaction時間・lock時間が問題になった場合のみ分割方式を追加検討する
 
 ### 親DELETEと別device子UPDATEの同時実行
-**確定:** DB transactionのcommit順を基準に処理し、同時実行専用の別競合機構は導入しない。
+DB transactionのcommit順を基準に処理し、同時実行専用の別競合機構は導入しない。
 
-子UPDATEが先にcommitした場合:
-```text
-Item rev5 → rev6  // 別device更新
-↓
-親DELETE transaction
-最新Item内容を保持したまま参照だけUNASSIGNEDへ変更
-rev6 → rev7
-SyncChangeLog UPSERT
-```
-
-親DELETEが先にcommitした場合:
-```text
-Item rev5 → rev6  // 親DELETE cascadeでUNASSIGNED化
-↓
-別deviceから baseRevision=5 のItem UPDATE
-↓
-revision mismatch
-↓
-contentHash比較
-↓
-同一ならUNCHANGED、異なるならCONFLICT
-```
-
-規則:
-- 親DELETEに伴う子参照補正はserver-side cascade業務操作として、transaction内で取得した最新子canonicalへ適用する
-- cascade補正は個別clientのbaseRevisionを持たない
-- cascade時に子の他業務フィールドを古いsnapshotで上書きしない
 - 親DELETE前にcommit済みの子UPDATE内容は保持し、参照だけUNASSIGNEDへ補正する
 - 親DELETE後に古いbaseRevisionで到着した子UPDATEは通常のrevision/contentHash規則で競合判定する
+- cascade補正時に子の他業務フィールドを古いsnapshotで上書きしない
 
-根拠: serverのtransaction isolationと既存revision/contentHash規則だけで直列化でき、競合モデルを追加せずに子の最新業務内容と参照整合性を両立できるため。
+### 親DELETE時に子が未解決SyncConflictを持つ場合
+**確定:** 子entityの未解決SyncConflictは親DELETEをブロックしない。server canonicalの参照整合性を優先してcascade補正を適用する。
+
+親DELETE transaction内で:
+1. 子の最新server canonicalを取得
+2. 参照をUNASSIGNEDへ補正
+3. 子のrevision/contentHash/serverUpdatedAtを更新
+4. 子へ新syncSeqを採番しSyncChangeLog UPSERTを追加
+5. 既存SyncConflictは削除しない
+6. SyncConflictのserver側snapshotをcascade後の最新canonical/revision/contentHashへ更新
+7. client candidate/clientContentHash/clientBaseRevisionは保持
+8. 親DELETEを続行して同一transactionでcommit
+
+例:
+```text
+Item I server canonical: boxId=A, rev=5
+SyncConflict: client candidate C
+
+Box A DELETE
+↓
+Item I canonical: boxId=UNASSIGNED, rev=6
+SyncChangeLog UPSERT
+SyncConflict.server snapshot: rev=6 / latest canonical
+SyncConflict.client candidate: C のまま保持
+↓
+Box A DELETE commit
+```
+
+その後の競合解決では、保持した最新client candidateと、更新された最新server snapshotを比較する。必要なら既存の `CONFLICT_UPDATED` / stale candidate規則を適用する。
+
+根拠: 子CONFLICTの存在によって削除済み親への参照をserver canonicalに残すべきではない。一方、SyncConflictを削除すると利用者の未解決client変更を失うため、参照整合性更新と競合解決状態を分離する。
 
 ## 5. Push API
 
@@ -272,6 +276,7 @@ serverPayload // 必要時
 - server DELETE vs local UPDATE = CONFLICT。自動復活禁止
 - local DELETE vs newer server UPDATE = CONFLICT。自動削除禁止
 - local DELETE vs server DELETE = hash同一ならUNCHANGED
+- server canonicalがcascade等で変化した場合、未解決rowのserver snapshotは最新canonicalへ更新可能
 
 Resolve API:
 `POST /sync/conflicts/{conflictId}/resolve`
@@ -357,14 +362,14 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**親DELETE transaction中に、子entity自身が未解決SyncConflictを持っている場合、cascade参照補正とSyncConflictをどう扱うかを確定する。**
+**cascadeによるserver snapshot更新後、SyncConflictのclient candidateがserver canonicalと同一contentHashになった場合に、自動解決するかを確定する。**
 
 推奨候補:
-- server canonicalの参照整合性を優先し、親DELETE cascadeは子canonicalへ適用する
-- 子SyncConflictは削除しない
-- cascade後の最新server canonical/revision/contentHashで既存SyncConflictのserver snapshotを更新する
-- client候補は保持し、次回解決時に最新server状態との比較を行う
-- これにより親DELETEを子CONFLICTがブロックしない
+- cascade後にserverContentHashとclientContentHashを再比較する
+- 同一になった場合は実質的な競合が消滅しているためSyncConflictを自動削除する
+- 対応するclient Outboxについても、current outboxVersionが対象candidateと一致する場合のみ成功扱いで削除/同期済み化する
+- outboxVersionが進んでいれば新しいlocal candidateを保持し、競合再評価へ回す
+- hashが異なる場合はConflictを維持する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
