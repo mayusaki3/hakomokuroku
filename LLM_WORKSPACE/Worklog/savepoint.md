@@ -198,6 +198,25 @@ BoxLocation DELETEでも同様に、参照Boxの `locationId=UNASSIGNED` 更新�
 
 根拠: 他deviceが通常Pullだけで参照補正を完全に再現でき、Pullのpage境界で途中状態が見えても「削除済み親をまだ参照している」状態を避けやすいため。server canonical上は全変更を同一transactionで確定するため中間状態を外部へ露出しない。
 
+### 親DELETEのtransaction境界
+**確定:** v0.8では、親DELETEと、そのDELETEに伴う全子参照補正を原則1 server transactionで実行する。
+
+```text
+BEGIN
+全子entityの参照 → UNASSIGNED
+各子 revision/contentHash/syncSeq/SyncChangeLog更新
+親 → tombstone
+親 revision/contentHash/syncSeq/SyncChangeLog更新
+COMMIT
+```
+
+- 子数が多くてもv0.8では分割transactionにしない
+- 非同期delete job / background cleanup機構は導入しない
+- 通常の箱目録利用規模では1つのBox/BoxLocationにぶら下がる子数は現実的な範囲とする
+- 将来、実測でtransaction時間・lock時間が問題になった場合のみ分割方式を追加検討する
+
+根拠: 分割すると「親削除済みだが一部の子が旧親を参照する」中間状態と、その回復・再開・同期順序を別途仕様化する必要がある。v0.8では整合性・単純性・テスト容易性を優先する。
+
 ## 5. Push API
 
 Request per operation:
@@ -326,13 +345,13 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**1回の親DELETEで非常に多数の子entityが参照補正される場合、server transactionとSyncChangeLog採番を一括で行うか、分割処理を許可するかを確定する。**
+**server親DELETE transaction内で、子entity自身が同時に別deviceから更新されようとしている場合の競合境界を確定する。**
 
 推奨候補:
-- 論理整合性を優先し、親DELETE + 全子参照補正を原則1 transactionとする
-- 通常の箱目録利用規模では子数は現実的に十分小さい前提
-- 極端な件数に備えた非同期分割delete/job機構はv0.8では導入しない
-- 将来実測でtransaction時間が問題になった場合のみ拡張する
+- 親DELETE transactionがDB lock/transaction isolation下で子の最新revisionを確定して参照補正する
+- 親DELETEに伴う子補正はserver-side cascade業務操作であり、個別client baseRevisionを持たない
+- 競合する別deviceの子UPDATEは、親DELETE transactionのcommit後に古いbaseRevisionとして到着すれば通常CONFLICTになる
+- 親DELETEより先に子UPDATEがcommit済みなら、その最新内容を保持したまま参照だけUNASSIGNEDへ変更し revision+1 する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
