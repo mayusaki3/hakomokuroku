@@ -189,14 +189,12 @@ final Pull
 
 ```text
 BEGIN IndexedDB transaction
-
 1. staging snapshotを読む
 2. Businessをsnapshot canonicalへ置換
 3. SyncStateをsnapshot metadataへ置換
 4. latest Outboxを読む
 5. Outbox payloadをBusinessへreapply
 6. cursor = snapshotSeq
-
 COMMIT
 ```
 
@@ -206,42 +204,70 @@ COMMIT
 - snapshot採用transaction失敗時は全体rollbackし、旧canonical / old cursor / Outboxを維持する
 - `/sync/full/{snapshotId}/complete` はlocal採用transaction成功後にのみ送信する
 
-### Full Resync後の孤児参照補正
-**確定:** Full Resync snapshot採用時に最新Outboxをreapplyする際、local candidate本体は保持する。candidateが参照する親entityがsnapshotに存在しない場合は、参照だけreserved `UNASSIGNED`へ補正する。
+### Full Resync後の参照補正
+**確定:** Full Resync snapshot採用時に最新Outboxをreapplyする際、local candidate本体は保持する。親参照の有効性は **snapshot + latest Outbox** の両方で判定する。
 
+Outbox reapply順:
 ```text
-Item candidate
-boxId = BOX-A
+BoxLocation → Box → Item
+```
 
-snapshotに BOX-A なし
+参照判定:
+```text
+snapshotに親あり
+→ snapshot親を参照
+
+snapshotに親なし
+latest Outboxに有効な親candidateあり
+→ parent candidateを先にBusinessへreapplyし、子のlocal親参照を維持
+
+snapshotにもlatest Outboxにも親なし
+→ 子candidate自体は保持し、親参照だけUNASSIGNEDへ補正
+```
+
+例:
+```text
+offlineで新規 Location-A
 ↓
-Item candidate自体はBusinessへ保持
-boxId = UNASSIGNED に補正
+新規 Box-A(locationId=Location-A)
+↓
+新規 Item-A(boxId=Box-A)
+
+Full Resync snapshotには3件とも存在しない
+↓
+Location-A Outboxをreapply
+↓
+Box-A OutboxをreapplyしlocationId=Location-Aを維持
+↓
+Item-A OutboxをreapplyしboxId=Box-Aを維持
+```
+
+本当に親が消失している場合:
+```text
+Item candidate.boxId = BOX-A
+snapshotにBOX-Aなし
+OutboxにもBOX-Aの有効candidateなし
+↓
+Item candidateは保持
+boxId = UNASSIGNED
 Outbox.payload更新
 contentHash再計算
 outboxVersion++
 baseRevision維持
 ```
 
-BoxLocation参照も同様:
-```text
-Box.locationId がsnapshotに存在しない
-→ locationId = UNASSIGNED
-```
+Boxについても同様に、参照先BoxLocationがsnapshotにも有効なOutboxにも存在しない場合だけ `locationId=UNASSIGNED` へ補正する。
 
 規則:
 - candidateの非参照business contentは失わない
-- 親がsnapshotに存在しないことだけを理由にcandidateを削除しない
+- local parent candidateが存在する場合は、そのparent-child関係をFull Resyncで壊さない
+- parentの有効性はOutbox operationも考慮し、DELETE candidateは参照可能な親として扱わない
 - 親参照補正はFull Resync採用transaction内で行う
-- 補正されたcandidateはBusinessへ反映する
-- 対応Outboxのpayloadを補正後candidateへ更新する
-- contentHashを再計算する
-- outboxVersionをincrementする
+- 補正時はBusiness / Outbox.payload / contentHash / outboxVersionを更新する
 - baseRevisionはcandidate自身のserver baselineなので変更しない
-- 親が後からlocal Outboxによってreapplyされる予定でも、snapshot canonicalに存在しない親への参照をそのまま保持しない
-- reserved UNASSIGNED自体はsnapshotに必ず含まれる前提であり、補正先として安全に利用できる
+- reserved UNASSIGNEDは補正先として常に利用可能
 
-根拠: Full Resyncはactive canonicalのみを返すため、tombstone purge済みの親DELETEは履歴として見えない場合がある。local candidateを保持しつつ参照だけ補正することで、未同期編集を失わず、孤児参照も残さない。
+根拠: Full Resyncはserver active canonicalだけを返すため、serverから消えた親と、単に未同期でserverにまだ存在しないlocal親をsnapshotだけでは区別できない。latest Outboxを合わせて判定することで、offlineで作成した一連のLocation→Box→Itemを維持しながら、本当に孤児となった参照だけを安全に補正できる。
 
 ### tombstone / SyncChangeLog purge
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -294,9 +320,9 @@ Box.locationId がsnapshotに存在しない
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**Full Resync採用時に、親entity自身もlocal Outboxで未同期CREATEされているためsnapshotには存在しない場合、子参照をUNASSIGNEDへ補正するか、local parent-child関係を復元するかを確定する。**
+**Full Resync採用時、Outbox上で親がDELETE、子がその親を参照したUPDATE/CREATEのまま残っている矛盾したlocal stateをどう正規化するかを確定する。**
 
-推奨候補は、latest Outboxを依存順 `BoxLocation → Box → Item` でreapplyし、親candidateが同じlocal Outboxに存在する場合はそのparentをlocal Businessへ先に復元して子参照を維持する方式。snapshotにもOutboxにも親が存在しない場合だけUNASSIGNEDへ補正する。これによりofflineで新規Location→Box→Itemを作成した一連の未同期データをFull Resyncで壊さない。
+推奨候補は、親DELETEをlocal意図として優先し、親DELETE candidateは参照可能親として扱わない。子は削除せず、参照だけUNASSIGNEDへ補正し、子Outbox payload/contentHash/outboxVersionを更新する。これは通常の親DELETE時cascade規則と同じ意味になるため、Full Resync時だけ別ルールを作らずに済む。
 
 ## 7. HLDocS運用上の注意
 
