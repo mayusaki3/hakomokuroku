@@ -142,12 +142,7 @@ BoxLocation → Box → Item
 
 ### 同一Push batch内の親ID_COLLISION
 - 親operationが `ID_COLLISION` になったdependency branchでは、旧親IDを参照する子operationをserverは適用しない
-- 子operation:
-```text
-REJECTED
-errorCode=DEPENDENCY_NOT_AVAILABLE
-retryable=true
-```
+- 子operationは `DEPENDENCY_NOT_AVAILABLE / retryable=true`
 - clientは親のlocal ID remap完了後、更新済みOutboxから次回Pushで子を再送
 - 無関係branchは処理継続
 
@@ -168,27 +163,40 @@ retryable=true
 - 次回Pushで子自身のrevision/contentHash規則により再評価
 
 ### 親CONFLICTをSERVER winsで解決し親がDELETE済みの場合
-**確定:** 親がserver側でDELETE済みと確定した場合、依存するlocal子entityの参照を予約 `UNASSIGNED` へ補正する。
+- Box DELETE確定 → 参照するItem.boxId = UNASSIGNED
+- BoxLocation DELETE確定 → 参照するBox.locationId = UNASSIGNED
+- 補正は子entityの通常local業務変更としてBusiness/Outbox/contentHash/outboxVersionへ反映
+- 子自身のbaseRevisionは維持
+- 子が既にCONFLICT中でも最新local candidateとして引き継ぐ
 
+### server親DELETE時の子参照補正とSyncChangeLog
+**確定:** serverでBox/BoxLocationをDELETEするとき、UNASSIGNEDへ補正される各子entityも正式な業務UPDATEとして個別に同期履歴へ記録する。
+
+同一server transaction内で:
+1. 影響する各子entityの参照をUNASSIGNEDへ変更
+2. 各子entityを `revision + 1`
+3. 各子entityへ個別のsyncSeqを採番
+4. 各子entityのSyncChangeLogへUPSERTを追加
+5. 最後に親をtombstone化して `revision + 1`
+6. 親へ別syncSeqを採番
+7. 親のSyncChangeLogへDELETEを追加
+8. COMMIT
+
+採番順:
 ```text
-Box DELETE確定
-→ 参照するItem.boxId = UNASSIGNED
-
-BoxLocation DELETE確定
-→ 参照するBox.locationId = UNASSIGNED
+子参照補正 UPSERT → 親 DELETE
 ```
 
-補正は子entityの通常のlocal業務変更として扱う:
-- Business更新
-- Outboxを作成またはpayload更新
-- contentHash再計算
-- outboxVersion更新
-- 子自身のbaseRevisionは維持
-- 次回Pushで子自身の競合有無を通常判定
+例:
+```text
+Item I1.boxId → UNASSIGNED  syncSeq=101 UPSERT
+Item I2.boxId → UNASSIGNED  syncSeq=102 UPSERT
+Box A DELETE                 syncSeq=103 DELETE
+```
 
-子が既にCONFLICT中でも、参照補正は行い、最新local candidateとして既存CONFLICTへ引き継ぐ。
+BoxLocation DELETEでも同様に、参照Boxの `locationId=UNASSIGNED` 更新を先に記録する。
 
-根拠: 削除済み親を参照するlocal recordを残さず参照整合性を維持しつつ、子自身の別端末更新との競合検出を失わないため。
+根拠: 他deviceが通常Pullだけで参照補正を完全に再現でき、Pullのpage境界で途中状態が見えても「削除済み親をまだ参照している」状態を避けやすいため。server canonical上は全変更を同一transactionで確定するため中間状態を外部へ露出しない。
 
 ## 5. Push API
 
@@ -318,14 +326,13 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**server側の親DELETE操作で子参照をUNASSIGNEDへ変更するとき、その子更新をSyncChangeLogへどう記録するかを確定する。**
+**1回の親DELETEで非常に多数の子entityが参照補正される場合、server transactionとSyncChangeLog採番を一括で行うか、分割処理を許可するかを確定する。**
 
 推奨候補:
-- 親DELETEと同一server transactionで、影響する各子entityを通常UPDATEとしてrevision+1
-- 各子に個別syncSeqを採番し、SyncChangeLogへUPSERTを記録
-- 親DELETE自身にも別syncSeqを採番しDELETEを記録
-- これにより他deviceはPullだけで参照補正結果を再現できる
-- transaction内の採番順は「子参照補正 → 親DELETE」を推奨し、Pull適用途中でも削除済み親を参照する時間を最小化する
+- 論理整合性を優先し、親DELETE + 全子参照補正を原則1 transactionとする
+- 通常の箱目録利用規模では子数は現実的に十分小さい前提
+- 極端な件数に備えた非同期分割delete/job機構はv0.8では導入しない
+- 将来実測でtransaction時間が問題になった場合のみ拡張する
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
