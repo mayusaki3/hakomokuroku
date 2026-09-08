@@ -259,6 +259,43 @@ client側Outbox:
 - newer Outboxは最新candidateとして次回Push/競合再評価へ回す
 - hashが異なる場合はSyncConflictを維持する
 
+### 予約UNASSIGNED entity
+**確定:** `UNASSIGNED` は通常の業務レコードと同じ参照先として存在するが、各Userに対してserverが必ず保証するシステム予約レコードとする。
+
+各Userについてserver側に以下を保証する:
+```text
+Box(id=UNASSIGNED)
+BoxLocation(id=UNASSIGNED)
+```
+
+生成・保証:
+- User作成時にserverが生成する
+- 既存Userについて不足している場合はserver側の初期化/整合性処理で補完する
+- clientが予約レコードを生成する責務は持たない
+
+同期:
+- 通常Pullに含める
+- Full Resync snapshotにも含める
+- localでは通常Business tableに保持し、Item.boxId / Box.locationId の正式な参照先として使う
+- reserved recordの存在を前提にnullable参照へ逃がさない
+
+保護:
+- clientから `entityId=UNASSIGNED` に対するCREATE/UPDATE/DELETEを送信してはならない
+- local UI/API層でも編集・削除・Outbox生成を禁止する
+- serverは防御的に拒否する
+
+```text
+REJECTED
+errorCode=RESERVED_ENTITY
+retryable=false
+```
+
+- reserved recordはtombstone化・purge対象にしない
+- ID remap対象にもならない
+- BoxLocation.nameの予約判定も既存確定どおりtrim + NFC後の `UNASSIGNED` を予約語として扱う
+
+根拠: `UNASSIGNED`を実在する予約レコードとして同期データに含めることで、server/local双方で参照整合性を通常のentity参照として扱える。client生成を許可すると削除・ID衝突・初期同期順序の例外が増えるため、server保証 + client read-onlyが最も単純でテストしやすい。
+
 ## 5. Push API
 
 Request per operation:
@@ -293,6 +330,7 @@ serverPayload // 必要時
 - create/update依存順 = BoxLocation → Box → Item
 - 一つの失敗は依存branchだけを止める
 - 親がID_COLLISION/CONFLICTなら同batchの依存子はDEPENDENCY_NOT_AVAILABLE
+- reserved `UNASSIGNED` へのclient変更は `RESERVED_ENTITY / retryable=false`
 
 ## 6. SyncConflict
 
@@ -388,12 +426,17 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 
 ## 12. 次のアクション
 
-同期設計の主要未確定点を再点検する。特に以下を確認する:
-- `ID_COLLISION` 回復後のDELETE candidateの扱いに矛盾がないか
-- reserved `UNASSIGNED` entityのserver/local同期上の生成・保護方法
-- SyncChangeLog / tombstone purge / Full Resync境界に未定義が残っていないか
+次の設計判断点:
+**tombstone 30日とSyncChangeLog 90日のpurge境界を確定する。**
 
-問題がなければ、全体アーキテクチャ確定から「データモデル・同期仕様確定」へ進む。
+推奨候補:
+- tombstoneは `deletedAt + 30日` 経過後に物理削除可能
+- SyncChangeLog DELETEは90日保持するため、tombstone物理削除後もDELETE changeは残る
+- 90日を超えて古いcursorは `FULL_RESYNC_REQUIRED`
+- purge順序は「tombstone → 後日SyncChangeLog」でよい
+- Full Resyncはactive canonicalのみなので、既にpurge済みtombstoneのentityはsnapshotに含まず、stale localはcanonical rebuildで消える
+
+この境界を確定後、同期設計の主要未定義を再点検する。
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
