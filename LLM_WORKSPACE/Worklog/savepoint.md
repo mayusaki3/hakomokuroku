@@ -170,7 +170,7 @@ BoxLocation → Box → Item
 - 子が既にCONFLICT中でも最新local candidateとして引き継ぐ
 
 ### server親DELETE時の子参照補正とSyncChangeLog
-**確定:** serverでBox/BoxLocationをDELETEするとき、UNASSIGNEDへ補正される各子entityも正式な業務UPDATEとして個別に同期履歴へ記録する。
+serverでBox/BoxLocationをDELETEするとき、UNASSIGNEDへ補正される各子entityも正式な業務UPDATEとして個別に同期履歴へ記録する。
 
 同一server transaction内で:
 1. 影響する各子entityの参照をUNASSIGNEDへ変更
@@ -187,35 +187,47 @@ BoxLocation → Box → Item
 子参照補正 UPSERT → 親 DELETE
 ```
 
-例:
-```text
-Item I1.boxId → UNASSIGNED  syncSeq=101 UPSERT
-Item I2.boxId → UNASSIGNED  syncSeq=102 UPSERT
-Box A DELETE                 syncSeq=103 DELETE
-```
-
-BoxLocation DELETEでも同様に、参照Boxの `locationId=UNASSIGNED` 更新を先に記録する。
-
-根拠: 他deviceが通常Pullだけで参照補正を完全に再現でき、Pullのpage境界で途中状態が見えても「削除済み親をまだ参照している」状態を避けやすいため。server canonical上は全変更を同一transactionで確定するため中間状態を外部へ露出しない。
-
 ### 親DELETEのtransaction境界
-**確定:** v0.8では、親DELETEと、そのDELETEに伴う全子参照補正を原則1 server transactionで実行する。
-
-```text
-BEGIN
-全子entityの参照 → UNASSIGNED
-各子 revision/contentHash/syncSeq/SyncChangeLog更新
-親 → tombstone
-親 revision/contentHash/syncSeq/SyncChangeLog更新
-COMMIT
-```
+v0.8では、親DELETEと、そのDELETEに伴う全子参照補正を原則1 server transactionで実行する。
 
 - 子数が多くてもv0.8では分割transactionにしない
 - 非同期delete job / background cleanup機構は導入しない
-- 通常の箱目録利用規模では1つのBox/BoxLocationにぶら下がる子数は現実的な範囲とする
 - 将来、実測でtransaction時間・lock時間が問題になった場合のみ分割方式を追加検討する
 
-根拠: 分割すると「親削除済みだが一部の子が旧親を参照する」中間状態と、その回復・再開・同期順序を別途仕様化する必要がある。v0.8では整合性・単純性・テスト容易性を優先する。
+### 親DELETEと別device子UPDATEの同時実行
+**確定:** DB transactionのcommit順を基準に処理し、同時実行専用の別競合機構は導入しない。
+
+子UPDATEが先にcommitした場合:
+```text
+Item rev5 → rev6  // 別device更新
+↓
+親DELETE transaction
+最新Item内容を保持したまま参照だけUNASSIGNEDへ変更
+rev6 → rev7
+SyncChangeLog UPSERT
+```
+
+親DELETEが先にcommitした場合:
+```text
+Item rev5 → rev6  // 親DELETE cascadeでUNASSIGNED化
+↓
+別deviceから baseRevision=5 のItem UPDATE
+↓
+revision mismatch
+↓
+contentHash比較
+↓
+同一ならUNCHANGED、異なるならCONFLICT
+```
+
+規則:
+- 親DELETEに伴う子参照補正はserver-side cascade業務操作として、transaction内で取得した最新子canonicalへ適用する
+- cascade補正は個別clientのbaseRevisionを持たない
+- cascade時に子の他業務フィールドを古いsnapshotで上書きしない
+- 親DELETE前にcommit済みの子UPDATE内容は保持し、参照だけUNASSIGNEDへ補正する
+- 親DELETE後に古いbaseRevisionで到着した子UPDATEは通常のrevision/contentHash規則で競合判定する
+
+根拠: serverのtransaction isolationと既存revision/contentHash規則だけで直列化でき、競合モデルを追加せずに子の最新業務内容と参照整合性を両立できるため。
 
 ## 5. Push API
 
@@ -345,13 +357,14 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**server親DELETE transaction内で、子entity自身が同時に別deviceから更新されようとしている場合の競合境界を確定する。**
+**親DELETE transaction中に、子entity自身が未解決SyncConflictを持っている場合、cascade参照補正とSyncConflictをどう扱うかを確定する。**
 
 推奨候補:
-- 親DELETE transactionがDB lock/transaction isolation下で子の最新revisionを確定して参照補正する
-- 親DELETEに伴う子補正はserver-side cascade業務操作であり、個別client baseRevisionを持たない
-- 競合する別deviceの子UPDATEは、親DELETE transactionのcommit後に古いbaseRevisionとして到着すれば通常CONFLICTになる
-- 親DELETEより先に子UPDATEがcommit済みなら、その最新内容を保持したまま参照だけUNASSIGNEDへ変更し revision+1 する
+- server canonicalの参照整合性を優先し、親DELETE cascadeは子canonicalへ適用する
+- 子SyncConflictは削除しない
+- cascade後の最新server canonical/revision/contentHashで既存SyncConflictのserver snapshotを更新する
+- client候補は保持し、次回解決時に最新server状態との比較を行う
+- これにより親DELETEを子CONFLICTがブロックしない
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
