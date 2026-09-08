@@ -16,256 +16,166 @@
 
 **全体アーキテクチャ / データモデル / 同期設計を確定中。**
 
-## 4. リリース・主要業務要件
+## 4. 主要確定事項
 
+### リリース・業務
 - v0.8 = Vision以外の完成版
 - v1.0 = v0.8 + Vision/LLM画像認識
 - 登録順序 = 箱登録 → アイテム → 箱写真 → ラベル → 場所
-- 場所は未設定で完了可能
 - 写真フィールド = `thumbs`
 - QR payload = Box.codeのみ
 - Item「取り出す」= `boxId=UNASSIGNED` の通常UPDATE
 - Item「削除」= DELETE/tombstone
 - Box削除 = 子ItemをUNASSIGNEDへ移動後Boxをtombstone
-- BoxLocationは独立フラットマスタ、Boxが `locationId` で参照
+- BoxLocationは独立フラットマスタ。Boxが `locationId` 参照
 - BoxLocation = `id / name / note / thumbs + 共通同期メタデータ`
-- BoxLocation写真はVision対象外。Vision対象はBox/Item写真
-- BoxLocation.nameはuser内一意。trim + Unicode NFC、大小文字区別
-- 同名は後からserver受理した名称を優先し、既存側へ最小未使用 `(n)` suffix
-- Box / BoxLocationに予約 `UNASSIGNED` を持ち、通常編集/削除不可
-- BoxLocation削除 = 参照BoxをUNASSIGNEDへ移動後tombstone
+- Vision対象はBox/Item写真のみ
+- Box / BoxLocationに予約 `UNASSIGNED`
 
-## 5. Server同期モデル
-
+### Server同期
 Box / Item / BoxLocation共通:
 `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 
+- business identity = `(User.id, entityId)`
 - 未同期新規 = revision 0 / baseRevision 0
 - 初回server登録成功 = revision 1
-- business identity = `(User.id, entityId)`
-- Pushのuser識別はpayloadではなく認証から確定
-- login用 `User.userId` と内部 `User.id` を仕様上区別
-
-### contentHash
-- 業務内容 + active/deleted状態をhash対象
-- userId/id/各時刻/revision/syncSeq/contentHash自身は除外
-- deletedAtは時刻値ではなく削除状態だけ反映
-- 順序非依存配列をsort、object key順を固定
-- canonical JSON + SHA-256等
-- backupでも同じalgorithmを使用
-
-### 競合基本規則
-
-```text
-baseRevision == server.revision
-→ normal update
-
-baseRevision != server.revision
-→ contentHash same → UNCHANGED
-→ contentHash different → CONFLICT
-```
-
-updatedAtは勝者決定に使わない。
-
-### syncSeq / SyncChangeLog
-- revision = entity単位version
-- syncSeq = DB全体一意・単調増加 signed 64-bit sequence
-- SyncChangeLog = Pull差分履歴の正本
-- record更新 + syncSeq採番 + log追加は同一transaction
-- Pull = auth user + `syncSeq > cursor`
-- SyncChangeLog保持90日
-- tombstone保持30日
+- Push userは認証から確定
+- contentHash = 業務内容 + active/deleted状態。時刻・revision・syncSeq等は除外
+- revision不一致時はcontentHash比較。同一=UNCHANGED、異なる=CONFLICT
+- updatedAtで勝者を決めない
+- SyncChangeLogがPull差分履歴の正本
+- syncSeqはDB全体単調増加signed 64-bit
+- tombstone 30日、SyncChangeLog 90日
 - stale cursor = FULL_RESYNC_REQUIRED
-- syncEpochなし
 
-## 6. Local同期モデル
-
-IndexedDBはuserごとに分離:
-- `hk-local-v2-<User.id>`
-- 旧 `hk-local-v1` は移行せず無視/破棄可能
+### Local同期
+IndexedDBはuser別:
+`hk-local-v2-<User.id>`
+旧 `hk-local-v1` は移行しない。
 
 3層:
-
 ```text
-Business tables
-→ user-visible working state
-
-SyncState
-- entityType
-- entityId
-- revision
-- contentHash
-- syncSeq
-- serverUpdatedAt
-- deleted
-→ last known server baseline
-
-Outbox
-- entityType
-- entityId
-- operation
-- baseRevision
-- contentHash
-- payload
-- outboxVersion
-- createdAt
-→ unsynchronized local change
+Business tables  = user-visible working state
+SyncState        = last known server baseline
+Outbox           = unsynchronized local change
 ```
 
-### Outbox
-- Business更新とOutbox更新は同一IndexedDB transaction
-- PushはOutbox基準
-- 同一entityの未同期変更は最新状態へ集約し、最初のbaseRevisionを維持
-- 自動期限削除なし
-- sync開始時に送信snapshotを固定
-- device-local単調増加 `outboxVersion`
-- Push成功時、current version == sent version の場合だけOutbox削除
-- 同期中再編集でversionが進んだら新Outboxを保持
-- entityIdだけを条件にOutbox削除禁止
-
-### Pull + Outbox overlay
-
+Outbox:
 ```text
-server/base state + Outbox overlay = user-visible current state
+entityType
+entityId
+operation
+baseRevision
+contentHash
+payload
+outboxVersion
+createdAt
+```
+
+- local業務更新とOutbox更新は同一IndexedDB transaction
+- PushはOutbox基準
+- 同一entity変更は最新candidateへ集約、baseRevision維持
+- sync開始時に送信snapshot固定
+- Push成功時はcurrent outboxVersion == sent versionの場合のみ削除
+- sync中再編集は新versionを保持
+
+通常同期:
+```text
+online auth → Pull → Outbox reapply → Push → Pull
 ```
 
 PullだけでOutbox.baseRevisionを前進させない。
 
-- Outboxなし + UPSERT → Business更新 + SyncState更新
-- Outboxなし + DELETE → Business物理削除 + SyncState削除
-- Outboxあり + UPSERT → SyncStateをserver最新へ更新後、Outbox payloadをBusinessへ再適用
-- Outboxあり + DELETE → SyncStateをserver deleted状態へ更新後、Outboxを再適用
-- server deleted SyncStateはOutboxがある間だけ保持
+### DELETE
+- local DELETEはBusinessから即時除去し、Outbox DELETEを作る
+- 未同期新規entityもDELETEを省略せず常にOutboxへ載せる
+- baseRevision=0でserver entity不存在ならDELETE PushはUNCHANGED
+- CREATE送信成功・response lost後のlocal DELETEも同じ経路で吸収
+- `hasBeenPushed` 等の追加状態は持たない
 
-### Local DELETE
-- Business tableから即時除去
-- SyncStateは同期基準として保持
-- OutboxをDELETEへ更新
-
+### ID_COLLISION
+baseRevision=0で同じIDがserverに存在:
 ```text
-operation=DELETE
-baseRevision=current synchronized baseline revision
-contentHash=deleted-state hash
-payload=null
+hash同一 → UNCHANGED
+hash不一致 → REJECTED / ID_COLLISION / retryable=false
 ```
 
-Item「取り出す」はDELETEではない。
+通常CONFLICTとは分離し、client winsで既存server recordを上書きしない。
 
-### 未同期新規entityのDELETE
-**例外最適化を行わず、未同期新規も常にDELETEをOutboxへ載せる。**
+Push responseは回復用にserver canonicalを返す:
+`serverPayload / revision / syncSeq / contentHash`
 
-```text
-local CREATE/UPDATE
-baseRevision=0
-↓ user DELETE
-Businessから即時除去
-OutboxをDELETEへ置換
-baseRevision=0
-payload=null
-↓ Push
-```
-
-server側:
-- 同一IDが存在しない → UNCHANGED
-- 同一IDが存在する → 通常のrevision/contentHash/競合規則で処理
-
-CREATE送信済みだがresponse lostのケースも同じDELETE経路で安全に吸収する。`hasBeenPushed` 等の追加状態は持たない。IDは再利用しない。
-
-### ID_COLLISION 回復
-`baseRevision=0` のCREATE/UPDATEで同一user scopeの同一IDがserverに既存の場合:
-
-```text
-server contentHash == client contentHash
-→ UNCHANGED
-
-server contentHash != client contentHash
-→ REJECTED
-→ errorCode=ID_COLLISION
-→ retryable=false
-```
-
-`ID_COLLISION` は通常CONFLICTにせず、client winsによる既存server record上書きを許可しない。
-
-Push responseは回復に必要なserver canonicalを返す:
-- serverPayload
-- revision
-- syncSeq
-- contentHash
-
-clientは同一IndexedDB transactionで:
-1. 衝突local candidateの旧ID Aを新ID Bへ再割り当て
-2. Aを参照するlocal business recordをB参照へ変更
-3. 参照変更したentityのcontentHashを再計算
-4. 関連OutboxのentityId/payload/contentHashを更新しoutboxVersionを進める
-5. 旧ID Aにはresponseのserver canonicalを配置
+client回復:
+1. local candidate旧ID A → 新ID B
+2. 全local参照をA→Bへremap
+3. 参照元Business/Outbox/contentHashを更新
+4. outboxVersionを進める
+5. 旧ID Aにはserver canonicalを配置
 6. AのSyncStateをserver metadataで作成/更新
-7. Bは新規local entityとしてbaseRevision=0で次回Push
+7. BはbaseRevision=0で次回Push
 
-主な参照remap:
-- Box A→B: `Item.boxId A→B`
-- BoxLocation A→B: `Box.locationId A→B`
-- Itemは現行確定モデルでは下位entity参照なし
+参照例:
+- Box A→B: Item.boxId A→B
+- BoxLocation A→B: Box.locationId A→B
 
-既に同期済みの参照元entityをremapした場合、その変更は通常のlocal業務変更としてOutboxへ反映し、参照元のbaseRevisionは元の同期baselineを維持する。
+通常Pullだけにserver canonical復元を依存しない。
 
-通常Pullだけにserver canonical復元を依存しない。衝突server recordのsyncSeqが現在cursorより古い場合、通常Pullでは取得されないため。
+### ID remapと既存CONFLICT
+- 参照元entityが既にCONFLICT中でもremapを止めない
+- local参照整合性を先に保つ
+- Business/Outbox payload/contentHash/outboxVersionを最新candidateへ更新
+- baseRevision維持
+- SyncConflictは削除しない
+- 次回Pushで同じconflict rowのclient snapshotを最新化して再比較
 
-### ID remap時の既存CONFLICT引継ぎ
-参照元entity自身が既にCONFLICT中でも、ID remapを止めない。
-
-- Businessの参照を新IDへ更新
-- Outbox.payloadを最新candidateへ更新
-- contentHash再計算
-- outboxVersionを進める
-- baseRevisionは維持
-- 既存SyncConflictは削除しない
-- 次回Pushで同じSyncConflictのclient snapshotを最新candidateへ更新して再比較
-
-原則:
-**ID remapはlocal参照整合性のため必ず完了し、既存の同期CONFLICTとは独立して扱う。**
-
-### ID remapの連鎖処理
-ID_COLLISIONによるremapが参照関係を通じて複数entityへ影響する場合、local dependency graph単位で処理する。
-
-依存方向:
+### ID remap連鎖
+依存graph:
 ```text
 BoxLocation → Box → Item
 ```
 
-例:
+- 直接・間接影響範囲を可能な限り同一IndexedDB transactionで更新
+- 新IDがlocal衝突なら即再生成
+- server ID予約APIは作らない
+- 新IDがserverでも衝突したら次回PushでID_COLLISIONを検出し同じ処理を再適用
+- remapは再入可能・反復可能な同期回復処理
+
+### 同一Push batch内の親ID_COLLISION
+確定:
+- 親operationが `ID_COLLISION` になったdependency branchでは、旧親IDを参照する子operationをserverは適用しない
+- 子operationは以下を返す
+
 ```text
-BoxLocation L1 → L2
-↓
-Box B1.locationId L1 → L2
-↓
-Box B1自身が後でID_COLLISIONなら B1 → B2
-↓
-Item I1.boxId B1 → B2
+REJECTED
+errorCode=DEPENDENCY_NOT_AVAILABLE
+retryable=true
 ```
 
-規則:
-- 1回のremap処理で直接・間接に影響するlocal business record、Outbox、contentHash、outboxVersionを可能な範囲で同一IndexedDB transaction内に更新
-- 新規IDがlocal DB内で衝突した場合はその場で再生成
-- serverへのID事前予約/照合APIは設けない
-- 新IDのserver衝突は次回Pushで検出
-- server側でも再度ID_COLLISIONなら同じremap手順を再適用
-- remap処理は再入可能・反復可能な通常同期回復処理として実装する
+- clientは親のlocal ID remapを完了後、更新済みOutboxから次回Pushで子を再送
+- 無関係dependency branchは処理継続
 
-根拠: UUID等の衝突は極めて低確率であり、ID予約APIを追加するより、既存Push/回復経路で安全に吸収する方が単純でテスト可能なため。
-
-## 7. Push API
-
-Request:
+例:
 ```text
-operations[] {
-  operationId,
-  entityType,
-  entityId,
-  operation,
-  baseRevision,
-  contentHash,
-  payload
-}
+Box A → ID_COLLISION
+Item A1 → DEPENDENCY_NOT_AVAILABLE
+
+Box C → APPLIED
+Item C1 → APPLIED
+```
+
+根拠: serverは同batch内ではclient側の新IDを知らないため、旧ID参照の子を適用すると参照整合性を壊す。既存の「失敗はdependency branchだけを止める」原則にも一致する。
+
+## 5. Push API
+
+Request per operation:
+```text
+operationId
+entityType
+entityId
+operation
+baseRevision
+contentHash
+payload
 ```
 
 Response per operation:
@@ -280,203 +190,89 @@ contentHash
 conflictId
 errorCode
 retryable
-serverPayload  // ID_COLLISION等、必要時
+serverPayload // 必要時
 ```
 
-- batch全体はall-or-nothingにしない
-- 各Outbox snapshotを論理操作単位で独立処理
-- REJECTED retryable=true → Outbox保持、自動再試行可
-- REJECTED retryable=false → Outbox保持、自動再送停止
-- server拒否だけを理由にlocal内容/Outboxを消さない
-- operationIdは相関用のみ。persistent processed-operationId表は持たない
-- idempotencyは revision + contentHash + SyncConflict で成立
+- batch全体all-or-nothingにしない
+- operationIdは相関用のみ
+- idempotencyは revision + contentHash + SyncConflict
+- create/update依存順 = BoxLocation → Box → Item
+- 一つの失敗は依存branchだけを止める
 
-create/update依存順:
-```text
-BoxLocation → Box → Item
-```
+## 6. SyncConflict
 
-依存不可:
-```text
-REJECTED
-errorCode=DEPENDENCY_NOT_AVAILABLE
-retryable=true
-```
-
-失敗は依存branchだけを止め、無関係branchは継続。
-
-## 8. SyncConflict / 競合解決
-
-- `(userId,entityType,entityId)` に未解決1row
+- `(userId, entityType, entityId)` に未解決1row
 - statusなし
-- 一時bufferであり監査履歴ではない
-- 同一Push再送は同じconflictId
-- 最新client候補は同rowへ更新
 - 解決後row削除
-- client勝ち = canonical更新 + revision + syncSeq + SyncChangeLog + conflict削除を同一transaction
-- server勝ち = canonical変更なし + conflict削除
-- 解決時server revisionが進んでいればserver snapshotを最新化
-- hash同一なら自動解消、異なるなら最新内容を再提示
-
-競合規則:
-- server DELETE vs local UPDATE → CONFLICT、自動復活禁止。client勝ちのみ同IDをactiveへ復元
-- local DELETE vs newer server UPDATE → CONFLICT、自動削除禁止
-- local DELETE vs server DELETE → deleted-state hash同一ならUNCHANGED
+- server DELETE vs local UPDATE = CONFLICT。自動復活禁止
+- local DELETE vs newer server UPDATE = CONFLICT。自動削除禁止
+- local DELETE vs server DELETE = hash同一ならUNCHANGED
 
 Resolve API:
+`POST /sync/conflicts/{conflictId}/resolve`
+
+- resolution = SERVER | CLIENT
+- stale server snapshotならCONFLICT_UPDATED
+- stale local candidateなら `STALE_CLIENT_CANDIDATE / retryable=false`
+
+## 7. Pull / Full Resync
+
+Pull:
 ```text
-POST /sync/conflicts/{conflictId}/resolve
+changes[]
+nextCursor
+hasMore
 ```
 
-Request:
-```text
-resolution = SERVER | CLIENT
-outboxVersion
-clientContentHash
-```
+- syncSeq順
+- 同一entityのchangesは初期仕様では圧縮しない
+- page適用成功後だけcursor更新
 
-Response:
-```text
-result = RESOLVED | CONFLICT_UPDATED | REJECTED
-entityType
-entityId
-revision
-syncSeq
-contentHash
-serverPayload
-conflictId
-errorCode
-```
-
-- server正本がさらに進んでいればCONFLICT_UPDATED
-- stale snapshotで解決しない
-- outboxVersion不一致の古いCLIENT解決は拒否:
-
-```text
-REJECTED
-errorCode=STALE_CLIENT_CANDIDATE
-retryable=false
-```
-
-## 9. Pull API
-
-```text
-PullResponse
-- changes[]
-- nextCursor
-- hasMore
-
-PullChange
-- syncSeq
-- entityType
-- entityId
-- operation = UPSERT | DELETE
-- revision
-- contentHash
-- payload
-```
-
-- DELETE通常payload=null
-- 同一entityの複数changeは圧縮せずsyncSeq順
-- 固定page上限（初期候補500程度）
-- cursorはresponse受信時には進めない
-- pageのIndexedDB適用成功後だけnextCursorへ進める
-- page適用 + cursor更新は可能な限り同一local transaction
-
-## 10. Full Resync
-
-通常Pullとは別API/mode。現在activeなserver canonicalのみを固定snapshotとして返す。
-
-```text
-FullSyncSnapshot
-- id
-- userId
-- snapshotSeq
-- createdAt
-- expiresAt
-
-FullSyncSnapshotRow
-- snapshotId
-- entityType
-- entityId
-- payload
-```
-
-- snapshotSeq取得とactive rows copyは同じ短時間DB transaction
-- 長時間transactionを保持しない
-- snapshotSeq=Nなら内容はN時点
-- transfer中のN+1以降更新は許可
-- Box/Item/BoxLocationを独立paging、全page同一snapshotSeq
-- page cursorはopaque
+Full Resync:
+- current active server canonicalの固定snapshot
+- snapshotSeq=Nと内容Nを同じ短時間DB transactionで固定
+- Box/Item/BoxLocation別paging、同一snapshotSeq
 - TTL約30分
-- userごとにactive snapshot 1つ
-- TTL切れ = FULL_RESYNC_SNAPSHOT_EXPIRED
+- stagingへ全取得後にlocal canonicalへ原子的採用
+- cursor=snapshotSeq
+- Outbox再適用 → Push → final Pull
+- local採用成功後のみ `/sync/full/{snapshotId}/complete`
 
-Client:
-```text
-Outbox保持
-→ snapshotをstagingへ全取得
-→ boxes/items/locations全系列complete
-→ stagingをcanonicalへ原子的採用
-→ cursor=snapshotSeq
-→ Outbox再適用
-→ Push
-→ final Pull
-```
+## 8. 認証・状態
 
-正式採用成功後だけ:
-```text
-POST /sync/full/{snapshotId}/complete
-```
+- online auth成功後、その実行session内のみoffline利用可
+- app再起動後はonline auth必須
+- local PIN等は持たない
 
-通知失敗はlocal成功をrollbackせず、server snapshotはTTLで回収。
-
-## 11. 認証・オフライン・状態管理
-
-- オフライン利用は、その起動中にオンライン認証成功したuserのみ
-- 同じ実行session中の通信断なら継続可能
-- app終了/再起動後は再度online auth必須
-- offline PIN/永続local認証なし
-- unsynced data/Outboxは保持
-
-通常同期:
-```text
-online auth → Pull → Outbox reapply → Push → Pull
-```
-
-状態:
+State:
 - Auth: LOCKED / AUTHENTICATED
 - Connectivity: ONLINE / OFFLINE
 - Sync: IDLE / SYNCING / SYNC_ERROR / CONFLICT
 - Usage: LOCKED / INITIAL_SYNC / READY / OFFLINE_READY
 
-INITIAL_SYNCは閲覧/検索可、書込不可。通信系失敗ならOFFLINE_READYへ移行して書込可。401/403・validation・consistency・protocol error・conflictはOFFLINE扱いにしない。
+INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READYへ移行して書込可。
 
-## 12. Backup
+## 9. Backup
 
-- activeな論理データのみ
-- tombstoneなし
-- Outbox / SyncConflict / SyncChangeLog / cursor / revision / syncSeq等を含めない
-- restoreは通常activeデータとして扱い、同期状態を移行先で再構築
-- 元ID維持
-- 同一ID + 同一hash = 同一データ
+- active論理データのみ
+- tombstone / Outbox / SyncConflict / SyncChangeLog / cursor / revision / syncSeq等は含めない
+- restoreは通常activeデータとして扱う
+- 同一ID + 同一hash = 同一
 - 同一ID + 異なるhash = import側で新ID発行 + 参照remap
 
-## 13. 現行実装との主要差異
+## 10. 現行実装との主要差異
 
 - Prisma sync metadata不足
 - entity idがglobal PKでuser composite identity未対応
-- current Push `where:{id}` にcross-user ID collision/所有権リスク
-- revision/contentHash/Outbox/partial Push/Conflict未実装
-- Pullはtimestamp sinceでsyncSeq/SyncChangeLog/paging未実装
-- local syncはlastPushAt方式、Outbox/SyncState未実装
-- IndexedDB固定 `hk-local-v1` をuser別v2へ変更必要
-- current BoxLocationはBox従属で確定モデルと不一致
-- Box.location自由文字列をlocationIdへ変更必要
+- current Push `where:{id}` にcross-user ownership risk
+- revision/contentHash/Outbox/SyncState/Conflict未実装
+- Pullはtimestamp基準
+- IndexedDBは固定 `hk-local-v1`
+- BoxLocationモデルが確定仕様と不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
 
-## 14. ロードマップ
+## 11. ロードマップ
 
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
@@ -493,19 +289,19 @@ INITIAL_SYNCは閲覧/検索可、書込不可。通信系失敗ならOFFLINE_RE
 12. Vision/LLM実装完成
 13. v1.0完成・受入
 
-## 15. 次のアクション
+## 12. 次のアクション
 
 次の設計判断点:
-**同じPush batch内で、親entityがID_COLLISIONによりclient側でremap対象になったとき、同batchに含まれる子entity operationをどう扱うかを確定する。**
+**親operationがCONFLICTになった同一Push batchで、その親を参照する子operationをどう扱うかを確定する。**
 
 推奨候補:
-- serverはbatch途中でclient側の新IDを知らないため、旧親IDを参照する子operationは適用しない
-- 親ID_COLLISIONを受けたdependency branchの子operationは `DEPENDENCY_NOT_AVAILABLE / retryable=true`
-- clientがlocal remap完了後、更新済みOutboxから次回Pushで再送
-- 無関係branchはそのまま処理継続
+- ID_COLLISIONと同様、親CONFLICTが未解決の間は子operationを適用しない
+- 子は `DEPENDENCY_NOT_AVAILABLE / retryable=true`
+- 親CONFLICT解決後、local Outboxの最新参照状態で子を再Push
+- 無関係branchは継続
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
-## 16. HLDocS運用上の注意
+## 13. HLDocS運用上の注意
 
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
