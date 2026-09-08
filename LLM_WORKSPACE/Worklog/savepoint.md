@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-07
+更新: 2026-09-08
 対象リポジトリ: `mayusaki3/hakomokuroku`
 作業ブランチ: `develop`
 
@@ -48,6 +48,7 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - 未同期ローカルレコードは `revision = 0`、初回サーバー登録成功時に `revision = 1` とする方針で確定
 - `SyncConflict` を競合一時バッファ兼再送冪等性管理として使用する方針で確定
 - 競合解決要求時に現在の `revision` を再確認し、競合表示時点から進んでいれば最新サーバー版と再確認する方針で確定
+- `contentHash` は業務内容 + 削除状態を対象とし、ID・時刻・同期メタデータを除外する方針で確定
 
 ### 現在実施中
 **全体アーキテクチャ / データモデル / 同期設計**
@@ -99,6 +100,12 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 - 同一競合の再送は同じ競合として扱い、競合レコードを増殖させない
 - 同じentityに複数端末由来の未解決競合が並存することを許容する
 - 競合解決時は `serverRevisionAtConflict` と現在のrevisionを比較し、不一致なら最新サーバー版との再確認へ戻す
+- `contentHash`:
+  - 対象 = 業務内容 + 削除状態
+  - `deletedAt` は具体的時刻ではなく active/deleted に正規化して反映
+  - 除外 = id / createdAt / updatedAt / deletedAtの具体的時刻 / serverUpdatedAt / revision / syncSeq / contentHash自身
+  - 順序に意味のない配列はソートし、JSONキー順も固定した canonical JSON から計算
+  - ハッシュ方式は SHA-256 等の決定的ハッシュを使用
 - バックアップIDを維持し、データ単位ハッシュで衝突判定
 - Vision = 現行実装をベースに完成させる
 - 高度なテーマ機能の追加開発は不要
@@ -134,14 +141,14 @@ HLDocS v0.7.0 は作業管理・仕様整理に利用するが、HLDocS自体の
 
 ## 7. 次のアクション
 
-`serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone + `SyncConflict` 方針を前提に同期プロトコルを確定する。
+`serverUpdatedAt` + `revision` + `syncSeq` + `SyncChangeLog` + tombstone + `SyncConflict` + `contentHash` 方針を前提に同期プロトコルを確定する。
 
 現在の設計論点:
-- `contentHash` の正式計算対象
 - `SyncChangeLog` の保持期間とtombstone purge後の扱い
 - `SyncConflict` の解決済みデータ保持期間
+- トランザクション境界の正式確定
 
-`contentHash` は業務内容 + 削除状態を対象とし、同期制御メタデータを除外する方向を優先検討する。候補として `createdAt` / `updatedAt` もハッシュから除外し、「利用者から見た実質内容が同じなら同一hash」とする。
+`SyncChangeLog` は Pull 差分の正本であるため、単純に30日で削除すると30日以上オフラインだった端末が削除イベントを取り逃す。候補方針は、変更ログを一定期間保持しつつ、端末カーソルが保持範囲より古い場合は差分Pullを拒否して full resync を要求する方式。
 
 トランザクション境界はAPI全体ではなく整合性が必要な論理操作単位とする方向。通常更新では「対象レコード確認/更新 + revision更新 + syncSeq採番 + SyncChangeLog追加」を原子的に行う。箱削除では「子ItemをUNASSIGNEDへ移動 + BoxLocation削除tombstone + Box削除tombstone + 各revision/syncSeq/SyncChangeLog」を一つの論理操作として原子的に扱う。Pushバッチ全体は巨大トランザクションにせず、独立操作ごとに成功/競合/失敗を返す方向とする。
 
