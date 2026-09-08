@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-08
+更新: 2026-09-09
 対象リポジトリ: `mayusaki3/hakomokuroku`
 作業ブランチ: `develop`
 
@@ -202,7 +202,7 @@ DB transactionのcommit順を基準に処理し、同時実行専用の別競合
 - cascade補正時に子の他業務フィールドを古いsnapshotで上書きしない
 
 ### 親DELETE時に子が未解決SyncConflictを持つ場合
-**確定:** 子entityの未解決SyncConflictは親DELETEをブロックしない。server canonicalの参照整合性を優先してcascade補正を適用する。
+子entityの未解決SyncConflictは親DELETEをブロックしない。server canonicalの参照整合性を優先してcascade補正を適用する。
 
 親DELETE transaction内で:
 1. 子の最新server canonicalを取得
@@ -214,24 +214,26 @@ DB transactionのcommit順を基準に処理し、同時実行専用の別競合
 7. client candidate/clientContentHash/clientBaseRevisionは保持
 8. 親DELETEを続行して同一transactionでcommit
 
-例:
-```text
-Item I server canonical: boxId=A, rev=5
-SyncConflict: client candidate C
+### cascade後にConflict内容が一致した場合
+**確定:** cascade等によりSyncConflictのserver snapshotを更新した結果、`serverContentHash == clientContentHash` になった場合、そのSyncConflictは実質的に消滅したものとして自動解決する。
 
-Box A DELETE
+server側:
+```text
+server snapshot更新
 ↓
-Item I canonical: boxId=UNASSIGNED, rev=6
-SyncChangeLog UPSERT
-SyncConflict.server snapshot: rev=6 / latest canonical
-SyncConflict.client candidate: C のまま保持
+serverContentHash == clientContentHash
 ↓
-Box A DELETE commit
+SyncConflict削除
 ```
 
-その後の競合解決では、保持した最新client candidateと、更新された最新server snapshotを比較する。必要なら既存の `CONFLICT_UPDATED` / stale candidate規則を適用する。
+client側Outbox:
+- conflict candidateに対応するsent/resolved outboxVersionを保持する
+- `current outboxVersion == candidate outboxVersion` の場合のみ、そのOutboxを成功扱いで削除しSyncStateを最新server metadataへ収束させる
+- `current outboxVersion > candidate outboxVersion` の場合は、競合発生後の新しいlocal編集が存在するためOutboxを削除しない
+- newer Outboxは最新candidateとして次回Push/競合再評価へ回す
+- hashが異なる場合はSyncConflictを維持する
 
-根拠: 子CONFLICTの存在によって削除済み親への参照をserver canonicalに残すべきではない。一方、SyncConflictを削除すると利用者の未解決client変更を失うため、参照整合性更新と競合解決状態を分離する。
+根拠: 内容が既に一致している場合に利用者へ不要な競合確認を要求せず、一方でoutboxVersionによって競合発生後の新しいlocal編集を保護するため。
 
 ## 5. Push API
 
@@ -277,6 +279,7 @@ serverPayload // 必要時
 - local DELETE vs newer server UPDATE = CONFLICT。自動削除禁止
 - local DELETE vs server DELETE = hash同一ならUNCHANGED
 - server canonicalがcascade等で変化した場合、未解決rowのserver snapshotは最新canonicalへ更新可能
+- server/client contentHashが一致した場合は自動解決可能
 
 Resolve API:
 `POST /sync/conflicts/{conflictId}/resolve`
@@ -362,14 +365,14 @@ INITIAL_SYNC中は閲覧可・書込不可。通信系失敗ならOFFLINE_READY�
 ## 12. 次のアクション
 
 次の設計判断点:
-**cascadeによるserver snapshot更新後、SyncConflictのclient candidateがserver canonicalと同一contentHashになった場合に、自動解決するかを確定する。**
+**baseRevision=0 のDELETE Pushで、serverに同じIDのactive entityが存在する場合の扱いを確定する。**
 
-推奨候補:
-- cascade後にserverContentHashとclientContentHashを再比較する
-- 同一になった場合は実質的な競合が消滅しているためSyncConflictを自動削除する
-- 対応するclient Outboxについても、current outboxVersionが対象candidateと一致する場合のみ成功扱いで削除/同期済み化する
-- outboxVersionが進んでいれば新しいlocal candidateを保持し、競合再評価へ回す
-- hashが異なる場合はConflictを維持する
+背景:
+- 未同期新規entityを削除した場合もOutbox DELETEを送る方針
+- 一方、CREATEがserverで成功したがresponse lostした直後にlocal DELETEされた場合、serverには同じIDのactive entityが存在し得る
+- true ID collisionとの区別が、現在の `revision + contentHash` だけでは曖昧
+
+このDELETE固有ケースを確定後、同期設計の主要未確定点を再点検する。
 
 詳細作業記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
 
