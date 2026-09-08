@@ -16,7 +16,7 @@
 
 **全体アーキテクチャ / データモデル / 同期設計の最終確定中。**
 
-## 3. リリース・業務の主要確定事項
+## 3. リリース・業務
 
 - v0.8 = Vision以外の完成版
 - v1.0 = v0.8 + Vision/LLM画像認識
@@ -31,7 +31,6 @@
 - BoxLocation.nameはuser内unique。later server-accepted nameが勝ち、旧recordへ最小未使用 `(n)` suffix
 - name正規化 = trim + Unicode NFC、case-sensitive。末尾`(n)`を特別解釈しない
 - Vision対象はBox/Item写真のみ
-- Box / BoxLocationに予約 `UNASSIGNED`
 
 ## 4. Server同期
 
@@ -39,16 +38,16 @@ Box / Item / BoxLocation共通同期メタデータ:
 `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 
 - business identity = `(User.id, entityId)`
-- PushのuserIdは認証から確定し、payloadを信用しない
+- Push userは認証から確定
 - 未同期新規 = revision 0 / baseRevision 0
 - 初回server登録成功 = revision 1
 - revision不一致時はcontentHash比較。同一ならUNCHANGED、異なればCONFLICT
 - updatedAtで勝者を決めない
-- contentHash = 業務内容 + active/deleted状態。時刻、revision、syncSeq等は除外
+- contentHash = 業務内容 + active/deleted状態。同期メタデータは除外
 - order-insensitive arrayはsort、object keyは決定的順序、SHA-256相当
 - SyncChangeLogがPull差分履歴の正本
 - syncSeqはDB全体で一意な単調増加signed 64-bit
-- record update + revision/contentHash/syncSeq/log は同一server transaction
+- record変更 + revision/contentHash/syncSeq/log は同一server transaction
 
 ## 5. Local同期
 
@@ -89,9 +88,9 @@ createdAt
 
 - local業務変更とOutbox更新は同一IndexedDB transaction
 - PushはOutbox基準
-- 同一entity変更は最新candidateへ集約し、元のbaseRevisionを維持
-- sync開始時に送信snapshotを固定
-- Push成功時は `current outboxVersion == sent outboxVersion` の場合だけOutbox削除
+- 同一entity変更は最新candidateへ集約し元のbaseRevision維持
+- sync開始時に送信snapshot固定
+- Push成功時はcurrent outboxVersion == sent outboxVersionの場合だけOutbox削除
 - sync中再編集は新versionとして保持
 - PullだけでOutbox.baseRevisionを前進させない
 
@@ -103,25 +102,16 @@ online auth → Pull → Outbox reapply → Push → Pull
 ## 6. DELETE / tombstone
 
 - local DELETEはBusinessから即時除去し、Outbox DELETEを残す
-- Item「取り出す」はDELETEではなく通常UPDATE
 - server DELETEはtombstone化
-- server DELETE済み + local UPDATE = CONFLICT。自動復活しない
-- local DELETE + newer server UPDATE = CONFLICT。自動削除しない
-- local DELETE + server DELETE = contentHash同一ならUNCHANGED
-- CLIENT winsでserver DELETEを覆す場合のみ明示的復活 `deletedAt=null` とする
+- server DELETE済み + local UPDATE = CONFLICT
+- local DELETE + newer server UPDATE = CONFLICT
+- local DELETE + server DELETE = hash同一ならUNCHANGED
+- CLIENT winsでserver DELETEを覆す場合のみ明示的復活
 
-### baseRevision=0 DELETE
-
-serverに同IDがない:
+baseRevision=0 DELETE:
 ```text
-UNCHANGED
-```
-
-serverに同IDのactive entityがある:
-```text
-REJECTED
-errorCode=ID_COLLISION
-retryable=false
+server同IDなし   → UNCHANGED
+server active同ID → REJECTED / ID_COLLISION / retryable=false
 ```
 
 CREATE成功response lostと真のID衝突を安全に区別できないため、誤削除防止を優先する。persistent operationId履歴は導入しない。
@@ -130,8 +120,8 @@ CREATE成功response lostと真のID衝突を安全に区別できないため�
 
 baseRevision=0 CREATE/UPDATEでserverに同ID:
 ```text
-contentHash同一 → UNCHANGED
-contentHash異なる → REJECTED / ID_COLLISION / retryable=false
+hash同一 → UNCHANGED
+hash異なる → REJECTED / ID_COLLISION / retryable=false
 ```
 
 Push responseは回復用に `serverPayload / revision / syncSeq / contentHash` を返す。
@@ -139,10 +129,10 @@ Push responseは回復用に `serverPayload / revision / syncSeq / contentHash` 
 client回復は1 IndexedDB transactionで:
 1. local candidate旧ID A → 新ID B
 2. 全local参照 A→B
-3. 影響Business/Outbox/contentHashを更新
-4. outboxVersionを進める
-5. 旧ID Aへserver canonicalを配置
-6. AのSyncStateをserver metadataで作成/更新
+3. 影響Business/Outbox/contentHash更新
+4. outboxVersion更新
+5. 旧ID Aへserver canonical配置
+6. AのSyncState更新
 7. BはbaseRevision=0で次回Push
 
 参照remap:
@@ -151,48 +141,19 @@ client回復は1 IndexedDB transactionで:
 
 既存CONFLICT中でもremapは止めず、baseRevisionとSyncConflictは維持する。remapは再入可能・反復可能。server ID予約APIは作らない。
 
-同一Push batchで親がID_COLLISIONなら依存子は:
-```text
-REJECTED / DEPENDENCY_NOT_AVAILABLE / retryable=true
-```
-無関係branchは継続する。
+## 8. Push / dependency
 
-## 8. Push API / dependency
-
-Request per operation:
-```text
-operationId
-entityType
-entityId
-operation
-baseRevision
-contentHash
-payload
-```
-
-Response per operation:
-```text
-operationId
-entityType
-entityId
-result = APPLIED | UNCHANGED | CONFLICT | REJECTED
-revision
-syncSeq
-contentHash
-conflictId
-errorCode
-retryable
-serverPayload
-```
+Push result:
+`APPLIED | UNCHANGED | CONFLICT | REJECTED`
 
 - batchはall-or-nothingにしない
 - operationIdは相関用のみ
 - idempotencyは revision + contentHash + SyncConflict
 - create/update依存順 = BoxLocation → Box → Item
 - failureは依存branchだけを止める
+- 親CONFLICT/ID_COLLISIONなら同batch依存子は `DEPENDENCY_NOT_AVAILABLE / retryable=true`
 - REJECTED retryable=trueはOutbox保持・自動再試行
 - REJECTED retryable=falseはOutbox保持・自動再送停止
-- 親CONFLICT/ID_COLLISIONなら同batch依存子はDEPENDENCY_NOT_AVAILABLE
 
 ## 9. SyncConflict
 
@@ -200,18 +161,11 @@ serverPayload
 - statusなし
 - 解決後row削除
 - latest client candidate送信時に同じrowを更新
-
-Resolve API:
-`POST /sync/conflicts/{conflictId}/resolve`
-
-- resolution = SERVER | CLIENT
 - server canonical進行済みならCONFLICT_UPDATED
 - stale local candidateなら `STALE_CLIENT_CANDIDATE / retryable=false`
-- SERVER winsはserver canonical採用
-- CLIENT winsはlatest server revisionを基準に通常更新/DELETE
 - OutboxはoutboxVersion一致時のみ解消
-
-server canonicalがcascade等で変化した場合、既存SyncConflictのserver snapshotを最新canonicalへ更新する。更新後 `serverContentHash == clientContentHash` ならSyncConflictを自動解決する。ただしcurrent Outboxが新versionならOutboxは残す。
+- cascade等でserver canonicalが変わった場合はserver snapshotを最新化
+- server/client contentHash一致なら自動解決。ただしcurrent Outboxが新versionならOutboxは保持
 
 ## 10. 親DELETE cascade
 
@@ -221,22 +175,21 @@ Box DELETE:
 BoxLocation DELETE:
 - child Box.locationId → UNASSIGNED
 
-v0.8では親DELETE + 全子参照補正を1 server transactionで実行する。分割transactionや非同期delete jobは導入しない。
+v0.8では親DELETE + 全子参照補正を1 server transactionで実行する。
 
 順序:
 ```text
 子参照補正 UPSERT
-→ 各子 revision/contentHash/syncSeq/log 更新
+→ 各子 revision/contentHash/syncSeq/log
 → 親 tombstone
 → 親 revision/contentHash/syncSeq/log DELETE
 → COMMIT
 ```
 
-syncSeq/log順も子補正→親DELETE。
-
-別device子UPDATEとの競合はDB transactionのcommit順を境界とする。親DELETE前にcommit済みの子変更は保持し参照だけ補正。親DELETE後に古いbaseRevisionで来た子UPDATEは通常のrevision/contentHash規則で判定する。
-
-子が未解決SyncConflictを持っていても親DELETEをブロックしない。cascade後のserver canonicalでConflictのserver snapshotを更新し、client candidateは保持する。
+- syncSeq/log順も子補正→親DELETE
+- 別device子UPDATEとの競合はDB transaction commit順を境界とする
+- 子が未解決SyncConflictを持っていても親DELETEをブロックしない
+- cascade後のserver canonicalでConflict server snapshotを更新しclient candidateは保持
 
 ## 11. reserved UNASSIGNED
 
@@ -249,15 +202,10 @@ BoxLocation(id=UNASSIGNED)
 - User作成時に生成
 - 既存Userで不足時はserver整合性処理で補完
 - 通常Pull / Full Resyncに含める
-- local Business tableに保持し正式な参照先として使う
-- clientはCREATE/UPDATE/DELETE禁止
+- local Business tableに正式参照先として保持
+- client CREATE/UPDATE/DELETE禁止
 - local UI/APIでも編集・削除・Outbox生成禁止
-- server防御:
-```text
-REJECTED
-errorCode=RESERVED_ENTITY
-retryable=false
-```
+- serverは `REJECTED / RESERVED_ENTITY / retryable=false`
 - tombstone/purge対象外
 - ID remap対象外
 
@@ -294,7 +242,7 @@ payload
 - current active server canonicalのみ
 - snapshot開始時に `snapshotSeq=N` と内容Nを同じ短時間DB transactionで固定
 - Box/Item/BoxLocationをsnapshot rowへcopyし、その後transfer中は長時間transactionを保持しない
-- Box/Item/BoxLocation別paging、すべて同一snapshotSeq
+- entity type別paging、すべて同一snapshotSeq
 - page cursorはopaque
 - TTL約30分
 - user scoped、1 user 1 active snapshot
@@ -302,61 +250,46 @@ payload
 - 全series完了後だけstaging→canonicalを原子的採用しcursor=N
 - Outbox保持→reapply→Push→final Pull
 - local採用成功後のみ `/sync/full/{snapshotId}/complete`
-- complete通知失敗はlocal採用をrollbackせず、TTL cleanupに任せる
+- complete通知失敗はlocal採用をrollbackせずTTL cleanup
 
 ## 14. tombstone / SyncChangeLog purge
 
-**確定:** tombstone 30日とSyncChangeLog 90日は独立した保持境界とする。
-
+保持:
 ```text
-DELETE発生
-│
-├─ 0〜30日
-│   tombstone      : 保持
-│   SyncChangeLog  : 保持
-│
-├─ 30〜90日
-│   tombstone      : 物理削除可能
-│   SyncChangeLog  : DELETE履歴を保持
-│
-└─ 90日以降
-    SyncChangeLog  : purge可能
-    stale cursor   : FULL_RESYNC_REQUIRED
+0〜30日   : tombstone保持 / SyncChangeLog保持
+30〜90日  : tombstone物理削除可 / SyncChangeLog保持
+90日以降  : SyncChangeLog purge可
 ```
 
-規則:
-- tombstoneは `deletedAt + 30日` 経過後に物理削除可能
-- tombstone物理削除後もDELETE SyncChangeLogは90日まで保持する
-- SyncChangeLog purgeとtombstone purgeを同一タイミングにしない
-- 通常Pull可否は対象Userについてcursor以降の必要changeが保持されているかで判断する
-- retention外のcursorは `FULL_RESYNC_REQUIRED`
-- Full Resyncはactive canonicalのみなのでpurge済みtombstoneはsnapshotに含めない
-- stale local entityはFull Resyncのcanonical rebuildで消える
+- tombstone = deletedAt + 30日後に物理削除可能
+- SyncChangeLog = 作成から固定90日保持。device cursorによる延長なし
+- device registry / per-device lease / retention pinningは導入しない
+- Full Resyncはactive canonicalのみ
+- purge済みtombstoneのstale local entityはFull Resyncのcanonical rebuildで消える
 - reserved UNASSIGNEDはpurge対象外
 
-### SyncChangeLog retentionとdevice cursor
+### Pull可否とpurge競合
 
-**確定:** v0.8ではSyncChangeLogの保持期間をdeviceごとのcursor状態に応じて延長しない。作成時点から固定90日でpurge可能とする。
+**確定:** 通常Pull可否は「90日ちょうど」のinclusive/exclusive判定ではなく、対象Userのcursor以降に必要なSyncChangeLogが実際に保持されているかで判定する。
 
 ```text
-SyncChangeLog age <= 90日
-→ 通常Pull対象として保持
+必要なchangeがすべて保持されている
+→ 通常Pull
 
-SyncChangeLog age > 90日
-→ purge可能
-→ その範囲を必要とするcursorはFULL_RESYNC_REQUIRED
+必要なchangeが欠落済み、または欠落していないことを保証できない
+→ FULL_RESYNC_REQUIRED
 ```
 
-- device registryは導入しない
-- per-device lease / last-seen / cursor retention pinningは導入しない
-- 長期間未同期deviceのためにlogを無期限延長しない
-- 90日を超えて復帰したdeviceはFull Resyncでactive canonicalへ収束させる
+- 90日はpurge jobの保持目安であり、同期プロトコルの安全性判定そのものではない
+- Pullとpurgeが競合した場合はserverのtransaction/読み取り時点で保持されているlog範囲を基準とする
+- purgeとPullの競合で欠落可能性がある場合は通常Pullを続行せずFull Resyncへ倒す
+- cursor有効性はDB全体の最古syncSeqではなく、そのUserについて必要なretained logが連続して存在するかで評価する
 
-根拠: Full Resyncが既に安全な復帰経路として設計されているため、device単位の保持延長を導入する必要がない。固定retentionによりserver状態、purge条件、テスト条件を単純化できる。
+根拠: 時刻境界の微差やpurge job実行タイミングをclient-visible protocolへ持ち込まず、change欠落を起こさないことを優先するため。
 
 ## 15. 認証・状態
 
-オンライン認証成功後、そのアプリ実行sessionに限りoffline利用を許可する。アプリ終了後の再起動にはonline認証を必須とする。
+オンライン認証成功後、そのアプリ実行sessionに限りoffline利用可。アプリ終了後の再起動にはonline認証必須。
 
 State:
 - Auth: LOCKED / AUTHENTICATED
@@ -416,9 +349,9 @@ ONLINE復帰時は自動でPull→Push→Pull。手動syncはfallback。
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**SyncChangeLogのretention境界ちょうど90日を、inclusive/exclusiveのどちらとして扱うか、およびpurge jobとPullが競合した場合の判定基準を確定する。**
+**Pull cursorの初期値と「初回通常Pull」をどう定義するかを確定する。**
 
-推奨候補は、時刻そのものより「そのuserのcursorが必要とする最小syncSeqがまだ保持されているか」でPull可否を判断し、purgeとPullの競合ではserver transaction/読み取り時点のretained logを基準にする方式。保持可否の実装詳細を時刻境界に依存させず、欠落可能性がある場合はFULL_RESYNC_REQUIREDへ倒す。
+推奨候補は、新規client DBではcursorを持たず、初回同期は通常Pullの `cursor=0` 相当ではなくFull Resyncを使用する方式。これにより過去90日分だけのSyncChangeLogから新規clientを再構築する問題を避け、常に現在canonicalから開始できる。Full Resync完了後にcursor=snapshotSeqを設定し、以後通常Pullへ移る。
 
 ## 20. HLDocS運用上の注意
 
