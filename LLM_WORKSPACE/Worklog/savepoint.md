@@ -154,6 +154,37 @@ Pull / Full Resync
 
 根拠: entity先行だとcanonicalが未upload原画像を参照する時間窓が生じる。blob先行なら失敗時に未参照blobが残るだけで、business canonicalの参照整合性を保ちやすい。未参照blobは再送で再利用し、不要になったものは別途GC対象にできる。
 
+### 未参照原画像blobのGC
+**確定:** server側でentityから参照されていない原画像blobは即時削除せず、未参照状態が30日継続した場合にGCで物理削除可能とする。
+
+```text
+blob upload成功
+↓
+entityから参照あり
+→ 保持
+
+entity Push失敗 / 写真差し替え / 写真削除 / CONFLICTでSERVER wins
+↓
+未参照blob
+↓
+未参照状態30日保持
+↓
+GC実行時にも未参照
+→ 物理削除可能
+```
+
+規則:
+- GC判定はserver管理時刻を基準とし、client時刻に依存しない
+- 未参照になった時点をserverで記録し、その時点から30日を起算する
+- 30日以内に再度entityから参照された場合はGC対象から外す
+- 同じblobが複数entityから参照され得る場合、全参照がなくなった時点から未参照期間を起算する
+- entity Push再送・CONFLICT解決・通信結果不明により後から参照が成立する可能性を考慮し、即時削除しない
+- GC実行直前にも参照有無を再確認し、参照中blobを削除しない
+- tombstoneの30日保持と期間を揃えるが、blob GCとtombstone purgeは別のライフサイクルとして管理する
+- 30日は最低保持期間であり、GC job実行周期により実際の削除は30日以降となってよい
+
+根拠: blob先行uploadではentity確定前に通信失敗やCONFLICTが起き、正常な再送で後から参照される一時孤立blobが発生し得る。即時削除すると再uploadや競合解決との競合が生じるため、30日の猶予を置く。tombstone保持期間とも揃えることで運用・テスト条件を単純化できる。
+
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
 - deletedAtそのものはpurge起算に使用しない
@@ -216,6 +247,7 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - 写真photoHash未実装
 - 原画像blob分離同期・オンデマンドcache未実装
 - blob先行upload / entity後確定未実装
+- 未参照blob 30日GC未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -238,9 +270,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**entityから参照されなくなったserver側原画像blobのGC方針を確定する。**
+**原画像blobのserver側同一性・重複排除のscopeを確定する。**
 
-blob upload成功後にentity Pushが失敗するケース、写真差し替え・削除、CONFLICT解決でSERVER winsとなるケースで未参照blobが発生し得る。即時削除では再送との競合があるため、server管理の猶予期間を設けたGCを推奨候補とする。
+候補は、同一user内でphotoHash一致blobを共有する方式と、entity/photoごとに独立blobを持つ方式。容量削減、削除/GC、権限制御、実装複雑度に影響するため次に確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
