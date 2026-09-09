@@ -47,21 +47,6 @@
 
 `createdAt / updatedAt / deletedAt` はbusiness上の時刻、`serverUpdatedAt` はserver canonical更新時刻として責務を分離する。
 
-```text
-createdAt
-→ entity / IDが最初に生成されたbusiness時刻
-
-updatedAt
-→ business dataを実際に編集した時刻
-
-deletedAt
-→ business上の削除操作を実際に行った時刻
-
-serverUpdatedAt
-→ serverがcanonicalを更新したserver時刻
-```
-
-確定規則:
 - 新規CREATE（baseRevision=0）はclient.createdAtを採用
 - 既存entityのUPDATE/復活ではcanonicalのcreatedAtを維持し、client値で上書きしない
 - reserved / server自動生成entityのcreatedAtはserver時刻
@@ -75,98 +60,34 @@ serverUpdatedAt
 
 ### client由来business時刻の異常値
 
-**確定:** client由来の `createdAt / updatedAt / deletedAt` は、timestamp形式として有効なら極端な過去・未来でもserverで補正しない。
+**確定:** client由来の `createdAt / updatedAt / deletedAt` は、timestamp形式として有効なら極端な過去・未来でもserverで補正しない。形式不正のみREJECTEDとする。同期整合性・retentionはclient由来business時刻に依存しない。
 
-```text
-形式として不正
-→ REJECTED
-
-形式として有効
-→ 過去・未来の大小だけを理由に補正・置換しない
-→ business時刻として保持
-```
-
-- serverはdevice clockの正しさを推測してbusiness履歴を書き換えない
-- 同期整合性・retentionはclient由来business時刻に依存しない
-- UIで異常値の警告・表示補正が必要なら表示レイヤの別仕様として扱う
-
-根拠: offline利用を前提とするためclient時刻はbusiness操作の発生時刻として価値がある。一方device clockはずれ得るので同期安全性の基準にはできない。serverが閾値で勝手に補正すると本来のbusiness履歴を失うため、形式検証のみ行い、同期制御はserver管理情報へ分離する。
+根拠: offline利用ではclient時刻はbusiness操作の発生時刻として価値がある一方、device clockはずれ得る。serverが推測でbusiness履歴を書き換えず、同期安全性はserver管理情報へ分離する。
 
 ### timestamp表現形式
 
-**確定:** APIで扱うbusiness timestampはRFC 3339互換のISO 8601形式とし、timezone offsetを必須とする。server canonical保存時はUTCへ正規化する。
+**確定:** APIのbusiness timestampはRFC 3339互換ISO 8601、timezone offset必須。server canonical保存時はUTCへ正規化し、標準精度はmilliseconds。元offsetは保持しない。
 
-```text
-API input/output
-→ RFC 3339 / ISO 8601
-→ UTC offset必須
-
-server canonical
-→ UTCへ正規化
-
-標準精度
-→ milliseconds
-
-元のtimezone offset
-→ business情報として保持しない
-```
-
-例:
-
-```text
-client: 2026-09-09T12:43:21.123+09:00
-server: 2026-09-09T03:43:21.123Z
-```
-
-規則:
-- offsetなしのlocal-time文字列は受理しない
-- `Z` はUTC offsetとして有効
-- clientがmillisecondsより細かい精度を送る場合はserver canonical保存時にmillisecondsへ正規化する
-- 正規化後の瞬間が同じならtimezone offsetの違いはbusiness差分とは扱わない
-- 元のoffset自体を表示・検索・監査に使う要件は現時点では持たない
-
-根拠: 端末timezoneに依存せず同一瞬間を一意に扱え、JavaScript/JSON/Prismaとの互換性も高い。offsetをbusiness情報として保存しないことで、同一瞬間の表現差による不要な差分・conflictを防げる。
+- offsetなしlocal-timeは受理しない
+- `Z`は有効
+- millisecondsより細かい精度はserver canonical保存時にmillisecondsへ正規化
 
 ### contentHash対象範囲
 
-**確定:** `contentHash` はbusiness上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は意味的差分として含める。
+**確定:** `contentHash` はbusiness上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は含める。
 
-```text
-contentHash対象外
-- createdAt
-- updatedAt
-- deletedAt のtimestamp値
-- serverUpdatedAt
-- revision
-- syncSeq
-- contentHash自身
-- userId
-- entity id
+対象外: `createdAt`, `updatedAt`, `deletedAt`時刻値, `serverUpdatedAt`, `revision`, `syncSeq`, `contentHash`, `userId`, entity id。
+対象: business本文、business参照、写真等のbusiness内容、active/deleted状態。
 
-contentHash対象
-- business本文
-- business参照関係
-- 写真等のbusiness内容
-- active / deleted 状態
-```
-
-規則:
-- `deletedAt`の時刻値はhashへ含めない
-- ただし `deletedAt == null` か否かに相当するactive/deleted状態はhashへ含める
-- timestampのみ異なりbusiness内容と状態が同じ場合、同一contentHashとなる
-- client clock差、server自動更新時刻差だけでCONFLICTを発生させない
-- active entityとdeleted entityは必ず異なるhashになる
-- canonicalizationは既定どおり、順序非依存配列はsort、object key順固定、決定的JSON化後にSHA-256相当でhash化する
-
-根拠: `contentHash`は「意味のあるbusiness差分があるか」の判定に使うため、device clock由来timestampや同期制御値を含めると不要なCONFLICTが発生する。一方、active/deletedはbusiness上の状態差なのでhashへ含める必要がある。
+canonicalizationは、順序非依存配列はsort、object key順固定、決定的JSON化後にSHA-256相当でhash化する。
 
 ### 写真とcontentHash
 
-**確定:** Box / Itemの写真は、画像本体のbase64文字列や保存形式そのものではなく、画像内容を表す安定した`photoHash`を介してentityの`contentHash`へ含める。写真の並び順はbusiness上意味を持つものとして扱う。
+**確定:** Box / Itemの写真は`photoHash`を介してentityの`contentHash`へ含め、写真配列の順番もbusiness内容として扱う。ただし画像内容の高度な正規化は行わない。
 
 ```text
-写真本体
-→ photoHash = 正規化した画像内容から算出
+保存された写真データ
+→ photoHash = 保存データから決定的に算出
 
 Box / Item contentHash
 → business本文
@@ -176,16 +97,16 @@ Box / Item contentHash
 ```
 
 規則:
-- 写真データそのものやbase64表現はentity contentHashへ直接入れない
-- 各写真に安定したphotoHashを持たせる
-- 同じ見た目の画像を保存形式・metadata・再エンコードだけ変更した場合に、可能な限り同一photoHashとなるよう画像内容を正規化してからhash化する
-- 写真配列の順番は意味的内容として扱う
-- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容であり、異なるentity contentHashとなる
+- 写真データそのものをentity contentHashへ直接入れず、各写真のphotoHashを使用する
+- photoHashはSHA-256相当の決定的hashとする
+- EXIF除去、pixel展開、色空間統一、再エンコード同一視等の高度な画像正規化は要件としない
+- 利用者が写真を変換・再保存・再エンコードして保存内容が変化した場合、それは写真の更新として扱ってよい
+- 同じ見た目でも保存データが異なれば別photoHashとなり得る
+- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容とする
 - 先頭写真を代表画像として利用できるUI/データモデルとの整合を取る
-- photoHash自体はSHA-256相当の決定的hashを使用する
-- BoxLocation写真はVision対象外だが、BoxLocationに写真を保持する仕様自体は別途写真仕様で整理する
+- BoxLocation写真も同じ写真同一性ルールを適用できるが、Vision対象はBox/Item写真のみ
 
-根拠: 保存形式やbase64文字列の差をbusiness差分にすると、意味的に同一の写真でも不要なCONFLICTが発生する。画像内容から安定したphotoHashを作り、それをentity hashへ取り込むことで同期判定を軽量・決定的にできる。一方、写真順は代表画像や閲覧順に影響するためbusiness内容として扱う。
+根拠: 箱目録では利用者が明示的に写真を変換・再保存した場合、それを最新の写真変更として扱えば十分である。見た目が同一かを判定するためのdecode・EXIF orientation・色空間・pixel正規化は実装とテストを複雑化する割に必要性が低い。保存された写真データをそのまま変更単位とする方が仕様が単純で予測可能。
 
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
@@ -203,7 +124,6 @@ CREATE + 編集 → CREATE / baseRevision=0維持
 CREATE + DELETE → DELETE / baseRevision=0維持
 UPDATE + 編集 → UPDATE / 元baseRevision維持
 UPDATE + DELETE → DELETE / 元baseRevision維持
-
 baseRevision=0 の CREATE→DELETE→復活 → CREATE
 baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 ```
@@ -235,8 +155,8 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - 新規DBは初回Full Resync成功まで書込不可
 - 既存canonicalありならFull Resync取得中もlocal編集可
 - 既存canonicalありでFull Resync途中失敗時は旧canonicalを保持してOFFLINE_READYへ戻れる
-
-Full Resync採用は `staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq` を1 IndexedDB transactionで行う。Outbox reapply順は `BoxLocation → Box → Item`。
+- Full Resync採用は `staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq` を1 IndexedDB transactionで行う
+- Outbox reapply順は `BoxLocation → Box → Item`
 
 ## 4. 現行実装との差異
 - Prisma sync metadata不足
@@ -248,7 +168,7 @@ Full Resync採用は `staging → Business/SyncState置換 → latest Outbox rea
 - BoxLocationモデルが確定仕様と不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
-- 写真の安定photoHash未実装
+- 写真photoHash未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -271,17 +191,9 @@ Full Resync採用は `staging → Business/SyncState置換 → latest Outbox rea
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**`photoHash`算出時の画像正規化手順を確定する。**
+**写真データを同期payloadへどのように載せるか（entity JSONへの埋め込みか、写真blobを別転送するか）を確定する。**
 
-推奨候補:
-- 画像をdecodeする
-- EXIF orientationを適用して表示向きを確定する
-- sRGB相当の共通色空間へ変換する
-- alphaを含む決定的pixel配列へ正規化する
-- width / heightと正規化pixel bytesからSHA-256を算出する
-- EXIF、撮影日時、GPS、ファイル名、JPEG品質、圧縮方式等のmetadataはphotoHashへ含めない
-
-これにより見た目が同一の画像は保存形式やmetadata差に依存せず同じphotoHashになりやすく、写真同一性をbusiness内容として安定して扱える。
+写真は容量が大きく、Outbox / Pull / Full Resyncの設計へ直接影響するため、contentHashとは分離して転送方式を決める。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
