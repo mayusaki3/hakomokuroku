@@ -44,37 +44,27 @@
 - 通常同期 = Pull → Outbox reapply → Push → Pull
 
 ### business時刻とserver時刻
-
-`createdAt / updatedAt / deletedAt` はbusiness上の時刻、`serverUpdatedAt` はserver canonical更新時刻として責務を分離する。
-
+- `createdAt / updatedAt / deletedAt` はbusiness上の時刻
+- `serverUpdatedAt` はserver canonical更新時刻
 - 新規CREATE（baseRevision=0）はclient.createdAtを採用
-- 既存entityのUPDATE/復活ではcanonicalのcreatedAtを維持し、client値で上書きしない
+- 既存entityのUPDATE/復活ではcanonicalのcreatedAtを維持
 - reserved / server自動生成entityのcreatedAtはserver時刻
 - client編集のupdatedAtはPush受理時にserver時刻で上書きしない
-- server自身がcascade・自動rename・参照補正等でbusiness変更した場合、そのserver操作時刻をupdatedAtとする
+- server自身がbusiness変更した場合、そのserver操作時刻をupdatedAtとする
 - client DELETEのdeletedAtはclient削除時刻を保持
 - server自身がDELETE主体の場合はserver操作時刻をdeletedAtとする
 - DELETE後に同一IDを復活させてもcreatedAtは元値を維持、updatedAtは復活操作時刻、deletedAt=null
-- createdAt / updatedAt / deletedAt は競合勝者判定、Pull順序、cursor判定に使用しない
+- business timestampは競合勝者判定、Pull順序、cursor判定に使用しない
 - 同期整合性は revision / contentHash / syncSeq を基準とする
 
 ### client由来business時刻の異常値
-
-**確定:** client由来の `createdAt / updatedAt / deletedAt` は、timestamp形式として有効なら極端な過去・未来でもserverで補正しない。形式不正のみREJECTEDとする。同期整合性・retentionはclient由来business時刻に依存しない。
-
-根拠: offline利用ではclient時刻はbusiness操作の発生時刻として価値がある一方、device clockはずれ得る。serverが推測でbusiness履歴を書き換えず、同期安全性はserver管理情報へ分離する。
+**確定:** timestamp形式として有効なら極端な過去・未来でもserverで補正しない。形式不正のみREJECTED。同期整合性・retentionはclient business時刻に依存しない。
 
 ### timestamp表現形式
-
-**確定:** APIのbusiness timestampはRFC 3339互換ISO 8601、timezone offset必須。server canonical保存時はUTCへ正規化し、標準精度はmilliseconds。元offsetは保持しない。
-
-- offsetなしlocal-timeは受理しない
-- `Z`は有効
-- millisecondsより細かい精度はserver canonical保存時にmillisecondsへ正規化
+**確定:** RFC 3339互換ISO 8601、timezone offset必須。server canonical保存時はUTCへ正規化、標準精度milliseconds、元offsetは保持しない。
 
 ### contentHash対象範囲
-
-**確定:** `contentHash` はbusiness上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は含める。
+**確定:** business上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は含める。
 
 対象外: `createdAt`, `updatedAt`, `deletedAt`時刻値, `serverUpdatedAt`, `revision`, `syncSeq`, `contentHash`, `userId`, entity id。
 対象: business本文、business参照、写真等のbusiness内容、active/deleted状態。
@@ -82,8 +72,7 @@
 canonicalizationは、順序非依存配列はsort、object key順固定、決定的JSON化後にSHA-256相当でhash化する。
 
 ### 写真とcontentHash
-
-**確定:** Box / Itemの写真は`photoHash`を介してentityの`contentHash`へ含め、写真配列の順番もbusiness内容として扱う。ただし画像内容の高度な正規化は行わない。
+**確定:** Box / Itemの写真は`photoHash`を介してentityの`contentHash`へ含め、写真配列の順番もbusiness内容として扱う。画像内容の高度な正規化は行わない。
 
 ```text
 保存された写真データ
@@ -96,21 +85,14 @@ Box / Item contentHash
 → active / deleted状態
 ```
 
-規則:
-- 写真データそのものをentity contentHashへ直接入れず、各写真のphotoHashを使用する
-- photoHashはSHA-256相当の決定的hashとする
-- EXIF除去、pixel展開、色空間統一、再エンコード同一視等の高度な画像正規化は要件としない
-- 利用者が写真を変換・再保存・再エンコードして保存内容が変化した場合、それは写真の更新として扱ってよい
-- 同じ見た目でも保存データが異なれば別photoHashとなり得る
-- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容とする
-- 先頭写真を代表画像として利用できるUI/データモデルとの整合を取る
-- BoxLocation写真も同じ写真同一性ルールを適用できるが、Vision対象はBox/Item写真のみ
-
-根拠: 箱目録では利用者が明示的に写真を変換・再保存した場合、それを最新の写真変更として扱えば十分である。見た目が同一かを判定するためのdecode・EXIF orientation・色空間・pixel正規化は実装とテストを複雑化する割に必要性が低い。保存された写真データをそのまま変更単位とする方が仕様が単純で予測可能。
+- photoHashはSHA-256相当
+- EXIF除去、pixel展開、色空間統一、再エンコード同一視等は要件としない
+- 利用者が画像を変換・再保存して保存内容が変われば写真更新として扱う
+- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容
+- BoxLocation写真も同じ同一性ルールを適用可能だがVision対象はBox/Itemのみ
 
 ### 写真同期payload
-
-**確定:** 原画像はentity JSONへ埋め込まず、写真blobとしてentity同期とは分離して転送する。一方、サムネイルはentity JSONへ埋め込む。
+**確定:** 原画像はentity JSONへ埋め込まず、写真blobとしてentity同期とは分離して転送する。サムネイルはentity JSONへ埋め込む。
 
 ```text
 entity JSON
@@ -123,17 +105,14 @@ entity JSON
 - blobとして別転送
 ```
 
-規則:
-- 原画像blobはPush/Pull/Full Resyncの通常entity JSONから分離する
-- entity側は写真参照、`photoHash`、順序、サムネイルを保持する
-- サムネイルはJSONへ埋め込み、一覧・検索結果・オフライン表示で原画像取得を不要にする
-- `contentHash`は順序付き`photoHash`列を使用し、サムネイルのbase64表現自体はhashへ直接含めない
-- 原画像の同期失敗とentity metadata同期は区別して扱える設計とする
-- Outboxで同じ原画像blobをentity payloadごとに複製しない
+- 原画像blobはPush/Pull/Full Resyncの通常entity JSONから分離
+- entity側は写真参照、photoHash、順序、thumbnailを保持
+- thumbnailはJSON埋め込み
+- entity contentHashは順序付きphotoHash列を使用し、thumbnail base64自体はhashへ直接含めない
+- Outboxで同一blobをentity payloadごとに複製しない
 
 ### 原画像blob取得・キャッシュ
-
-**確定:** 通常Pull / Full Resyncでは原画像blobを自動取得しない。entity JSONに含まれるサムネイルと写真metadataのみ同期し、原画像は利用者が必要とした時点でオンデマンド取得する。一度取得した原画像はuser別local DB側へキャッシュしてオフライン再表示に利用する。
+**確定:** 通常Pull / Full Resyncでは原画像blobを自動取得しない。thumbnailとphoto metadataだけ同期し、原画像は必要時にオンデマンド取得。一度取得した原画像はuser別local DB側へcacheし、オフライン再表示に利用する。
 
 ```text
 Pull / Full Resync
@@ -144,31 +123,46 @@ Pull / Full Resync
 → local cache確認
 → cacheあり: local表示
 → cacheなし & ONLINE: serverから取得してcache後表示
-→ cacheなし & OFFLINE: thumbnail表示、原画像未取得を示す
+→ cacheなし & OFFLINE: thumbnail表示
+```
+
+- 原画像取得はcursor/revision/contentHash進行の前提条件としない
+- blob取得失敗はentity同期成功を取り消さない
+- cache未取得は同期異常ではない
+- photoHashまたは参照が変われば旧cacheを新写真として利用しない
+
+### 原画像blob uploadとentity Push順序
+**確定:** 新規・更新写真は、原画像blob upload成功後にentity Pushを行う。canonical entityが未存在blobを参照する状態を作らない。
+
+```text
+1. clientでphotoHash算出
+2. 原画像blobをserverへupload
+3. serverがblob存在 / photoHashを確認
+4. entity Push
+5. entity canonicalへphotoId / photoHash / thumbnail / 順序を確定
 ```
 
 規則:
-- 一覧・検索・通常画面は原則thumbnailで成立させる
-- 原画像取得は通常同期cursor / revision / contentHash進行の前提条件としない
-- blob取得失敗はentity同期成功を取り消さない
-- cache済みblobは同一userの次回オンライン認証後にも利用可能
-- user別DB分離に従い、別userのcacheを表示しない
-- photoHashまたは写真参照が変わった場合、旧cacheを新写真として使用しない
-- cache未取得は同期異常ではない
-- local storage容量不足等でcacheを保持できない場合でもthumbnail/metadataのcanonical同期は成立する
+- entity Push時に参照するblobはserver側で利用可能でなければならない
+- blob upload失敗時はentity Pushを行わず、Outboxとlocal Businessは保持する
+- blob upload成功後にentity Pushが失敗・CONFLICT・通信結果不明となってもblobは直ちに削除しない
+- 同一photoHash / 同一blobがserverに既に存在し再利用可能なら再uploadを避けられる設計とする
+- entity Push再送時は既upload blobを再利用できる
+- canonical entityが存在しないblobを参照する状態を正常系では作らない
+- blob upload成功だけではentity同期成功とは扱わない
+- entityのOutboxはentity PushがAPPLIED/UNCHANGED等で成功するまで保持する
 
-根拠: 原画像を常時同期するとFull Resyncや多端末利用時の通信量・待ち時間が大きくなる。一方thumbnailをcanonical JSONへ含めれば、通常利用は原画像なしでも成立する。必要時のみ原画像を取得し、取得済みをcacheする方式なら通信量とオフライン閲覧を両立できる。
+根拠: entity先行だとcanonicalが未upload原画像を参照する時間窓が生じる。blob先行なら失敗時に未参照blobが残るだけで、business canonicalの参照整合性を保ちやすい。未参照blobは再送で再利用し、不要になったものは別途GC対象にできる。
 
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
-- `deletedAt`そのものはpurge起算に使用しない
-- deleted状態のentityではDELETE受理時の`serverUpdatedAt`をpurge起算として利用できる
-- 復活時はdeletedAt=nullとなりpurge対象外
-- SyncChangeLogは固定90日保持、device cursorでは延長しない
-- Pullに必要なlogが欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
+- deletedAtそのものはpurge起算に使用しない
+- deleted状態ではDELETE受理時のserverUpdatedAtをpurge起算に利用可能
+- SyncChangeLogは固定90日保持
+- 必要log欠落または完全性保証不能ならFULL_RESYNC_REQUIRED
 
 ### Outbox
-Outboxは履歴ではなくlatest unsynced candidate。同一 `(entityType, entityId)` につき1 row。
+同一 `(entityType, entityId)` につき1 row、latest unsynced candidate。
 
 ```text
 CREATE + 編集 → CREATE / baseRevision=0維持
@@ -191,12 +185,12 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - Box DELETE → child Item.boxId=UNASSIGNED
 - BoxLocation DELETE → child Box.locationId=UNASSIGNED
 - parent DELETE + child補正はserver 1 transaction
-- reserved `Box(id=UNASSIGNED)` / `BoxLocation(id=UNASSIGNED)` を各Userで保証
-- reserved entityはclient変更禁止、serverは `RESERVED_ENTITY / retryable=false`
+- reserved Box(id=UNASSIGNED) / BoxLocation(id=UNASSIGNED) を各Userで保証
+- reserved entityはclient変更禁止、serverは RESERVED_ENTITY / retryable=false
 - SyncConflictは `(userId, entityType, entityId)` につき未解決1 row、statusなし、解決後削除
 
 ### Pull / Full Resync
-- Pull = `changes[] / nextCursor / hasMore`、syncSeq順
+- Pull = changes[] / nextCursor / hasMore、syncSeq順
 - pageのlocal適用成功後のみcursor更新
 - cursor未設定の新規DBは必ずFull Resync
 - Full Resyncはcurrent active canonicalのみ
@@ -206,8 +200,8 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - 新規DBは初回Full Resync成功まで書込不可
 - 既存canonicalありならFull Resync取得中もlocal編集可
 - 既存canonicalありでFull Resync途中失敗時は旧canonicalを保持してOFFLINE_READYへ戻れる
-- Full Resync採用は `staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq` を1 IndexedDB transactionで行う
-- Outbox reapply順は `BoxLocation → Box → Item`
+- Full Resync採用は staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq を1 IndexedDB transactionで行う
+- Outbox reapply順は BoxLocation → Box → Item
 
 ## 4. 現行実装との差異
 - Prisma sync metadata不足
@@ -221,6 +215,7 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - Full Resync snapshot/staging未実装
 - 写真photoHash未実装
 - 原画像blob分離同期・オンデマンドcache未実装
+- blob先行upload / entity後確定未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -243,9 +238,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**新規・更新写真の原画像blobをPushする順序とentity確定の依存関係を決める。**
+**entityから参照されなくなったserver側原画像blobのGC方針を確定する。**
 
-候補は、blob upload成功後にentity Pushする方式と、entityを先に確定してblobを後送する方式。offline Outbox、再送、写真欠損状態、削除との競合に影響するため次に確定する。
+blob upload成功後にentity Pushが失敗するケース、写真差し替え・削除、CONFLICT解決でSERVER winsとなるケースで未参照blobが発生し得る。即時削除では再送との競合があるため、server管理の猶予期間を設けたGCを推奨候補とする。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
