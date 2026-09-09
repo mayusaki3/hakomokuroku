@@ -91,6 +91,32 @@ reserved / server自動生成entity
 
 根拠: offline新規作成の実時刻を保持しながら、既存entityの起点をclient payloadによって誤変更・改変されることを防ぐ。`createdAt`の責務をentityの初回生成時刻に固定し、削除・復活を含む同一IDのライフサイクルで意味を一貫させる。
 
+### deletedAt / tombstone保持起算
+**確定:** business上の削除時刻とserver retention管理の時計を分離する。
+
+```text
+deletedAt
+→ business上の削除操作が実際に行われた時刻
+→ client削除ならclient側削除時刻
+→ server自身が削除主体ならserver操作時刻
+
+tombstone 30日保持の起算
+→ client時計には依存しない
+→ serverがDELETEをcanonicalへ受理した時刻を基準
+```
+
+規則:
+- local DELETE時にclient現在時刻を`deletedAt`としてcandidateへ記録する
+- offline DELETEでもそのlocal削除時刻を保持する
+- Push受理時、serverはclientの`deletedAt`を原則そのままcanonicalへ反映し、server時刻で上書きしない
+- server自身がcascade等でDELETEを発生させるentityでは、そのserver操作時刻を`deletedAt`とする
+- tombstoneの物理purge可否は`deletedAt`そのものでは判定せず、DELETEをcanonicalへ受理したserver管理時刻を基準に30日を数える
+- 現行メタデータではDELETE時の`serverUpdatedAt`がそのserver受理時刻を表せるため、deleted状態のentityについてはこれをpurge起算に利用できる
+- 復活時は`deletedAt=null`となるためtombstone purge対象外となる
+- `deletedAt`はrevision conflictの勝者判定、Pull順序、cursor判定には使用しない
+
+根拠: `deletedAt`をbusiness履歴としての実削除時刻に保ちつつ、retentionをserver管理時刻で数えることで、offline期間やdevice clockずれによってtombstone保持期間が意図せず短縮されたり即時purge対象になったりすることを防ぐ。
+
 ### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId = UNASSIGNED
 - BoxLocation DELETE → child Box.locationId = UNASSIGNED
@@ -215,7 +241,8 @@ server側の復活処理では通常のbusiness updateとして:
 を同一transactionで行う。
 
 ### retention
-- tombstone = deletedAt + 30日後に物理削除可能
+- tombstone = DELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
+- `deletedAt`そのものはtombstone purge起算に使用しない
 - SyncChangeLog = 固定90日保持、device cursorによる延長なし
 - Pull可否は対象Userのcursor以降に必要なlogが実際に保持されているかで判定
 - 欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
@@ -254,16 +281,15 @@ server側の復活処理では通常のbusiness updateとして:
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**`deletedAt`をlocal削除操作時刻として保持するか、server受理時にserver時刻へ置換するかを確定する。**
+**client由来の`createdAt / updatedAt / deletedAt`が極端な未来・過去時刻だった場合、serverで補正するか、そのままbusiness時刻として保持するかを確定する。**
 
 推奨候補:
-- `deletedAt` = business上の削除操作が実際に行われたclient側時刻
-- offline DELETEでもlocal削除時刻を保持する
-- serverはPush受理時にclientの`deletedAt`を原則保持し、server時刻で上書きしない
-- server自身がcascade等でDELETEを発生させたentityではserver操作時刻を`deletedAt`とする
-- tombstone 30日保持のpurge起算だけはclient時計に依存させず、`serverUpdatedAt`またはserver管理の削除受理時刻を基準とする
+- 同期整合性・retentionにはこれらclient時刻を一切使わない
+- timestamp形式として不正な値はREJECTEDとする
+- 形式上有効な時刻は、極端な未来・過去でもserverで勝手に補正せずbusiness時刻として保持する
+- UI表示上の異常値対応が必要なら別途表示レイヤで扱う
 
-これによりbusiness上の削除時刻とserver retention管理の時計を分離できる。
+これによりserverがclientのbusiness履歴を暗黙に書き換えず、同期安全性はserver管理時刻とrevision/syncSeqで確保できる。
 
 ## 7. HLDocS運用上の注意
 
