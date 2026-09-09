@@ -43,209 +43,122 @@
 - PushはOutbox基準、sync中再編集はoutboxVersionで保護
 - 通常同期 = Pull → Outbox reapply → Push → Pull
 
-### updatedAt / serverUpdatedAt
-**確定:** 時刻フィールドの責務を分離する。
+### business時刻とserver時刻
+
+`createdAt / updatedAt / deletedAt` はbusiness上の時刻、`serverUpdatedAt` はserver canonical更新時刻として責務を分離する。
 
 ```text
+createdAt
+→ entity / IDが最初に生成されたbusiness時刻
+
 updatedAt
-→ business dataを実際に編集したclient側時刻
+→ business dataを実際に編集した時刻
+
+deletedAt
+→ business上の削除操作を実際に行った時刻
 
 serverUpdatedAt
-→ serverがその変更を受理しcanonicalを更新したserver側時刻
+→ serverがcanonicalを更新したserver時刻
 ```
 
-規則:
-- local編集時に`updatedAt`を更新する
-- offline編集でもその編集時刻を保持する
-- Push受理時、serverはclientから受け取った`updatedAt`を原則そのままcanonicalへ反映し、server現在時刻で上書きしない
-- server側でcascade、自動rename、参照補正などserver自身がbusiness dataを変更した場合は、そのserver操作時刻を`updatedAt`へ設定する
-- canonicalがserverで更新された時点で`serverUpdatedAt`をserver現在時刻へ更新する
-- `updatedAt`はrevision conflictの勝者判定に使用しない
-- Pull順序やcursor判定にも`updatedAt`を使用しない
-- 同期整合性は`revision / contentHash / syncSeq`を基準とする
+確定規則:
+- 新規CREATE（baseRevision=0）はclient.createdAtを採用
+- 既存entityのUPDATE/復活ではcanonicalのcreatedAtを維持し、client値で上書きしない
+- reserved / server自動生成entityのcreatedAtはserver時刻
+- client編集のupdatedAtはPush受理時にserver時刻で上書きしない
+- server自身がcascade・自動rename・参照補正等でbusiness変更した場合、そのserver操作時刻をupdatedAtとする
+- client DELETEのdeletedAtはclient削除時刻を保持
+- server自身がDELETE主体の場合はserver操作時刻をdeletedAtとする
+- DELETE後に同一IDを復活させてもcreatedAtは元値を維持、updatedAtは復活操作時刻、deletedAt=null
+- createdAt / updatedAt / deletedAt は競合勝者判定、Pull順序、cursor判定に使用しない
+- 同期整合性は revision / contentHash / syncSeq を基準とする
 
-根拠: `updatedAt`をbusiness dataが実際に変更された時刻、`serverUpdatedAt`をserver canonical更新時刻と分離することで、offline編集時刻を失わない。一方、device clockにはずれがあり得るため、updatedAtを競合解決や同期順序の根拠には使用しない。server自身がbusiness変更を発生させる操作ではserverが編集主体なので、そのserver時刻をupdatedAtとして扱う。
+### client由来business時刻の異常値
 
-### createdAt
-**確定:** `createdAt`は「このbusiness entity / IDが最初に生成された時刻」とする。
+**確定:** client由来の `createdAt / updatedAt / deletedAt` は、timestamp形式として有効なら極端な過去・未来でもserverで補正しない。
 
 ```text
-baseRevision = 0 の新規CREATE
-→ client.createdAt をserver canonicalへ採用
+形式として不正
+→ REJECTED
 
-既存entityのUPDATE / 復活
-→ server canonicalのcreatedAtを維持
-→ client payloadのcreatedAtでは上書きしない
-
-reserved / server自動生成entity
-→ server時刻でcreatedAtを設定
+形式として有効
+→ 過去・未来の大小だけを理由に補正・置換しない
+→ business時刻として保持
 ```
 
-規則:
-- offlineで新規作成したentityでは、実際のlocal生成時刻を`createdAt`として保持できる
-- serverが新規CREATEを初回受理するときのみclientの`createdAt`を採用する
-- serverに既に同一entityが存在する場合、UPDATE/復活/競合解決でclientの`createdAt`をcanonicalへ上書きしない
-- DELETE後に同一IDを復活させても`createdAt`は元の値を維持する
-- reserved `UNASSIGNED` 等、server自身が生成するentityはserver生成時刻を用いる
-- `createdAt`はrevision conflict、同期順序、Pull cursor判定には使用しない
+- serverはdevice clockの正しさを推測してbusiness履歴を書き換えない
+- 同期整合性・retentionはclient由来business時刻に依存しない
+- UIで異常値の警告・表示補正が必要なら表示レイヤの別仕様として扱う
 
-根拠: offline新規作成の実時刻を保持しながら、既存entityの起点をclient payloadによって誤変更・改変されることを防ぐ。`createdAt`の責務をentityの初回生成時刻に固定し、削除・復活を含む同一IDのライフサイクルで意味を一貫させる。
+根拠: offline利用を前提とするためclient時刻はbusiness操作の発生時刻として価値がある。一方device clockはずれ得るので同期安全性の基準にはできない。serverが閾値で勝手に補正すると本来のbusiness履歴を失うため、形式検証のみ行い、同期制御はserver管理情報へ分離する。
 
 ### deletedAt / tombstone保持起算
-**確定:** business上の削除時刻とserver retention管理の時計を分離する。
+
+business削除時刻とretention管理時刻を分離する。
+
+- tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
+- `deletedAt`そのものはpurge起算に使用しない
+- deleted状態のentityではDELETE受理時の`serverUpdatedAt`をpurge起算として利用できる
+- 復活時はdeletedAt=nullとなりpurge対象外
+- SyncChangeLogは固定90日保持、device cursorでは延長しない
+- Pullに必要なlogが欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
+
+### Outbox
+
+Outboxは履歴ではなくlatest unsynced candidate。同一 `(entityType, entityId)` につき1 row。
 
 ```text
-deletedAt
-→ business上の削除操作が実際に行われた時刻
-→ client削除ならclient側削除時刻
-→ server自身が削除主体ならserver操作時刻
+CREATE + 編集 → CREATE / baseRevision=0維持
+CREATE + DELETE → DELETE / baseRevision=0維持
+UPDATE + 編集 → UPDATE / 元baseRevision維持
+UPDATE + DELETE → DELETE / 元baseRevision維持
 
-tombstone 30日保持の起算
-→ client時計には依存しない
-→ serverがDELETEをcanonicalへ受理した時刻を基準
+baseRevision=0 の CREATE→DELETE→復活
+→ CREATEへ戻す
+
+baseRevision>0 の UPDATE→DELETE→復活
+→ UPDATEへ戻す
 ```
 
-規則:
-- local DELETE時にclient現在時刻を`deletedAt`としてcandidateへ記録する
-- offline DELETEでもそのlocal削除時刻を保持する
-- Push受理時、serverはclientの`deletedAt`を原則そのままcanonicalへ反映し、server時刻で上書きしない
-- server自身がcascade等でDELETEを発生させるentityでは、そのserver操作時刻を`deletedAt`とする
-- tombstoneの物理purge可否は`deletedAt`そのものでは判定せず、DELETEをcanonicalへ受理したserver管理時刻を基準に30日を数える
-- 現行メタデータではDELETE時の`serverUpdatedAt`がそのserver受理時刻を表せるため、deleted状態のentityについてはこれをpurge起算に利用できる
-- 復活時は`deletedAt=null`となるためtombstone purge対象外となる
-- `deletedAt`はrevision conflictの勝者判定、Pull順序、cursor判定には使用しない
-
-根拠: `deletedAt`をbusiness履歴としての実削除時刻に保ちつつ、retentionをserver管理時刻で数えることで、offline期間やdevice clockずれによってtombstone保持期間が意図せず短縮されたり即時purge対象になったりすることを防ぐ。
+- local変更ごとにoutboxVersion++
+- CREATE/UPDATEは最新payload + contentHash
+- DELETEはdelete-state contentHash、payload原則null
+- Outbox.createdAtはchange chain開始時刻を維持
+- PullだけではbaseRevisionを進めない
+- CREATE→DELETEでもOutboxを消さない
+- Push中再編集はoutboxVersion snapshotで保護
 
 ### DELETE / CONFLICT / UNASSIGNED
-- Box DELETE → child Item.boxId = UNASSIGNED
-- BoxLocation DELETE → child Box.locationId = UNASSIGNED
-- server parent DELETE + child補正は1 transaction、子UPSERT log → 親DELETE log
+- Box DELETE → child Item.boxId=UNASSIGNED
+- BoxLocation DELETE → child Box.locationId=UNASSIGNED
+- parent DELETE + child補正はserver 1 transaction
 - reserved `Box(id=UNASSIGNED)` / `BoxLocation(id=UNASSIGNED)` を各Userで保証
 - reserved entityはclient変更禁止、serverは `RESERVED_ENTITY / retryable=false`
-- SyncConflictは `(userId, entityType, entityId)` につき未解決1row、statusなし、解決後削除
+- SyncConflictは `(userId, entityType, entityId)` につき未解決1 row、statusなし、解決後削除
 
 ### Pull / Full Resync
-- Pull = `changes[] / nextCursor / hasMore`、syncSeq順、page適用成功後のみcursor更新
-- cursor未設定の新規DBは必ずFull Resyncから開始
+- Pull = `changes[] / nextCursor / hasMore`、syncSeq順
+- pageのlocal適用成功後のみcursor更新
+- cursor未設定の新規DBは必ずFull Resync
 - Full Resyncはcurrent active canonicalのみ
-- snapshot開始時に `snapshotSeq=N` と内容Nを固定
+- snapshot開始時にsnapshotSeq=Nと内容Nを固定
 - entity type別paging、snapshot TTL約30分
 - staging全完了後のみlocal canonicalへ採用
-- 新規DBは初回Full Resync成功まで書き込み不可
-- 既存canonicalありならFull Resync途中失敗後も旧canonicalを保持してOFFLINE_READYへ戻れる
-- 既存canonicalありならFull Resync staging取得中もlocal編集可
+- 新規DBは初回Full Resync成功まで書込不可
+- 既存canonicalありならFull Resync取得中もlocal編集可
+- 既存canonicalありでFull Resync途中失敗時は旧canonicalを保持してOFFLINE_READYへ戻れる
 
-### Full Resync採用transaction
-`staging → Business/SyncState置換 + latest Outbox reapply + cursor=snapshotSeq` を1つのIndexedDB transactionで原子的に行う。
-
-```text
-BEGIN IndexedDB transaction
-1. staging snapshotを読む
-2. Businessをsnapshot canonicalへ置換
-3. SyncStateをsnapshot metadataへ置換
-4. latest Outboxを読む
-5. Outboxを依存順にreapply
-6. 必要な参照補正を行う
-7. cursor = snapshotSeq
-COMMIT
-```
-
-- user編集transactionと採用transactionはIndexedDB transaction境界で直列化
-- transaction失敗時は旧canonical / old cursor / Outboxを維持
-- `/sync/full/{snapshotId}/complete` はlocal採用成功後のみ送信
-
-### Full Resync時のOutbox reapplyと参照判定
-Outbox reapply順:
-```text
-BoxLocation → Box → Item
-```
-
-親参照判定:
-```text
-snapshotに親あり
-→ snapshot親を参照
-
-snapshotに親なし + latest Outboxに有効な親CREATE/UPDATE candidateあり
-→ parent candidateを先にreapplyし、local親子関係を維持
-
-snapshotにも有効な親Outboxにも親なし
-→ 子candidate本体は保持し、参照だけUNASSIGNEDへ補正
-```
-
-補正時:
-- Businessを補正
-- Outbox.payload更新
-- contentHash再計算
-- outboxVersion++
-- baseRevision維持
-
-### Outbox親DELETE時の正規化
-parentのlatest Outbox operationがDELETEの場合、そのparentは参照可能な親として扱わない。子entity本体は保持し、参照のみreserved `UNASSIGNED`へ補正する。
-
-### Outbox operation畳み込み
-**確定:** Outboxは履歴ではなく「latest unsynced candidate」を保持する。同一entityにつき1 rowとし、operationもlatest local intentへ畳み込む。
+Full Resync採用は以下を1 IndexedDB transactionで実施する。
 
 ```text
-CREATE + 編集 → CREATEのままpayload最新化 / baseRevision=0維持
-CREATE + DELETE → DELETEへ変更 / baseRevision=0維持
-UPDATE + 編集 → UPDATEのままpayload最新化 / baseRevision維持
-UPDATE + DELETE → DELETEへ変更 / baseRevision維持
+staging → Business/SyncState置換
+→ latest Outbox reapply
+→ 必要な参照補正
+→ cursor=snapshotSeq
 ```
 
-DELETE後の明示的復活は、server canonicalに対する意味でoperationを決める。
-
-```text
-baseRevision = 0
-CREATE → DELETE → 復活
-→ CREATEへ戻す
-→ baseRevision=0維持
-
-baseRevision > 0
-UPDATE → DELETE → 復活
-→ UPDATEへ戻す
-→ 元のbaseRevision維持
-```
-
-共通規則:
-- 同一 `(entityType, entityId)` につきOutbox 1 row
-- local操作のたびに `outboxVersion++`
-- CREATE/UPDATEでは最新business payload + contentHash
-- DELETEではdelete-state contentHash、payload原則null
-- Outbox.createdAtはrow作成時刻を維持
-- PullだけではbaseRevisionを変更しない
-- `CREATE → DELETE` でもOutboxを消さない
-
-根拠: Outbox.operationは単なる直前操作ではなく「server canonicalに対して何を要求するcandidateか」を表す。baseRevision=0のentityはlocal上で削除・復活を経てもserverから見れば新規であるためCREATEが正しい。baseRevision>0のentityはserver既存entityの変更なのでUPDATEが正しい。
-
-### DELETE後の同一ID復活時刻
-**確定:** DELETE後に同一IDを明示的に復活させる場合は、新規entityではなく同一business entityのライフサイクル継続として扱う。
-
-```text
-createdAt → 元の値を維持
-updatedAt → 復活操作時刻へ更新
-deletedAt → null
-```
-
-server上でdeleted entityに対してCONFLICTをCLIENT winsで解決し復活させる場合も同じ規則を適用する。
-
-server側の復活処理では通常のbusiness updateとして:
-- `createdAt` を変更しない
-- `updatedAt` は復活candidateのbusiness編集時刻を維持する。server自身が復活操作のbusiness変更主体となる場合のみserver時刻
-- `deletedAt = null`
-- `revision + 1`
-- `serverUpdatedAt` 更新
-- active-state `contentHash` 再計算
-- 新しい `syncSeq` 採番
-- SyncChangeLogへUPSERT
-を同一transactionで行う。
-
-### retention
-- tombstone = DELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
-- `deletedAt`そのものはtombstone purge起算に使用しない
-- SyncChangeLog = 固定90日保持、device cursorによる延長なし
-- Pull可否は対象Userのcursor以降に必要なlogが実際に保持されているかで判定
-- 欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
+Outbox reapply順は `BoxLocation → Box → Item`。
+snapshotに親がなくてもlatest Outboxに有効な親CREATE/UPDATEがあれば親を先にreapplyして参照を維持する。親がsnapshotにも有効なOutboxにもない、または親OutboxがDELETEなら子本体を保持して参照だけUNASSIGNEDへ補正する。
 
 ## 4. 現行実装との差異
 
@@ -281,15 +194,16 @@ server側の復活処理では通常のbusiness updateとして:
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**client由来の`createdAt / updatedAt / deletedAt`が極端な未来・過去時刻だった場合、serverで補正するか、そのままbusiness時刻として保持するかを確定する。**
+**clientから送信するbusiness timestampの表現形式を確定する。**
 
 推奨候補:
-- 同期整合性・retentionにはこれらclient時刻を一切使わない
-- timestamp形式として不正な値はREJECTEDとする
-- 形式上有効な時刻は、極端な未来・過去でもserverで勝手に補正せずbusiness時刻として保持する
-- UI表示上の異常値対応が必要なら別途表示レイヤで扱う
+- API上はISO 8601 / RFC 3339形式
+- 必ずUTC offset付きで送信
+- canonical保存はUTCへ正規化
+- business上の元のoffsetそのものは保持しない
+- millisecondsまでを標準精度とし、それより細かい精度は切り捨てまたは正規化
 
-これによりserverがclientのbusiness履歴を暗黙に書き換えず、同期安全性はserver管理時刻とrevision/syncSeqで確保できる。
+これにより端末timezoneに依存せず同じ瞬間を一意に保存でき、JSON/API/JavaScript/Prismaとの互換性を保ちやすい。
 
 ## 7. HLDocS運用上の注意
 
