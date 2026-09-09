@@ -112,8 +112,6 @@ Box / Item contentHash
 
 **確定:** 原画像はentity JSONへ埋め込まず、写真blobとしてentity同期とは分離して転送する。一方、サムネイルはentity JSONへ埋め込む。
 
-概念:
-
 ```text
 entity JSON
 - photoId / blob参照
@@ -132,9 +130,34 @@ entity JSON
 - `contentHash`は順序付き`photoHash`列を使用し、サムネイルのbase64表現自体はhashへ直接含めない
 - 原画像の同期失敗とentity metadata同期は区別して扱える設計とする
 - Outboxで同じ原画像blobをentity payloadごとに複製しない
-- Full Resyncのcanonical entity取得でもサムネイルは同時取得でき、原画像は必要に応じて別取得できる構造を採る
 
-根拠: 原画像をJSONへ埋め込むとPush/Pull/Full Resyncのpayloadが大きくなり、同じ写真の重複保持や再送コストが増える。一方サムネイルは軽量で、JSONに含めることで一覧やオフライン閲覧が単純になる。原画像だけ別blobに分離する構成が容量と利用性のバランスがよい。
+### 原画像blob取得・キャッシュ
+
+**確定:** 通常Pull / Full Resyncでは原画像blobを自動取得しない。entity JSONに含まれるサムネイルと写真metadataのみ同期し、原画像は利用者が必要とした時点でオンデマンド取得する。一度取得した原画像はuser別local DB側へキャッシュしてオフライン再表示に利用する。
+
+```text
+Pull / Full Resync
+→ thumbnail + photo metadata
+→ 原画像blobは取得しない
+
+原画像表示要求
+→ local cache確認
+→ cacheあり: local表示
+→ cacheなし & ONLINE: serverから取得してcache後表示
+→ cacheなし & OFFLINE: thumbnail表示、原画像未取得を示す
+```
+
+規則:
+- 一覧・検索・通常画面は原則thumbnailで成立させる
+- 原画像取得は通常同期cursor / revision / contentHash進行の前提条件としない
+- blob取得失敗はentity同期成功を取り消さない
+- cache済みblobは同一userの次回オンライン認証後にも利用可能
+- user別DB分離に従い、別userのcacheを表示しない
+- photoHashまたは写真参照が変わった場合、旧cacheを新写真として使用しない
+- cache未取得は同期異常ではない
+- local storage容量不足等でcacheを保持できない場合でもthumbnail/metadataのcanonical同期は成立する
+
+根拠: 原画像を常時同期するとFull Resyncや多端末利用時の通信量・待ち時間が大きくなる。一方thumbnailをcanonical JSONへ含めれば、通常利用は原画像なしでも成立する。必要時のみ原画像を取得し、取得済みをcacheする方式なら通信量とオフライン閲覧を両立できる。
 
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
@@ -197,7 +220,7 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
 - 写真photoHash未実装
-- 原画像blob分離同期未実装
+- 原画像blob分離同期・オンデマンドcache未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -220,9 +243,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**原画像blobの取得方針を確定する。**
+**新規・更新写真の原画像blobをPushする順序とentity確定の依存関係を決める。**
 
-候補は、Full Resyncや通常Pull時に全原画像を自動取得する方式と、サムネイル/metadataだけ同期して原画像は必要時または明示操作時に取得する方式。容量・通信量・オフライン要件に影響するため次に確定する。
+候補は、blob upload成功後にentity Pushする方式と、entityを先に確定してblobを後送する方式。offline Outbox、再送、写真欠損状態、削除との競合に影響するため次に確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
