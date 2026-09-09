@@ -83,7 +83,6 @@
 
 ```text
 entity JSON
-- photoId / blob参照
 - photoHash
 - thumbnail
 - 写真順序
@@ -92,6 +91,8 @@ entity JSON
 - blobとして別転送
 ```
 
+- `photoId` は持たない
+- `photoHash` が原画像blobの論理識別子
 - thumbnail base64そのものはcontentHashへ直接含めない
 - Outboxで原画像blobを重複保持しない
 
@@ -101,7 +102,7 @@ entity JSON
 - cache未取得は同期異常ではない
 - 原画像取得失敗はentity同期成功を取り消さない
 - offline時はcache済み原画像を表示、未取得ならthumbnail表示
-- photoHash/参照が変われば旧cacheを新写真として使わない
+- photoHashが変われば旧cacheを新写真として使わない
 
 ### 原画像upload順序
 **確定:** blob upload成功 → entity Push の順。
@@ -118,6 +119,36 @@ entity JSON
 - upload成功後のPush失敗/CONFLICT/結果不明でもblobは即削除しない
 - 同一User内の既upload blobは再利用可能
 - blob upload成功だけではentity同期成功ではない
+
+### PhotoBlob識別子
+**確定:** `photoId` は別に設けず、`photoHash` をそのままPhotoBlobの論理識別子にする。
+
+概念:
+
+```text
+PhotoBlob
+- userId
+- photoHash
+- blob情報
+- unreferencedSince
+```
+
+論理一意キー:
+
+```text
+(User.id, photoHash)
+```
+
+規則:
+- entity側の写真参照は `photoHash` のみで行う
+- 同一User内で同じphotoHashなら同じPhotoBlobを参照・再利用する
+- 異なるUser間では同じphotoHashでも別PhotoBlobとして扱う
+- blob upload / exists / download / GC lookup は `(User.id, photoHash)` scope
+- `photoId` という追加識別子は持たない
+- 将来hash方式を変更する場合は、写真再hash、entityのphotoHash更新、entity contentHash再計算、同期整合性更新を含む明示的な全体migrationとして扱う
+- hash方式変更の可能性だけを理由に現時点で参照IDを二重化しない
+
+根拠: photoHashはすでに写真内容の同一性判定とentity contentHashの入力としてbusiness同期設計に組み込まれているため、hash方式変更時にはphotoIdを別に持っていても全体migrationを避けられない。現時点では識別子を増やすより `(User.id, photoHash)` に統一した方が実装・API・テスト・GCが単純である。
 
 ### PhotoBlob重複排除scope
 **確定:** 同一User内のみ。
@@ -139,16 +170,6 @@ different User.id + same photoHash → 別blob
 ### PhotoBlob参照管理
 **確定:** reference countを正本として保持しない。canonical entityの実参照を正本としてGC判定する。
 
-概念:
-
-```text
-PhotoBlob
-- userId
-- photoHash
-- blob情報
-- unreferencedSince
-```
-
 規則:
 - Box / Item / BoxLocation のcanonical写真参照がPhotoBlob参照の正本
 - referenceCount列は正本として持たない
@@ -156,7 +177,6 @@ PhotoBlob
 - その後再参照されたら`unreferencedSince=null`
 - GC時は`unreferencedSince <= now-30days`だけを候補化し、削除直前に同一User内のBox / Item / BoxLocationを再検索して実参照ゼロを確認
 - 実参照があれば削除禁止、`unreferencedSince`は必要に応じて解除
-- cascade / CONFLICT / 再送 / 自動rename等の複雑な状態遷移でも、count更新漏れによる誤削除を避ける
 
 根拠: reference countを正本にすると複数の同期・競合・cascade経路すべてで厳密な加減算が必要になり、更新漏れが誤削除につながる。GCは30日後の非同期処理なので、canonical参照を再確認する方式の方が安全で単純。
 
@@ -207,6 +227,7 @@ PhotoBlob
 - user-scoped blob dedup未実装
 - 未参照blob 30日GC未実装
 - canonical実参照ベースGC未実装
+- PhotoBlobの `(User.id, photoHash)` 識別未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -229,9 +250,9 @@ PhotoBlob
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**PhotoBlobの識別子を `photoHash` そのものにするか、別の `photoId` を持たせるかを確定する。**
+**PhotoBlob upload時の完全性検証を、client申告photoHashとserver再計算の一致確認まで必須にするか確定する。**
 
-同一User内dedup、entity JSON参照、将来のstorage実装、hash algorithm変更可能性に影響する。
+client申告値だけを信用すると破損・実装不整合で誤ったblob識別が成立し得る。一方server側再hashはupload時のCPUコストを増やすため、次に要否を確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
