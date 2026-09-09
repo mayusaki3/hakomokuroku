@@ -75,6 +75,25 @@
 - Pull/Full Resyncでは原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
 
+#### local original cacheの扱い
+**確定:** local original cacheは正本ではなく再取得可能な内部cacheとして扱う。
+
+- Business / canonicalの写真参照状態が、利用者から見える写真の存在状態を決める正本
+- 写真を削除・差し替えしてBusinessからphotoHash参照が消えた後も、同じphotoHashのlocal original cache bytesは即時削除しなくてよい
+- 未参照cacheはUIから完全に不可視とし、cacheの存在だけを理由に写真を自動復元しない
+- 未参照cacheは容量不足時・cache整理時の削除対象にできる。固定保持期間は設けない
+- canonicalで同じphotoHashが再び必要になった場合、cacheが残っていれば再downloadせず内部的に再利用してよい
+- photoHashが異なるcacheを新しい写真として流用しない
+
+#### CONFLICTで写真が戻る場合
+- 写真削除後にserver側とCONFLICTした場合、写真が戻るのはcacheの自動復元ではなく、利用者がSERVER側canonicalを選択した結果として扱う
+- CLIENT選択: client候補の写真状態を採用し、削除済み写真は削除されたまま
+- SERVER選択: server canonicalの写真状態を採用し、そのcanonicalに含まれる写真は再表示される
+- SERVER選択後、必要なphotoHashのoriginal cacheが端末に残っていれば再利用可能
+- conflict UIではcache由来の「復元」として扱わず、SERVER側内容採用の結果として示す
+
+根拠: cacheは同期・業務状態から独立した性能最適化であり、cacheの有無が利用者データの状態を変えると「削除したのに勝手に戻る」挙動になる。写真状態の変更はBusiness/canonicalと利用者によるCONFLICT解決に限定し、cacheは再download回避だけに使用する。
+
 ### 写真枚数上限
 **確定:** 1 entityあたりの写真は全対象で最大10枚とする。
 
@@ -118,6 +137,7 @@ BoxLocation : 0〜10枚
 - photoHash、blob分離同期、オンデマンドcache、blob先行upload、user-scoped dedup、server hash再検証、canonical参照ベース30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
+- local original cacheを正本から分離し、未参照cacheを不可視・容量都合削除可能とする管理未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -138,7 +158,7 @@ BoxLocation : 0〜10枚
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **写真削除・差し替え時のlocal original cacheの扱い（即時削除か、cacheとして一定期間残すか）を確定する。**
+次の判断候補: **local original cacheの容量上限・削除方式を固定値で定めるか、ブラウザStorage Quotaに応じたbest-effort管理とするかを確定する。**
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
