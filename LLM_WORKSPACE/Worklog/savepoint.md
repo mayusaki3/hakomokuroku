@@ -108,6 +108,34 @@ Box / Item contentHash
 
 根拠: 箱目録では利用者が明示的に写真を変換・再保存した場合、それを最新の写真変更として扱えば十分である。見た目が同一かを判定するためのdecode・EXIF orientation・色空間・pixel正規化は実装とテストを複雑化する割に必要性が低い。保存された写真データをそのまま変更単位とする方が仕様が単純で予測可能。
 
+### 写真同期payload
+
+**確定:** 原画像はentity JSONへ埋め込まず、写真blobとしてentity同期とは分離して転送する。一方、サムネイルはentity JSONへ埋め込む。
+
+概念:
+
+```text
+entity JSON
+- photoId / blob参照
+- photoHash
+- thumbnail
+- 写真順序
+
+写真本体
+- blobとして別転送
+```
+
+規則:
+- 原画像blobはPush/Pull/Full Resyncの通常entity JSONから分離する
+- entity側は写真参照、`photoHash`、順序、サムネイルを保持する
+- サムネイルはJSONへ埋め込み、一覧・検索結果・オフライン表示で原画像取得を不要にする
+- `contentHash`は順序付き`photoHash`列を使用し、サムネイルのbase64表現自体はhashへ直接含めない
+- 原画像の同期失敗とentity metadata同期は区別して扱える設計とする
+- Outboxで同じ原画像blobをentity payloadごとに複製しない
+- Full Resyncのcanonical entity取得でもサムネイルは同時取得でき、原画像は必要に応じて別取得できる構造を採る
+
+根拠: 原画像をJSONへ埋め込むとPush/Pull/Full Resyncのpayloadが大きくなり、同じ写真の重複保持や再送コストが増える。一方サムネイルは軽量で、JSONに含めることで一覧やオフライン閲覧が単純になる。原画像だけ別blobに分離する構成が容量と利用性のバランスがよい。
+
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
 - `deletedAt`そのものはpurge起算に使用しない
@@ -169,6 +197,7 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
 - 写真photoHash未実装
+- 原画像blob分離同期未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -191,9 +220,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**写真データを同期payloadへどのように載せるか（entity JSONへの埋め込みか、写真blobを別転送するか）を確定する。**
+**原画像blobの取得方針を確定する。**
 
-写真は容量が大きく、Outbox / Pull / Full Resyncの設計へ直接影響するため、contentHashとは分離して転送方式を決める。
+候補は、Full Resyncや通常Pull時に全原画像を自動取得する方式と、サムネイル/metadataだけ同期して原画像は必要時または明示操作時に取得する方式。容量・通信量・オフライン要件に影響するため次に確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
