@@ -92,10 +92,43 @@ serverUpdatedAt
 
 根拠: offline利用を前提とするためclient時刻はbusiness操作の発生時刻として価値がある。一方device clockはずれ得るので同期安全性の基準にはできない。serverが閾値で勝手に補正すると本来のbusiness履歴を失うため、形式検証のみ行い、同期制御はserver管理情報へ分離する。
 
+### timestamp表現形式
+
+**確定:** APIで扱うbusiness timestampはRFC 3339互換のISO 8601形式とし、timezone offsetを必須とする。server canonical保存時はUTCへ正規化する。
+
+```text
+API input/output
+→ RFC 3339 / ISO 8601
+→ UTC offset必須
+
+server canonical
+→ UTCへ正規化
+
+標準精度
+→ milliseconds
+
+元のtimezone offset
+→ business情報として保持しない
+```
+
+例:
+
+```text
+client: 2026-09-09T12:43:21.123+09:00
+server: 2026-09-09T03:43:21.123Z
+```
+
+規則:
+- offsetなしのlocal-time文字列は受理しない
+- `Z` はUTC offsetとして有効
+- clientがmillisecondsより細かい精度を送る場合はserver canonical保存時にmillisecondsへ正規化する
+- 正規化後の瞬間が同じならtimezone offsetの違いはbusiness差分とは扱わない
+- contentHash計算対象にtimestampを含める場合も、同じUTC milliseconds表現へcanonicalizeしてからhash化する
+- 元のoffset自体を表示・検索・監査に使う要件は現時点では持たない
+
+根拠: 端末timezoneに依存せず同一瞬間を一意に扱え、JavaScript/JSON/Prismaとの互換性も高い。offsetをbusiness情報として保存しないことで、同一瞬間の表現差による不要な差分・conflictを防げる。
+
 ### deletedAt / tombstone保持起算
-
-business削除時刻とretention管理時刻を分離する。
-
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
 - `deletedAt`そのものはpurge起算に使用しない
 - deleted状態のentityではDELETE受理時の`serverUpdatedAt`をpurge起算として利用できる
@@ -104,7 +137,6 @@ business削除時刻とretention管理時刻を分離する。
 - Pullに必要なlogが欠落済み、または完全性を保証できない場合は `FULL_RESYNC_REQUIRED`
 
 ### Outbox
-
 Outboxは履歴ではなくlatest unsynced candidate。同一 `(entityType, entityId)` につき1 row。
 
 ```text
@@ -113,11 +145,8 @@ CREATE + DELETE → DELETE / baseRevision=0維持
 UPDATE + 編集 → UPDATE / 元baseRevision維持
 UPDATE + DELETE → DELETE / 元baseRevision維持
 
-baseRevision=0 の CREATE→DELETE→復活
-→ CREATEへ戻す
-
-baseRevision>0 の UPDATE→DELETE→復活
-→ UPDATEへ戻す
+baseRevision=0 の CREATE→DELETE→復活 → CREATE
+baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 ```
 
 - local変更ごとにoutboxVersion++
@@ -148,20 +177,9 @@ baseRevision>0 の UPDATE→DELETE→復活
 - 既存canonicalありならFull Resync取得中もlocal編集可
 - 既存canonicalありでFull Resync途中失敗時は旧canonicalを保持してOFFLINE_READYへ戻れる
 
-Full Resync採用は以下を1 IndexedDB transactionで実施する。
-
-```text
-staging → Business/SyncState置換
-→ latest Outbox reapply
-→ 必要な参照補正
-→ cursor=snapshotSeq
-```
-
-Outbox reapply順は `BoxLocation → Box → Item`。
-snapshotに親がなくてもlatest Outboxに有効な親CREATE/UPDATEがあれば親を先にreapplyして参照を維持する。親がsnapshotにも有効なOutboxにもない、または親OutboxがDELETEなら子本体を保持して参照だけUNASSIGNEDへ補正する。
+Full Resync採用は `staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq` を1 IndexedDB transactionで行う。Outbox reapply順は `BoxLocation → Box → Item`。
 
 ## 4. 現行実装との差異
-
 - Prisma sync metadata不足
 - entity idがglobal PKでuser composite identity未対応
 - current Push `where:{id}` にcross-user ownership risk
@@ -173,7 +191,6 @@ snapshotに親がなくてもlatest Outboxに有効な親CREATE/UPDATEがあれ�
 - Full Resync snapshot/staging未実装
 
 ## 5. ロードマップ
-
 0. 現状棚卸し — 完了
 1. v0.8 / v1.0 要件仕様 — 主要方針確定
 2. 全体アーキテクチャ確定 — **現在（最終点検）**
@@ -194,17 +211,14 @@ snapshotに親がなくてもlatest Outboxに有効な親CREATE/UPDATEがあれ�
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**clientから送信するbusiness timestampの表現形式を確定する。**
+**contentHashへbusiness timestamp (`createdAt / updatedAt / deletedAt`) を含めるかを確定する。**
 
 推奨候補:
-- API上はISO 8601 / RFC 3339形式
-- 必ずUTC offset付きで送信
-- canonical保存はUTCへ正規化
-- business上の元のoffsetそのものは保持しない
-- millisecondsまでを標準精度とし、それより細かい精度は切り捨てまたは正規化
+- `createdAt / updatedAt / deletedAt` のtimestamp値そのものはcontentHash対象外
+- ただし削除状態そのもの（active / deleted）はhash対象
+- business本文・参照・写真等の意味的内容だけでhashを構成
 
-これにより端末timezoneに依存せず同じ瞬間を一意に保存でき、JSON/API/JavaScript/Prismaとの互換性を保ちやすい。
+理由: 同じbusiness内容でもclient clock差やserver側自動補正時刻だけでconflict扱いになるのを防ぐ。一方、active/deletedの違いは意味的差分なのでhashへ含める。
 
 ## 7. HLDocS運用上の注意
-
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
