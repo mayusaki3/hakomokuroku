@@ -110,16 +110,31 @@ snapshotにも有効な親Outboxにも親なし
 parentのlatest Outbox operationがDELETEの場合、そのparentは参照可能な親として扱わない。子entity本体は保持し、参照のみreserved `UNASSIGNED`へ補正する。
 
 ### Outbox operation畳み込み
-**確定:** Outboxは履歴ではなく「latest unsynced candidate」を保持する。同一entityにつき1 rowとし、operationも最新local intentへ畳み込む。
+**確定:** Outboxは履歴ではなく「latest unsynced candidate」を保持する。同一entityにつき1 rowとし、operationもlatest local intentへ畳み込む。
 
 ```text
 CREATE + 編集 → CREATEのままpayload最新化 / baseRevision=0維持
 CREATE + DELETE → DELETEへ変更 / baseRevision=0維持
 UPDATE + 編集 → UPDATEのままpayload最新化 / baseRevision維持
 UPDATE + DELETE → DELETEへ変更 / baseRevision維持
-DELETE + 明示的復活 → UPDATEへ変更 / 元のbaseRevision維持
 ```
 
+DELETE後の明示的復活は、server canonicalに対する意味でoperationを決める。
+
+```text
+baseRevision = 0
+CREATE → DELETE → 復活
+→ CREATEへ戻す
+→ baseRevision=0維持
+
+baseRevision > 0
+UPDATE → DELETE → 復活
+→ UPDATEへ戻す
+→ 元のbaseRevision維持
+```
+
+共通規則:
+- 同一 `(entityType, entityId)` につきOutbox 1 row
 - local操作のたびに `outboxVersion++`
 - CREATE/UPDATEでは最新business payload + contentHash
 - DELETEではdelete-state contentHash、payload原則null
@@ -127,25 +142,22 @@ DELETE + 明示的復活 → UPDATEへ変更 / 元のbaseRevision維持
 - PullだけではbaseRevisionを変更しない
 - `CREATE → DELETE` でもOutboxを消さない
 
+根拠: Outbox.operationは単なる直前操作ではなく「server canonicalに対して何を要求するcandidateか」を表す。baseRevision=0のentityはlocal上で削除・復活を経てもserverから見れば新規であるためCREATEが正しい。baseRevision>0のentityはserver既存entityの変更なのでUPDATEが正しい。
+
 ### DELETE後の同一ID復活時刻
 **確定:** DELETE後に同一IDを明示的に復活させる場合は、新規entityではなく同一business entityのライフサイクル継続として扱う。
 
 ```text
-createdAt
-→ 元の値を維持
-
-updatedAt
-→ 復活操作時刻へ更新
-
-deletedAt
-→ null
+createdAt → 元の値を維持
+updatedAt → 復活操作時刻へ更新
+deletedAt → null
 ```
 
 server上でdeleted entityに対してCONFLICTをCLIENT winsで解決し復活させる場合も同じ規則を適用する。
 
 server側の復活処理では通常のbusiness updateとして:
 - `createdAt` を変更しない
-- `updatedAt` = 復活操作のserver受理対象となるbusiness更新時刻
+- `updatedAt` 更新
 - `deletedAt = null`
 - `revision + 1`
 - `serverUpdatedAt` 更新
@@ -153,10 +165,6 @@ server側の復活処理では通常のbusiness updateとして:
 - 新しい `syncSeq` 採番
 - SyncChangeLogへUPSERT
 を同一transactionで行う。
-
-localでDELETE Outboxを明示的に復活させる場合も、Businessに保持されている元の`createdAt`を維持し、`updatedAt`のみlocal復活操作時刻へ更新する。OutboxはDELETEからUPDATEへ畳み込み、元のbaseRevisionを維持する。
-
-根拠: `createdAt` を「このIDのbusiness entityが最初に生成された時刻」と定義すると、新規作成・削除・復活の全ライフサイクルで意味が一貫する。復活のたびにcreatedAtを更新すると、同一IDであるにもかかわらずentityの起点が失われ、監査・表示・同期比較の意味が曖昧になる。
 
 ### retention
 - tombstone = deletedAt + 30日後に物理削除可能
@@ -198,9 +206,15 @@ localでDELETE Outboxを明示的に復活させる場合も、Businessに保持
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**serverへ未送信の新規entity（baseRevision=0）をCREATE→DELETE→復活した場合、Outbox operationをCREATEへ戻すかUPDATEにするかを確定する。**
+**local entityの`updatedAt`をclient時刻として保持するか、server受理時にserver時刻で上書きするかを確定する。**
 
-推奨候補は、`baseRevision=0` かつserver canonical未確立のlocal chainでは、復活後もserverにとっては新規entityなので `CREATE` へ戻す方式。対してbaseRevision>0の既存entityはDELETE→復活で `UPDATE` とする。これによりoperationの意味をserver canonicalの有無と一致させられる。
+推奨候補:
+- `updatedAt` = userがbusiness dataを実際に編集したclient側時刻
+- serverはPush受理時に`updatedAt`を上書きしない
+- server受理時刻は別フィールド`serverUpdatedAt`へ記録
+- conflict winner判定に`updatedAt`を使わない
+
+これにより`updatedAt`と`serverUpdatedAt`の責務を分離し、offline編集時刻を失わず、device clock誤差が同期整合性へ影響しない設計にできる。
 
 ## 7. HLDocS運用上の注意
 
