@@ -150,6 +150,37 @@ PhotoBlob
 
 根拠: photoHashはすでに写真内容の同一性判定とentity contentHashの入力としてbusiness同期設計に組み込まれているため、hash方式変更時にはphotoIdを別に持っていても全体migrationを避けられない。現時点では識別子を増やすより `(User.id, photoHash)` に統一した方が実装・API・テスト・GCが単純である。
 
+### PhotoBlob upload時のhash完全性検証
+**確定:** clientが送信した `photoHash` をserver側で信用せず、受信した原画像bytesからserverでもSHA-256相当を再計算し、一致した場合だけPhotoBlobとして受理する。
+
+```text
+client
+原画像bytes
+→ photoHash算出
+→ blob + photoHash upload
+
+server
+受信blob
+→ photoHash再計算
+→ client申告photoHashと比較
+
+一致
+→ `(User.id, photoHash)` のPhotoBlobとして受理/再利用
+
+不一致
+→ REJECTED
+```
+
+規則:
+- server側hashは実際に保存対象となる原画像bytesから算出する
+- client申告hashとserver計算hashが不一致ならPhotoBlobをcanonical利用可能状態として登録しない
+- 不一致時はentity Pushへ進まない
+- 同一User内に同一photoHashのPhotoBlobが既に存在する場合も、uploadされたbytesを受け取った経路ではhash一致を確認してから既存blob再利用として扱う
+- hash検証失敗はretryableではないデータ整合性エラーを基本とし、client側は元bytes/hashの再計算または写真再処理を必要とする
+- 通信途中で受信が不完全な場合はhash不一致として誤って確定せず、upload自体の失敗として扱えるようtransport errorとhash mismatchを区別する
+
+根拠: `photoHash` はPhotoBlobの識別子であり、entity contentHashの入力でもあるため、申告hashと実bytesがずれるとdedup・cache・同期競合判定まで連鎖的に壊れる。serverで再計算することで、client実装不具合や転送/保存経路の不整合をPhotoBlob確定前に検出できる。upload時のhash計算コストより整合性保証を優先する。
+
 ### PhotoBlob重複排除scope
 **確定:** 同一User内のみ。
 
@@ -228,6 +259,7 @@ different User.id + same photoHash → 別blob
 - 未参照blob 30日GC未実装
 - canonical実参照ベースGC未実装
 - PhotoBlobの `(User.id, photoHash)` 識別未実装
+- PhotoBlob upload時server-side hash再検証未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -250,9 +282,9 @@ different User.id + same photoHash → 別blob
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**PhotoBlob upload時の完全性検証を、client申告photoHashとserver再計算の一致確認まで必須にするか確定する。**
+**thumbnailをclient生成とserver生成のどちらを正本とするかを確定する。**
 
-client申告値だけを信用すると破損・実装不整合で誤ったblob識別が成立し得る。一方server側再hashはupload時のCPUコストを増やすため、次に要否を確定する。
+現状はthumbnailをentity JSONへ埋め込み、原画像blobとは分離している。client生成を採用するとoffline登録直後からそのまま利用できる一方、端末実装差が出る。server生成を正本にすると表現統一は容易だが、blob upload後の生成結果をentity Pushへ取り込む追加フローが必要になる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
