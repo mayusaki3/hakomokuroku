@@ -43,6 +43,29 @@
 - PushはOutbox基準、sync中再編集はoutboxVersionで保護
 - 通常同期 = Pull → Outbox reapply → Push → Pull
 
+### updatedAt / serverUpdatedAt
+**確定:** 時刻フィールドの責務を分離する。
+
+```text
+updatedAt
+→ business dataを実際に編集したclient側時刻
+
+serverUpdatedAt
+→ serverがその変更を受理しcanonicalを更新したserver側時刻
+```
+
+規則:
+- local編集時に`updatedAt`を更新する
+- offline編集でもその編集時刻を保持する
+- Push受理時、serverはclientから受け取った`updatedAt`を原則そのままcanonicalへ反映し、server現在時刻で上書きしない
+- server側でcascade、自動rename、参照補正などserver自身がbusiness dataを変更した場合は、そのserver操作時刻を`updatedAt`へ設定する
+- canonicalがserverで更新された時点で`serverUpdatedAt`をserver現在時刻へ更新する
+- `updatedAt`はrevision conflictの勝者判定に使用しない
+- Pull順序やcursor判定にも`updatedAt`を使用しない
+- 同期整合性は`revision / contentHash / syncSeq`を基準とする
+
+根拠: `updatedAt`をbusiness dataが実際に変更された時刻、`serverUpdatedAt`をserver canonical更新時刻と分離することで、offline編集時刻を失わない。一方、device clockにはずれがあり得るため、updatedAtを競合解決や同期順序の根拠には使用しない。server自身がbusiness変更を発生させる操作ではserverが編集主体なので、そのserver時刻をupdatedAtとして扱う。
+
 ### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId = UNASSIGNED
 - BoxLocation DELETE → child Box.locationId = UNASSIGNED
@@ -157,7 +180,7 @@ server上でdeleted entityに対してCONFLICTをCLIENT winsで解決し復活�
 
 server側の復活処理では通常のbusiness updateとして:
 - `createdAt` を変更しない
-- `updatedAt` 更新
+- `updatedAt` は復活candidateのbusiness編集時刻を維持する。server自身が復活操作のbusiness変更主体となる場合のみserver時刻
 - `deletedAt = null`
 - `revision + 1`
 - `serverUpdatedAt` 更新
@@ -206,15 +229,15 @@ server側の復活処理では通常のbusiness updateとして:
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**local entityの`updatedAt`をclient時刻として保持するか、server受理時にserver時刻で上書きするかを確定する。**
+**clientから送信された`createdAt`をserver canonicalでどこまで信頼するかを確定する。**
 
 推奨候補:
-- `updatedAt` = userがbusiness dataを実際に編集したclient側時刻
-- serverはPush受理時に`updatedAt`を上書きしない
-- server受理時刻は別フィールド`serverUpdatedAt`へ記録
-- conflict winner判定に`updatedAt`を使わない
+- baseRevision=0の新規CREATEでは、clientの`createdAt`をbusiness生成時刻として採用する
+- ただしserver既存entityのUPDATE/復活では、canonicalの既存`createdAt`を必ず維持しclient値で上書きしない
+- server側のreserved entityや自動生成entityはserver時刻でcreatedAtを設定する
+- createdAtも競合判定・同期順序には使用しない
 
-これにより`updatedAt`と`serverUpdatedAt`の責務を分離し、offline編集時刻を失わず、device clock誤差が同期整合性へ影響しない設計にできる。
+これによりofflineで新規作成した実時刻を保持しつつ、既存entityの起点をclient payloadで改ざん・誤更新できない。
 
 ## 7. HLDocS運用上の注意
 
