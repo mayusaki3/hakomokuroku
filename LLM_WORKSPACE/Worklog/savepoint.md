@@ -30,6 +30,36 @@
 - BoxLocationは独立フラットマスタ。Boxが `locationId` を参照
 - Vision対象はBox/Item写真のみ
 
+### ユーザー間データ分離原則
+**確定:** ユーザー間のデータは論理的に完全分離する。物理DB・object storage・同一アプリケーションインスタンスを共有していても、アプリケーション上のデータ空間・参照・検索・重複排除・同期状態・GC判定はすべて認証済み内部 `User.id` のscope内で完結させる。
+
+```text
+User A
+├─ Box / Item / BoxLocation
+├─ Photo / PhotoBlob
+├─ SyncState / Outbox
+├─ SyncChangeLog / SyncConflict
+├─ FullSyncSnapshot
+└─ backup / restore対象
+
+User B
+└─ 上記とは論理的に完全独立
+```
+
+規則:
+- business entity identityは `(User.id, entityId)`
+- APIの `userId` はclient payloadを信用せず、認証session/tokenからserverが確定する
+- query/update/delete/blob取得/blob upload/存在確認/重複排除/GCは必ず認証user scopeで行う
+- 異なるUser間では同一entity id、同一photoHash、同一画像bytesであっても同一データとして扱わない
+- 異なるUser間でPhotoBlobを共有しない
+- 異なるUserのphotoHash/blob存在有無を推測できるAPI挙動にしない
+- 同一User内では同一photoHash blobを再利用してよい
+- SyncChangeLog / SyncConflict / FullSyncSnapshot / cursor validity / Full Resyncはすべてuser単位で評価する
+- user別local DB `hk-local-v2-<User.id>` も同じ分離原則に従う
+- backup / restoreで他userのデータを混入・参照しない
+
+根拠: 箱目録のデータ所有境界はuserであり、多user対応は共有データモデルではなく独立した個人データ空間として扱う。物理storage上の最適化よりも権限境界、削除、同期、障害時の挙動を単純・明確にすることを優先する。
+
 ### 同期アーキテクチャ
 - business identity = `(User.id, entityId)`
 - server同期メタデータ = `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
@@ -146,13 +176,32 @@ Pull / Full Resync
 - entity Push時に参照するblobはserver側で利用可能でなければならない
 - blob upload失敗時はentity Pushを行わず、Outboxとlocal Businessは保持する
 - blob upload成功後にentity Pushが失敗・CONFLICT・通信結果不明となってもblobは直ちに削除しない
-- 同一photoHash / 同一blobがserverに既に存在し再利用可能なら再uploadを避けられる設計とする
-- entity Push再送時は既upload blobを再利用できる
+- 同一User内で同一photoHash / 同一blobがserverに既に存在し再利用可能なら再uploadを避けられる
+- 異なるUser間では同一photoHashでもblobを共有・再利用しない
+- entity Push再送時は同一User内の既upload blobを再利用できる
 - canonical entityが存在しないblobを参照する状態を正常系では作らない
 - blob upload成功だけではentity同期成功とは扱わない
 - entityのOutboxはentity PushがAPPLIED/UNCHANGED等で成功するまで保持する
 
 根拠: entity先行だとcanonicalが未upload原画像を参照する時間窓が生じる。blob先行なら失敗時に未参照blobが残るだけで、business canonicalの参照整合性を保ちやすい。未参照blobは再送で再利用し、不要になったものは別途GC対象にできる。
+
+### 原画像blob重複排除scope
+**確定:** 原画像blobの同一性・重複排除は同一 `User.id` 内だけで行う。異なるUser間では同じphotoHash・同じ画像bytesでも別blobとして扱う。
+
+```text
+same User.id + same photoHash
+→ blob再利用可能
+
+different User.id + same photoHash
+→ 別blob
+→ 共有しない
+```
+
+- photoHash lookupは必ず `(User.id, photoHash)` scope
+- blob download/upload/exists APIも認証user scope
+- user間dedupは行わない
+- user間参照countを持たない
+- GCもuser scope内の参照のみで判定する
 
 ### 未参照原画像blobのGC
 **確定:** server側でentityから参照されていない原画像blobは即時削除せず、未参照状態が30日継続した場合にGCで物理削除可能とする。
@@ -160,30 +209,27 @@ Pull / Full Resync
 ```text
 blob upload成功
 ↓
-entityから参照あり
+同一user内entityから参照あり
 → 保持
 
 entity Push失敗 / 写真差し替え / 写真削除 / CONFLICTでSERVER wins
 ↓
-未参照blob
+同一user内で未参照blob
 ↓
 未参照状態30日保持
 ↓
-GC実行時にも未参照
+GC実行時にも同一user内で未参照
 → 物理削除可能
 ```
 
 規則:
 - GC判定はserver管理時刻を基準とし、client時刻に依存しない
 - 未参照になった時点をserverで記録し、その時点から30日を起算する
-- 30日以内に再度entityから参照された場合はGC対象から外す
-- 同じblobが複数entityから参照され得る場合、全参照がなくなった時点から未参照期間を起算する
-- entity Push再送・CONFLICT解決・通信結果不明により後から参照が成立する可能性を考慮し、即時削除しない
-- GC実行直前にも参照有無を再確認し、参照中blobを削除しない
-- tombstoneの30日保持と期間を揃えるが、blob GCとtombstone purgeは別のライフサイクルとして管理する
-- 30日は最低保持期間であり、GC job実行周期により実際の削除は30日以降となってよい
-
-根拠: blob先行uploadではentity確定前に通信失敗やCONFLICTが起き、正常な再送で後から参照される一時孤立blobが発生し得る。即時削除すると再uploadや競合解決との競合が生じるため、30日の猶予を置く。tombstone保持期間とも揃えることで運用・テスト条件を単純化できる。
+- 30日以内に同一userのentityから再度参照された場合はGC対象から外す
+- 同一user内で同じblobが複数entityから参照される場合、全参照がなくなった時点から未参照期間を起算する
+- 他userの参照は存在しないものとして扱うのではなく、設計上そもそも共有しない
+- GC実行直前にも同一user scopeで参照有無を再確認する
+- tombstoneの30日保持と期間を揃えるが、blob GCとtombstone purgeは別ライフサイクル
 
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
@@ -248,6 +294,7 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 - 原画像blob分離同期・オンデマンドcache未実装
 - blob先行upload / entity後確定未実装
 - 未参照blob 30日GC未実装
+- user間の論理完全分離を保証するblob/storage scope未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -270,9 +317,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**原画像blobのserver側同一性・重複排除のscopeを確定する。**
+**同一User内で同一photoHashのblobを複数写真から参照している場合、写真削除・差し替え時のblob参照管理をreference countとして保持するか、GC時にentity参照を検索して判定するかを確定する。**
 
-候補は、同一user内でphotoHash一致blobを共有する方式と、entity/photoごとに独立blobを持つ方式。容量削減、削除/GC、権限制御、実装複雑度に影響するため次に確定する。
+推奨候補はreference countを正本にせず、GC時にcanonical entity側の参照有無を確認する方式。reference countの更新漏れによる誤削除を避け、30日GCなので実行頻度も低くできる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
