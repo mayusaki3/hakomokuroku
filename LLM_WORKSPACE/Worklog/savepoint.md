@@ -84,6 +84,33 @@
 - thumbnail base64そのものはcontentHashへ直接含めない
 - Outboxで原画像blobを重複保持しない
 
+### 保存原画像
+**確定:** 撮影元JPEG/HEIC等そのものではなく、clientで変換したWebPを「箱目録における保存原画像」と定義する。既存実装 `downscaleToWebp()` の既定値を正式仕様として採用する。
+
+```text
+形式        : WebP
+長辺上限    : 1600 px
+quality     : 0.85
+拡大        : しない
+向き        : EXIF Orientation補正後
+生成主体    : client
+最大byte数  : 5 MiB
+photoHash   : この変換後bytesから算出
+```
+
+規則:
+- clientは入力画像をEXIF Orientation補正後、長辺1600px以内へ縮小する
+- 元画像が1600px以下の場合は拡大しない
+- WebP quality 0.85で保存原画像を生成する
+- `photoHash` は撮影元ファイルではなく、この保存原画像bytesから算出する
+- PhotoBlob upload対象もこの保存原画像bytesとする
+- serverは受信blobがWebPとしてdecode可能、width/heightが正、width <= 1600、height <= 1600、encoded bytes <= 5 MiBであることを検証する
+- 規格外blobはPhotoBlobとして受理せず、entity Pushへ進まない
+- serverは通常フローで再縮小・再エンコードして差し替えない
+- 利用者が後に画像を加工・再保存し保存原画像bytesが変われば、新しいphotoHashを持つ写真更新として扱う
+
+根拠: 端末撮影画像をそのまま保存すると容量・転送量が大きくなりやすい。既存実装が1600px / WebP quality 0.85 / EXIF補正をすでに行っているため、その変換結果を正式な保存原画像と定義すれば、photoHash対象bytes、server保存bytes、local cache bytesが一致して設計が単純になる。5 MiBは1600px WebPとして十分な余裕を持たせながら異常payloadを排除するための上限とする。
+
 ### 原画像取得・cache
 - Pull / Full Resyncではthumbnail + metadataのみ同期
 - 原画像は必要時オンデマンド取得
@@ -95,11 +122,12 @@
 
 ### 原画像upload順序
 ```text
-1. client photoHash算出
-2. blob upload
-3. server hash検証
-4. entity Push
-5. canonical参照確定
+1. clientが保存原画像を生成
+2. 保存原画像bytesからphotoHash算出
+3. blob upload
+4. server hash / 画像仕様検証
+5. entity Push
+6. canonical参照確定
 ```
 
 - blob upload失敗ならentity Pushしない
@@ -131,26 +159,6 @@ quality     : 0.8
 contentHash : 対象外
 ```
 
-同期フロー:
-
-```text
-client
-原画像
-→ photoHash算出
-→ EXIF Orientation補正
-→ 長辺400px以内へ縮小（小さい画像は拡大しない）
-→ WebP quality 0.8でthumbnail生成
-→ local Businessへ保存
-
-同期
-原画像blob upload
-→ server hash検証
-→ entity Push
-   - photoHash
-   - thumbnail
-→ server thumbnail妥当性検証
-```
-
 server検証:
 - `image/webp` としてdecode可能であること
 - width > 0 / height > 0
@@ -159,7 +167,7 @@ server検証:
 - 検証NGならentity payloadをREJECTEDとして扱う
 - serverはthumbnailを再生成・差し替えしない
 - thumbnail bytesはcontentHash対象外
-- 同一原画像でも端末実装差でthumbnail bytesが異なり得るが、写真同一性は原画像のphotoHashで判定する
+- 同一原画像でも端末実装差でthumbnail bytesが異なり得るが、写真同一性は保存原画像のphotoHashで判定する
 - Pull / Full Resyncではcanonical entityに保存されたthumbnailを配信する
 
 根拠: 箱目録はoffline-firstであり写真追加直後からthumbnailが必要。既存実装が長辺400px / WebP / quality 0.8 / EXIF補正をすでに行っているため、新しい値へ変更するより既存挙動を仕様化する方が移行コストと不整合を減らせる。256 KiBは400px WebPとして十分な余裕を持たせつつ、entity JSONへ異常に大きなthumbnailが混入することを防ぐ上限とする。
@@ -216,6 +224,7 @@ server検証:
 - canonical実参照ベース30日GC未実装
 - client正本thumbnail + server妥当性検証未実装
 - thumbnail 256 KiB上限server検証未実装
+- 保存原画像5 MiB上限およびserver画像仕様検証未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -238,9 +247,9 @@ server検証:
 同期・写真設計の主要未定義を最終点検する。
 
 次の判断候補:
-**serverへ保存する原画像blobの画像形式・寸法・byte数上限を定めるか、clientが保存した画像を原則そのまま受理するかを確定する。**
+**1 entityあたりの写真枚数上限を設けるかを確定する。**
 
-現行実装には原画像相当を長辺1600px・WebP quality 0.85へ縮小する `downscaleToWebp()` があるため、その既存挙動を「保存原画像」の正式仕様とするかを次に判断する。
+写真はthumbnailをentity JSONへ埋め込み、原画像は最大5 MiBのPhotoBlobとして別保存するため、Box / Item / BoxLocationごとの写真枚数が無制限だとPull / Full Resync payloadとlocal storageが無制限に増える。既存UI・用途を確認し、業務上妥当な上限を次に決定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
