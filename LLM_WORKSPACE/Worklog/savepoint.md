@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-09
+更新: 2026-09-10
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -117,14 +117,29 @@
 
 根拠: photoHashはPhotoBlob識別子かつentity contentHashの入力であり、実bytesとの不一致を許すとdedup/cache/同期競合判定まで連鎖的に壊れるため。
 
-### thumbnail生成
-**確定:** thumbnailはclient生成を正本とし、serverは再生成しない。serverは受信thumbnailの妥当性検証のみを行う。
+### thumbnail生成・検証
+**確定:** thumbnailはclient生成を正本とし、serverは再生成しない。既存実装 `makeThumbWebp()` の既定値を正式仕様として採用する。
+
+```text
+形式        : WebP
+長辺上限    : 400 px
+quality     : 0.8
+拡大        : しない
+向き        : EXIF Orientation補正後
+生成主体    : client
+最大byte数  : 256 KiB
+contentHash : 対象外
+```
+
+同期フロー:
 
 ```text
 client
 原画像
 → photoHash算出
-→ thumbnail生成
+→ EXIF Orientation補正
+→ 長辺400px以内へ縮小（小さい画像は拡大しない）
+→ WebP quality 0.8でthumbnail生成
 → local Businessへ保存
 
 同期
@@ -133,18 +148,21 @@ client
 → entity Push
    - photoHash
    - thumbnail
+→ server thumbnail妥当性検証
 ```
 
-規則:
-- offline登録時点でclientがthumbnailを生成し、そのままlocal表示に利用する
-- serverはthumbnailを再生成して差し替えない
-- serverは許可形式、画像としてdecode可能か、寸法上限、byte数上限等の妥当性を検証する
-- thumbnail検証NGならentity payloadをREJECTEDとして扱う
+server検証:
+- `image/webp` としてdecode可能であること
+- width > 0 / height > 0
+- width <= 400 / height <= 400
+- encoded thumbnail bytes <= 256 KiB
+- 検証NGならentity payloadをREJECTEDとして扱う
+- serverはthumbnailを再生成・差し替えしない
 - thumbnail bytesはcontentHash対象外
-- 同一原画像でも端末実装差によりthumbnail bytesが異なり得るが、写真同一性は原画像photoHashで判定する
+- 同一原画像でも端末実装差でthumbnail bytesが異なり得るが、写真同一性は原画像のphotoHashで判定する
 - Pull / Full Resyncではcanonical entityに保存されたthumbnailを配信する
 
-根拠: 箱目録はoffline-firstであり、写真追加直後からthumbnailを利用する必要がある。server生成を正本にするとupload後のthumbnail生成・取得をentity Push前に追加する必要があり、同期フローが複雑になる。thumbnail自体はbusiness競合判定対象ではないため、client生成を正本にする方が単純である。
+根拠: 箱目録はoffline-firstであり写真追加直後からthumbnailが必要。既存実装が長辺400px / WebP / quality 0.8 / EXIF補正をすでに行っているため、新しい値へ変更するより既存挙動を仕様化する方が移行コストと不整合を減らせる。256 KiBは400px WebPとして十分な余裕を持たせつつ、entity JSONへ異常に大きなthumbnailが混入することを防ぐ上限とする。
 
 ### PhotoBlob GC
 - 未参照状態30日継続で物理削除可能
@@ -197,6 +215,7 @@ client
 - server-side photoHash再検証未実装
 - canonical実参照ベース30日GC未実装
 - client正本thumbnail + server妥当性検証未実装
+- thumbnail 256 KiB上限server検証未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -219,9 +238,9 @@ client
 同期・写真設計の主要未定義を最終点検する。
 
 次の判断候補:
-**thumbnailの具体的な生成上限・形式を確定する。**
+**serverへ保存する原画像blobの画像形式・寸法・byte数上限を定めるか、clientが保存した画像を原則そのまま受理するかを確定する。**
 
-推奨候補は、長辺512px以内・WebPを標準・一定品質で生成し、serverでは画像decode可能性、寸法、byte数を検証する方式。既存実装とブラウザ互換性を確認してから最終値を確定する。
+現行実装には原画像相当を長辺1600px・WebP quality 0.85へ縮小する `downscaleToWebp()` があるため、その既存挙動を「保存原画像」の正式仕様とするかを次に判断する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
