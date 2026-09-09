@@ -31,98 +31,55 @@
 - Vision対象はBox/Item写真のみ
 
 ### ユーザー間データ分離原則
-**確定:** ユーザー間のデータは論理的に完全分離する。物理DB・object storage・同一アプリケーションインスタンスを共有していても、アプリケーション上のデータ空間・参照・検索・重複排除・同期状態・GC判定はすべて認証済み内部 `User.id` のscope内で完結させる。
+**確定:** ユーザー間のデータは論理的に完全分離する。物理DB・object storageを共有しても、データ空間・参照・検索・同期・重複排除・GCは認証済み内部 `User.id` のscope内で完結させる。
 
-```text
-User A
-├─ Box / Item / BoxLocation
-├─ Photo / PhotoBlob
-├─ SyncState / Outbox
-├─ SyncChangeLog / SyncConflict
-├─ FullSyncSnapshot
-└─ backup / restore対象
-
-User B
-└─ 上記とは論理的に完全独立
-```
-
-規則:
-- business entity identityは `(User.id, entityId)`
-- APIの `userId` はclient payloadを信用せず、認証session/tokenからserverが確定する
-- query/update/delete/blob取得/blob upload/存在確認/重複排除/GCは必ず認証user scopeで行う
-- 異なるUser間では同一entity id、同一photoHash、同一画像bytesであっても同一データとして扱わない
-- 異なるUser間でPhotoBlobを共有しない
-- 異なるUserのphotoHash/blob存在有無を推測できるAPI挙動にしない
-- 同一User内では同一photoHash blobを再利用してよい
-- SyncChangeLog / SyncConflict / FullSyncSnapshot / cursor validity / Full Resyncはすべてuser単位で評価する
-- user別local DB `hk-local-v2-<User.id>` も同じ分離原則に従う
-- backup / restoreで他userのデータを混入・参照しない
-
-根拠: 箱目録のデータ所有境界はuserであり、多user対応は共有データモデルではなく独立した個人データ空間として扱う。物理storage上の最適化よりも権限境界、削除、同期、障害時の挙動を単純・明確にすることを優先する。
+- business entity identity = `(User.id, entityId)`
+- APIのuser scopeはclient payloadではなく認証session/tokenからserverが確定
+- 異なるUser間では同一entity id / photoHash / bytesでも共有しない
+- PhotoBlobもUser間共有しない
+- 異なるUserのblob存在有無を推測できるAPI挙動にしない
+- 同一User内では同一photoHash blobを再利用可能
+- SyncChangeLog / SyncConflict / FullSyncSnapshot / cursor validity / Full Resyncもuser単位
+- local DB = `hk-local-v2-<User.id>`
 
 ### 同期アーキテクチャ
-- business identity = `(User.id, entityId)`
-- server同期メタデータ = `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
+- server metadata = `createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 - 未同期新規 = revision 0 / baseRevision 0
+- baseRevision一致 = 通常更新
 - revision不一致時はcontentHash比較。同一=UNCHANGED、異なる=CONFLICT
 - SyncChangeLogがPull差分履歴の正本
 - syncSeqはDB全体で一意な単調増加signed 64-bit
-- user別local DB = `hk-local-v2-<User.id>`
 - local 3層 = Business / SyncState / Outbox
-- local業務変更とOutbox更新は同一IndexedDB transaction
-- PushはOutbox基準、sync中再編集はoutboxVersionで保護
+- local業務変更 + Outboxは同一IndexedDB transaction
 - 通常同期 = Pull → Outbox reapply → Push → Pull
+- Push中再編集はoutboxVersionで保護
 
-### business時刻とserver時刻
-- `createdAt / updatedAt / deletedAt` はbusiness上の時刻
-- `serverUpdatedAt` はserver canonical更新時刻
-- 新規CREATE（baseRevision=0）はclient.createdAtを採用
-- 既存entityのUPDATE/復活ではcanonicalのcreatedAtを維持
-- reserved / server自動生成entityのcreatedAtはserver時刻
-- client編集のupdatedAtはPush受理時にserver時刻で上書きしない
-- server自身がbusiness変更した場合、そのserver操作時刻をupdatedAtとする
-- client DELETEのdeletedAtはclient削除時刻を保持
-- server自身がDELETE主体の場合はserver操作時刻をdeletedAtとする
-- DELETE後に同一IDを復活させてもcreatedAtは元値を維持、updatedAtは復活操作時刻、deletedAt=null
-- business timestampは競合勝者判定、Pull順序、cursor判定に使用しない
-- 同期整合性は revision / contentHash / syncSeq を基準とする
+### business timestamp
+- createdAt / updatedAt / deletedAt = business時刻
+- serverUpdatedAt = server canonical更新時刻
+- 新規CREATEはclient.createdAt採用
+- 既存UPDATE/復活ではcanonical createdAt維持
+- client updatedAt/deletedAtは有効形式ならserver時刻で上書きしない
+- server自身がbusiness変更主体ならserver操作時刻を使用
+- client business timestampは競合勝者・Pull順序・cursor・retentionに使わない
+- RFC3339/ISO8601、offset必須、server保存UTC、milliseconds
+- 形式として有効なら極端な未来/過去でも補正しない
 
-### client由来business時刻の異常値
-**確定:** timestamp形式として有効なら極端な過去・未来でもserverで補正しない。形式不正のみREJECTED。同期整合性・retentionはclient business時刻に依存しない。
+### contentHash
+- business上の意味的内容だけをhash化
+- timestamp値・server metadata・userId・entity idは対象外
+- active/deleted状態は対象
+- deterministic JSON + SHA-256相当
 
-### timestamp表現形式
-**確定:** RFC 3339互換ISO 8601、timezone offset必須。server canonical保存時はUTCへ正規化、標準精度milliseconds、元offsetは保持しない。
-
-### contentHash対象範囲
-**確定:** business上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は含める。
-
-対象外: `createdAt`, `updatedAt`, `deletedAt`時刻値, `serverUpdatedAt`, `revision`, `syncSeq`, `contentHash`, `userId`, entity id。
-対象: business本文、business参照、写真等のbusiness内容、active/deleted状態。
-
-canonicalizationは、順序非依存配列はsort、object key順固定、決定的JSON化後にSHA-256相当でhash化する。
-
-### 写真とcontentHash
-**確定:** Box / Itemの写真は`photoHash`を介してentityの`contentHash`へ含め、写真配列の順番もbusiness内容として扱う。画像内容の高度な正規化は行わない。
-
-```text
-保存された写真データ
-→ photoHash = 保存データから決定的に算出
-
-Box / Item contentHash
-→ business本文
-→ business参照
-→ 順序付きphotoHash列
-→ active / deleted状態
-```
-
-- photoHashはSHA-256相当
-- EXIF除去、pixel展開、色空間統一、再エンコード同一視等は要件としない
-- 利用者が画像を変換・再保存して保存内容が変われば写真更新として扱う
-- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容
-- BoxLocation写真も同じ同一性ルールを適用可能だがVision対象はBox/Itemのみ
+### 写真hash
+- 保存された原画像データから `photoHash` を決定的に算出
+- 高度な画像正規化はしない
+- 再保存/再エンコードでbytesが変われば写真更新扱い
+- entity contentHashには順序付きphotoHash列を含める
+- 写真順序はbusiness上有意
 
 ### 写真同期payload
-**確定:** 原画像はentity JSONへ埋め込まず、写真blobとしてentity同期とは分離して転送する。サムネイルはentity JSONへ埋め込む。
+**確定:** 原画像blobはentity JSONから分離。thumbnailはentity JSONへ埋め込む。
 
 ```text
 entity JSON
@@ -131,170 +88,125 @@ entity JSON
 - thumbnail
 - 写真順序
 
-写真本体
+原画像
 - blobとして別転送
 ```
 
-- 原画像blobはPush/Pull/Full Resyncの通常entity JSONから分離
-- entity側は写真参照、photoHash、順序、thumbnailを保持
-- thumbnailはJSON埋め込み
-- entity contentHashは順序付きphotoHash列を使用し、thumbnail base64自体はhashへ直接含めない
-- Outboxで同一blobをentity payloadごとに複製しない
+- thumbnail base64そのものはcontentHashへ直接含めない
+- Outboxで原画像blobを重複保持しない
 
-### 原画像blob取得・キャッシュ
-**確定:** 通常Pull / Full Resyncでは原画像blobを自動取得しない。thumbnailとphoto metadataだけ同期し、原画像は必要時にオンデマンド取得。一度取得した原画像はuser別local DB側へcacheし、オフライン再表示に利用する。
+### 原画像取得・cache
+**確定:** Pull / Full Resyncではthumbnail + metadataのみ。原画像は必要時オンデマンド取得し、一度取得したものはuser別local DBへcacheする。
 
-```text
-Pull / Full Resync
-→ thumbnail + photo metadata
-→ 原画像blobは取得しない
-
-原画像表示要求
-→ local cache確認
-→ cacheあり: local表示
-→ cacheなし & ONLINE: serverから取得してcache後表示
-→ cacheなし & OFFLINE: thumbnail表示
-```
-
-- 原画像取得はcursor/revision/contentHash進行の前提条件としない
-- blob取得失敗はentity同期成功を取り消さない
 - cache未取得は同期異常ではない
-- photoHashまたは参照が変われば旧cacheを新写真として利用しない
+- 原画像取得失敗はentity同期成功を取り消さない
+- offline時はcache済み原画像を表示、未取得ならthumbnail表示
+- photoHash/参照が変われば旧cacheを新写真として使わない
 
-### 原画像blob uploadとentity Push順序
-**確定:** 新規・更新写真は、原画像blob upload成功後にentity Pushを行う。canonical entityが未存在blobを参照する状態を作らない。
+### 原画像upload順序
+**確定:** blob upload成功 → entity Push の順。
 
 ```text
-1. clientでphotoHash算出
-2. 原画像blobをserverへupload
-3. serverがblob存在 / photoHashを確認
+1. client photoHash算出
+2. blob upload
+3. serverがblob存在/photoHash確認
 4. entity Push
-5. entity canonicalへphotoId / photoHash / thumbnail / 順序を確定
+5. canonical参照確定
+```
+
+- blob upload失敗ならentity Pushしない
+- upload成功後のPush失敗/CONFLICT/結果不明でもblobは即削除しない
+- 同一User内の既upload blobは再利用可能
+- blob upload成功だけではentity同期成功ではない
+
+### PhotoBlob重複排除scope
+**確定:** 同一User内のみ。
+
+```text
+same User.id + same photoHash → blob再利用可能
+different User.id + same photoHash → 別blob
+```
+
+### 未参照PhotoBlob GC
+**確定:** 未参照状態が30日継続したblobは物理削除可能。
+
+- server管理時刻で `unreferencedSince` を管理
+- 30日以内に再参照されたらGC対象解除
+- 30日は最低保持期間
+- GC job直前に再度参照有無確認
+- tombstone 30日保持と期間は合わせるが、別ライフサイクル
+
+### PhotoBlob参照管理
+**確定:** reference countを正本として保持しない。canonical entityの実参照を正本としてGC判定する。
+
+概念:
+
+```text
+PhotoBlob
+- userId
+- photoHash
+- blob情報
+- unreferencedSince
 ```
 
 規則:
-- entity Push時に参照するblobはserver側で利用可能でなければならない
-- blob upload失敗時はentity Pushを行わず、Outboxとlocal Businessは保持する
-- blob upload成功後にentity Pushが失敗・CONFLICT・通信結果不明となってもblobは直ちに削除しない
-- 同一User内で同一photoHash / 同一blobがserverに既に存在し再利用可能なら再uploadを避けられる
-- 異なるUser間では同一photoHashでもblobを共有・再利用しない
-- entity Push再送時は同一User内の既upload blobを再利用できる
-- canonical entityが存在しないblobを参照する状態を正常系では作らない
-- blob upload成功だけではentity同期成功とは扱わない
-- entityのOutboxはentity PushがAPPLIED/UNCHANGED等で成功するまで保持する
+- Box / Item / BoxLocation のcanonical写真参照がPhotoBlob参照の正本
+- referenceCount列は正本として持たない
+- 写真削除・差し替え・CONFLICT解決等で参照が外れた際、同一User内のcanonical参照を確認し、ゼロなら`unreferencedSince`をserver時刻で設定
+- その後再参照されたら`unreferencedSince=null`
+- GC時は`unreferencedSince <= now-30days`だけを候補化し、削除直前に同一User内のBox / Item / BoxLocationを再検索して実参照ゼロを確認
+- 実参照があれば削除禁止、`unreferencedSince`は必要に応じて解除
+- cascade / CONFLICT / 再送 / 自動rename等の複雑な状態遷移でも、count更新漏れによる誤削除を避ける
 
-根拠: entity先行だとcanonicalが未upload原画像を参照する時間窓が生じる。blob先行なら失敗時に未参照blobが残るだけで、business canonicalの参照整合性を保ちやすい。未参照blobは再送で再利用し、不要になったものは別途GC対象にできる。
+根拠: reference countを正本にすると複数の同期・競合・cascade経路すべてで厳密な加減算が必要になり、更新漏れが誤削除につながる。GCは30日後の非同期処理なので、canonical参照を再確認する方式の方が安全で単純。
 
-### 原画像blob重複排除scope
-**確定:** 原画像blobの同一性・重複排除は同一 `User.id` 内だけで行う。異なるUser間では同じphotoHash・同じ画像bytesでも別blobとして扱う。
-
-```text
-same User.id + same photoHash
-→ blob再利用可能
-
-different User.id + same photoHash
-→ 別blob
-→ 共有しない
-```
-
-- photoHash lookupは必ず `(User.id, photoHash)` scope
-- blob download/upload/exists APIも認証user scope
-- user間dedupは行わない
-- user間参照countを持たない
-- GCもuser scope内の参照のみで判定する
-
-### 未参照原画像blobのGC
-**確定:** server側でentityから参照されていない原画像blobは即時削除せず、未参照状態が30日継続した場合にGCで物理削除可能とする。
-
-```text
-blob upload成功
-↓
-同一user内entityから参照あり
-→ 保持
-
-entity Push失敗 / 写真差し替え / 写真削除 / CONFLICTでSERVER wins
-↓
-同一user内で未参照blob
-↓
-未参照状態30日保持
-↓
-GC実行時にも同一user内で未参照
-→ 物理削除可能
-```
-
-規則:
-- GC判定はserver管理時刻を基準とし、client時刻に依存しない
-- 未参照になった時点をserverで記録し、その時点から30日を起算する
-- 30日以内に同一userのentityから再度参照された場合はGC対象から外す
-- 同一user内で同じblobが複数entityから参照される場合、全参照がなくなった時点から未参照期間を起算する
-- 他userの参照は存在しないものとして扱うのではなく、設計上そもそも共有しない
-- GC実行直前にも同一user scopeで参照有無を再確認する
-- tombstoneの30日保持と期間を揃えるが、blob GCとtombstone purgeは別ライフサイクル
-
-### deletedAt / tombstone保持起算
-- tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
-- deletedAtそのものはpurge起算に使用しない
-- deleted状態ではDELETE受理時のserverUpdatedAtをpurge起算に利用可能
-- SyncChangeLogは固定90日保持
-- 必要log欠落または完全性保証不能ならFULL_RESYNC_REQUIRED
+### tombstone / SyncChangeLog
+- tombstone物理削除可能 = DELETE受理server時刻 + 30日
+- SyncChangeLog保持 = 90日
+- 必要log欠落/完全性保証不能ならFULL_RESYNC_REQUIRED
 
 ### Outbox
-同一 `(entityType, entityId)` につき1 row、latest unsynced candidate。
-
-```text
-CREATE + 編集 → CREATE / baseRevision=0維持
-CREATE + DELETE → DELETE / baseRevision=0維持
-UPDATE + 編集 → UPDATE / 元baseRevision維持
-UPDATE + DELETE → DELETE / 元baseRevision維持
-baseRevision=0 の CREATE→DELETE→復活 → CREATE
-baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
-```
-
+- 同一 `(entityType, entityId)` につき1 rowのlatest unsynced candidate
+- CREATE/UPDATE/DELETEをfoldし、original baseRevisionを維持
 - local変更ごとにoutboxVersion++
-- CREATE/UPDATEは最新payload + contentHash
-- DELETEはdelete-state contentHash、payload原則null
-- Outbox.createdAtはchange chain開始時刻を維持
 - PullだけではbaseRevisionを進めない
 - CREATE→DELETEでもOutboxを消さない
-- Push中再編集はoutboxVersion snapshotで保護
 
 ### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId=UNASSIGNED
 - BoxLocation DELETE → child Box.locationId=UNASSIGNED
 - parent DELETE + child補正はserver 1 transaction
-- reserved Box(id=UNASSIGNED) / BoxLocation(id=UNASSIGNED) を各Userで保証
-- reserved entityはclient変更禁止、serverは RESERVED_ENTITY / retryable=false
-- SyncConflictは `(userId, entityType, entityId)` につき未解決1 row、statusなし、解決後削除
+- reserved Box/BoxLocation `UNASSIGNED` を各Userで保証
+- reserved entityはclient変更禁止
+- SyncConflictは `(userId, entityType, entityId)` につき未解決1 row
 
 ### Pull / Full Resync
-- Pull = changes[] / nextCursor / hasMore、syncSeq順
-- pageのlocal適用成功後のみcursor更新
+- Pull = `changes[] / nextCursor / hasMore`、syncSeq順
+- page local適用成功後のみcursor更新
 - cursor未設定の新規DBは必ずFull Resync
 - Full Resyncはcurrent active canonicalのみ
-- snapshot開始時にsnapshotSeq=Nと内容Nを固定
-- entity type別paging、snapshot TTL約30分
-- staging全完了後のみlocal canonicalへ採用
-- 新規DBは初回Full Resync成功まで書込不可
-- 既存canonicalありならFull Resync取得中もlocal編集可
-- 既存canonicalありでFull Resync途中失敗時は旧canonicalを保持してOFFLINE_READYへ戻れる
-- Full Resync採用は staging → Business/SyncState置換 → latest Outbox reapply → 必要な参照補正 → cursor=snapshotSeq を1 IndexedDB transactionで行う
-- Outbox reapply順は BoxLocation → Box → Item
+- snapshotSeq=Nを固定し、type別paging
+- staging完了後のみlocal canonicalへ採用
+- 既存canonicalありならFull Resync中もlocal編集可
+- adoptionは1 IndexedDB transaction
+- Outbox reapply順 = BoxLocation → Box → Item
 
 ## 4. 現行実装との差異
 - Prisma sync metadata不足
 - entity idがglobal PKでuser composite identity未対応
-- current Push `where:{id}` にcross-user ownership risk
+- current Push ownership risk
 - revision/contentHash/Outbox/SyncState/Conflict未実装
 - Pullはtimestamp基準
-- IndexedDBは固定 `hk-local-v1`
-- BoxLocationモデルが確定仕様と不一致
+- IndexedDB固定 `hk-local-v1`
+- BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
-- 写真photoHash未実装
+- photoHash未実装
 - 原画像blob分離同期・オンデマンドcache未実装
 - blob先行upload / entity後確定未実装
+- user-scoped blob dedup未実装
 - 未参照blob 30日GC未実装
-- user間の論理完全分離を保証するblob/storage scope未実装
+- canonical実参照ベースGC未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -317,9 +229,9 @@ baseRevision>0 の UPDATE→DELETE→復活 → UPDATE
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**同一User内で同一photoHashのblobを複数写真から参照している場合、写真削除・差し替え時のblob参照管理をreference countとして保持するか、GC時にentity参照を検索して判定するかを確定する。**
+**PhotoBlobの識別子を `photoHash` そのものにするか、別の `photoId` を持たせるかを確定する。**
 
-推奨候補はreference countを正本にせず、GC時にcanonical entity側の参照有無を確認する方式。reference countの更新漏れによる誤削除を避け、30日GCなので実行頻度も低くできる。
+同一User内dedup、entity JSON参照、将来のstorage実装、hash algorithm変更可能性に影響する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
