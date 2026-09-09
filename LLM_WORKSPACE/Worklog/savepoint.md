@@ -66,6 +66,31 @@ serverUpdatedAt
 
 根拠: `updatedAt`をbusiness dataが実際に変更された時刻、`serverUpdatedAt`をserver canonical更新時刻と分離することで、offline編集時刻を失わない。一方、device clockにはずれがあり得るため、updatedAtを競合解決や同期順序の根拠には使用しない。server自身がbusiness変更を発生させる操作ではserverが編集主体なので、そのserver時刻をupdatedAtとして扱う。
 
+### createdAt
+**確定:** `createdAt`は「このbusiness entity / IDが最初に生成された時刻」とする。
+
+```text
+baseRevision = 0 の新規CREATE
+→ client.createdAt をserver canonicalへ採用
+
+既存entityのUPDATE / 復活
+→ server canonicalのcreatedAtを維持
+→ client payloadのcreatedAtでは上書きしない
+
+reserved / server自動生成entity
+→ server時刻でcreatedAtを設定
+```
+
+規則:
+- offlineで新規作成したentityでは、実際のlocal生成時刻を`createdAt`として保持できる
+- serverが新規CREATEを初回受理するときのみclientの`createdAt`を採用する
+- serverに既に同一entityが存在する場合、UPDATE/復活/競合解決でclientの`createdAt`をcanonicalへ上書きしない
+- DELETE後に同一IDを復活させても`createdAt`は元の値を維持する
+- reserved `UNASSIGNED` 等、server自身が生成するentityはserver生成時刻を用いる
+- `createdAt`はrevision conflict、同期順序、Pull cursor判定には使用しない
+
+根拠: offline新規作成の実時刻を保持しながら、既存entityの起点をclient payloadによって誤変更・改変されることを防ぐ。`createdAt`の責務をentityの初回生成時刻に固定し、削除・復活を含む同一IDのライフサイクルで意味を一貫させる。
+
 ### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId = UNASSIGNED
 - BoxLocation DELETE → child Box.locationId = UNASSIGNED
@@ -229,15 +254,16 @@ server側の復活処理では通常のbusiness updateとして:
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**clientから送信された`createdAt`をserver canonicalでどこまで信頼するかを確定する。**
+**`deletedAt`をlocal削除操作時刻として保持するか、server受理時にserver時刻へ置換するかを確定する。**
 
 推奨候補:
-- baseRevision=0の新規CREATEでは、clientの`createdAt`をbusiness生成時刻として採用する
-- ただしserver既存entityのUPDATE/復活では、canonicalの既存`createdAt`を必ず維持しclient値で上書きしない
-- server側のreserved entityや自動生成entityはserver時刻でcreatedAtを設定する
-- createdAtも競合判定・同期順序には使用しない
+- `deletedAt` = business上の削除操作が実際に行われたclient側時刻
+- offline DELETEでもlocal削除時刻を保持する
+- serverはPush受理時にclientの`deletedAt`を原則保持し、server時刻で上書きしない
+- server自身がcascade等でDELETEを発生させたentityではserver操作時刻を`deletedAt`とする
+- tombstone 30日保持のpurge起算だけはclient時計に依存させず、`serverUpdatedAt`またはserver管理の削除受理時刻を基準とする
 
-これによりofflineで新規作成した実時刻を保持しつつ、既存entityの起点をclient payloadで改ざん・誤更新できない。
+これによりbusiness上の削除時刻とserver retention管理の時計を分離できる。
 
 ## 7. HLDocS運用上の注意
 
