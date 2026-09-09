@@ -123,10 +123,42 @@ server: 2026-09-09T03:43:21.123Z
 - `Z` はUTC offsetとして有効
 - clientがmillisecondsより細かい精度を送る場合はserver canonical保存時にmillisecondsへ正規化する
 - 正規化後の瞬間が同じならtimezone offsetの違いはbusiness差分とは扱わない
-- contentHash計算対象にtimestampを含める場合も、同じUTC milliseconds表現へcanonicalizeしてからhash化する
 - 元のoffset自体を表示・検索・監査に使う要件は現時点では持たない
 
 根拠: 端末timezoneに依存せず同一瞬間を一意に扱え、JavaScript/JSON/Prismaとの互換性も高い。offsetをbusiness情報として保存しないことで、同一瞬間の表現差による不要な差分・conflictを防げる。
+
+### contentHash対象範囲
+
+**確定:** `contentHash` はbusiness上の意味的内容だけを表し、business timestamp値や同期制御メタデータは含めない。ただしactive/deleted状態は意味的差分として含める。
+
+```text
+contentHash対象外
+- createdAt
+- updatedAt
+- deletedAt のtimestamp値
+- serverUpdatedAt
+- revision
+- syncSeq
+- contentHash自身
+- userId
+- entity id
+
+contentHash対象
+- business本文
+- business参照関係
+- 写真等のbusiness内容
+- active / deleted 状態
+```
+
+規則:
+- `deletedAt`の時刻値はhashへ含めない
+- ただし `deletedAt == null` か否かに相当するactive/deleted状態はhashへ含める
+- timestampのみ異なりbusiness内容と状態が同じ場合、同一contentHashとなる
+- client clock差、server自動更新時刻差だけでCONFLICTを発生させない
+- active entityとdeleted entityは必ず異なるhashになる
+- canonicalizationは既定どおり、順序非依存配列はsort、object key順固定、決定的JSON化後にSHA-256相当でhash化する
+
+根拠: `contentHash`は「意味のあるbusiness差分があるか」の判定に使うため、device clock由来timestampや同期制御値を含めると不要なCONFLICTが発生する。一方、active/deletedはbusiness上の状態差なのでhashへ含める必要がある。
 
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
@@ -211,14 +243,14 @@ Full Resync採用は `staging → Business/SyncState置換 → latest Outbox rea
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**contentHashへbusiness timestamp (`createdAt / updatedAt / deletedAt`) を含めるかを確定する。**
+**写真データをcontentHashへどの単位で含めるかを確定する。**
 
 推奨候補:
-- `createdAt / updatedAt / deletedAt` のtimestamp値そのものはcontentHash対象外
-- ただし削除状態そのもの（active / deleted）はhash対象
-- business本文・参照・写真等の意味的内容だけでhashを構成
+- base64文字列や保存形式そのものではなく、写真内容を表す安定したphoto hash / photo IDの順序付きまたは仕様上の正規化済み集合をbusiness内容としてhashへ含める
+- 画像再エンコードやmetadata差だけで同じ写真が別contentHashにならない設計を優先する
+- 写真の並び順がUI/business上意味を持つなら順序をhashへ反映し、意味を持たないならsortして順序非依存にする
 
-理由: 同じbusiness内容でもclient clock差やserver側自動補正時刻だけでconflict扱いになるのを防ぐ。一方、active/deletedの違いは意味的差分なのでhashへ含める。
+この判断はBox/Item写真仕様とbackup/sync双方に影響するため、次に確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
