@@ -160,6 +160,33 @@ contentHash対象
 
 根拠: `contentHash`は「意味のあるbusiness差分があるか」の判定に使うため、device clock由来timestampや同期制御値を含めると不要なCONFLICTが発生する。一方、active/deletedはbusiness上の状態差なのでhashへ含める必要がある。
 
+### 写真とcontentHash
+
+**確定:** Box / Itemの写真は、画像本体のbase64文字列や保存形式そのものではなく、画像内容を表す安定した`photoHash`を介してentityの`contentHash`へ含める。写真の並び順はbusiness上意味を持つものとして扱う。
+
+```text
+写真本体
+→ photoHash = 正規化した画像内容から算出
+
+Box / Item contentHash
+→ business本文
+→ business参照
+→ 順序付きphotoHash列
+→ active / deleted状態
+```
+
+規則:
+- 写真データそのものやbase64表現はentity contentHashへ直接入れない
+- 各写真に安定したphotoHashを持たせる
+- 同じ見た目の画像を保存形式・metadata・再エンコードだけ変更した場合に、可能な限り同一photoHashとなるよう画像内容を正規化してからhash化する
+- 写真配列の順番は意味的内容として扱う
+- `[photoA, photoB]` と `[photoB, photoA]` は異なるbusiness内容であり、異なるentity contentHashとなる
+- 先頭写真を代表画像として利用できるUI/データモデルとの整合を取る
+- photoHash自体はSHA-256相当の決定的hashを使用する
+- BoxLocation写真はVision対象外だが、BoxLocationに写真を保持する仕様自体は別途写真仕様で整理する
+
+根拠: 保存形式やbase64文字列の差をbusiness差分にすると、意味的に同一の写真でも不要なCONFLICTが発生する。画像内容から安定したphotoHashを作り、それをentity hashへ取り込むことで同期判定を軽量・決定的にできる。一方、写真順は代表画像や閲覧順に影響するためbusiness内容として扱う。
+
 ### deletedAt / tombstone保持起算
 - tombstoneはDELETEをcanonicalへ受理したserver管理時刻 + 30日後に物理削除可能
 - `deletedAt`そのものはpurge起算に使用しない
@@ -221,6 +248,7 @@ Full Resync採用は `staging → Business/SyncState置換 → latest Outbox rea
 - BoxLocationモデルが確定仕様と不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - Full Resync snapshot/staging未実装
+- 写真の安定photoHash未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -243,14 +271,17 @@ Full Resync採用は `staging → Business/SyncState置換 → latest Outbox rea
 同期設計の主要未定義を最終点検する。
 
 次の判断候補:
-**写真データをcontentHashへどの単位で含めるかを確定する。**
+**`photoHash`算出時の画像正規化手順を確定する。**
 
 推奨候補:
-- base64文字列や保存形式そのものではなく、写真内容を表す安定したphoto hash / photo IDの順序付きまたは仕様上の正規化済み集合をbusiness内容としてhashへ含める
-- 画像再エンコードやmetadata差だけで同じ写真が別contentHashにならない設計を優先する
-- 写真の並び順がUI/business上意味を持つなら順序をhashへ反映し、意味を持たないならsortして順序非依存にする
+- 画像をdecodeする
+- EXIF orientationを適用して表示向きを確定する
+- sRGB相当の共通色空間へ変換する
+- alphaを含む決定的pixel配列へ正規化する
+- width / heightと正規化pixel bytesからSHA-256を算出する
+- EXIF、撮影日時、GPS、ファイル名、JPEG品質、圧縮方式等のmetadataはphotoHashへ含めない
 
-この判断はBox/Item写真仕様とbackup/sync双方に影響するため、次に確定する。
+これにより見た目が同一の画像は保存形式やmetadata差に依存せず同じphotoHashになりやすく、写真同一性をbusiness内容として安定して扱える。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
