@@ -30,16 +30,11 @@
 - BoxLocationは独立フラットマスタ。Boxが `locationId` を参照
 - Vision対象はBox/Item写真のみ
 
-### ユーザー間データ分離原則
-**確定:** ユーザー間のデータは論理的に完全分離する。物理DB・object storageを共有しても、データ空間・参照・検索・同期・重複排除・GCは認証済み内部 `User.id` のscope内で完結させる。
-
-- business entity identity = `(User.id, entityId)`
+### ユーザー間データ分離
+- ユーザー間のデータは論理的に完全分離
+- business identity = `(User.id, entityId)`
 - APIのuser scopeはclient payloadではなく認証session/tokenからserverが確定
-- 異なるUser間では同一entity id / photoHash / bytesでも共有しない
-- PhotoBlobもUser間共有しない
-- 異なるUserのblob存在有無を推測できるAPI挙動にしない
-- 同一User内では同一photoHash blobを再利用可能
-- SyncChangeLog / SyncConflict / FullSyncSnapshot / cursor validity / Full Resyncもuser単位
+- 異なるUser間ではentity / photoHash / PhotoBlob / sync状態を共有しない
 - local DB = `hk-local-v2-<User.id>`
 
 ### 同期アーキテクチャ
@@ -71,46 +66,38 @@
 - active/deleted状態は対象
 - deterministic JSON + SHA-256相当
 
-### 写真hash
-- 保存された原画像データから `photoHash` を決定的に算出
+### 写真hash / PhotoBlob
+- 保存された原画像bytesから `photoHash` をSHA-256相当で算出
 - 高度な画像正規化はしない
 - 再保存/再エンコードでbytesが変われば写真更新扱い
 - entity contentHashには順序付きphotoHash列を含める
 - 写真順序はbusiness上有意
+- `photoId` は持たず、`photoHash` 自体をPhotoBlobの論理識別子にする
+- PhotoBlob論理キー = `(User.id, photoHash)`
+- 同一User内のみ同一photoHash blobを再利用可能
+- 異なるUser間では同じphotoHashでも共有しない
+- hash方式変更は全体migrationとして扱い、将来可能性だけを理由に参照IDを二重化しない
 
 ### 写真同期payload
-**確定:** 原画像blobはentity JSONから分離。thumbnailはentity JSONへ埋め込む。
-
-```text
-entity JSON
-- photoHash
-- thumbnail
-- 写真順序
-
-原画像
-- blobとして別転送
-```
-
-- `photoId` は持たない
-- `photoHash` が原画像blobの論理識別子
+- 原画像blobはentity JSONから分離
+- entity JSONは `photoHash + thumbnail + 写真順序`
 - thumbnail base64そのものはcontentHashへ直接含めない
 - Outboxで原画像blobを重複保持しない
 
 ### 原画像取得・cache
-**確定:** Pull / Full Resyncではthumbnail + metadataのみ。原画像は必要時オンデマンド取得し、一度取得したものはuser別local DBへcacheする。
-
+- Pull / Full Resyncではthumbnail + metadataのみ同期
+- 原画像は必要時オンデマンド取得
+- 一度取得した原画像はuser別local DBへcache
 - cache未取得は同期異常ではない
 - 原画像取得失敗はentity同期成功を取り消さない
 - offline時はcache済み原画像を表示、未取得ならthumbnail表示
 - photoHashが変われば旧cacheを新写真として使わない
 
 ### 原画像upload順序
-**確定:** blob upload成功 → entity Push の順。
-
 ```text
 1. client photoHash算出
 2. blob upload
-3. serverがblob存在/photoHash確認
+3. server hash検証
 4. entity Push
 5. canonical参照確定
 ```
@@ -120,115 +107,65 @@ entity JSON
 - 同一User内の既upload blobは再利用可能
 - blob upload成功だけではentity同期成功ではない
 
-### PhotoBlob識別子
-**確定:** `photoId` は別に設けず、`photoHash` をそのままPhotoBlobの論理識別子にする。
+### PhotoBlob upload時hash完全性検証
+- client申告 `photoHash` をserver側で信用しない
+- serverは受信した保存対象原画像bytesからSHA-256相当を再計算
+- client申告値とserver計算値の一致を必須とする
+- 不一致ならPhotoBlobを利用可能状態にせず、entity Pushへ進まない
+- transport failureとhash mismatchを区別する
+- hash mismatchは原則retryable=falseのデータ整合性エラー
 
-概念:
+根拠: photoHashはPhotoBlob識別子かつentity contentHashの入力であり、実bytesとの不一致を許すとdedup/cache/同期競合判定まで連鎖的に壊れるため。
 
-```text
-PhotoBlob
-- userId
-- photoHash
-- blob情報
-- unreferencedSince
-```
-
-論理一意キー:
-
-```text
-(User.id, photoHash)
-```
-
-規則:
-- entity側の写真参照は `photoHash` のみで行う
-- 同一User内で同じphotoHashなら同じPhotoBlobを参照・再利用する
-- 異なるUser間では同じphotoHashでも別PhotoBlobとして扱う
-- blob upload / exists / download / GC lookup は `(User.id, photoHash)` scope
-- `photoId` という追加識別子は持たない
-- 将来hash方式を変更する場合は、写真再hash、entityのphotoHash更新、entity contentHash再計算、同期整合性更新を含む明示的な全体migrationとして扱う
-- hash方式変更の可能性だけを理由に現時点で参照IDを二重化しない
-
-根拠: photoHashはすでに写真内容の同一性判定とentity contentHashの入力としてbusiness同期設計に組み込まれているため、hash方式変更時にはphotoIdを別に持っていても全体migrationを避けられない。現時点では識別子を増やすより `(User.id, photoHash)` に統一した方が実装・API・テスト・GCが単純である。
-
-### PhotoBlob upload時のhash完全性検証
-**確定:** clientが送信した `photoHash` をserver側で信用せず、受信した原画像bytesからserverでもSHA-256相当を再計算し、一致した場合だけPhotoBlobとして受理する。
+### thumbnail生成
+**確定:** thumbnailはclient生成を正本とし、serverは再生成しない。serverは受信thumbnailの妥当性検証のみを行う。
 
 ```text
 client
-原画像bytes
+原画像
 → photoHash算出
-→ blob + photoHash upload
+→ thumbnail生成
+→ local Businessへ保存
 
-server
-受信blob
-→ photoHash再計算
-→ client申告photoHashと比較
-
-一致
-→ `(User.id, photoHash)` のPhotoBlobとして受理/再利用
-
-不一致
-→ REJECTED
+同期
+原画像blob upload
+→ server hash検証
+→ entity Push
+   - photoHash
+   - thumbnail
 ```
 
 規則:
-- server側hashは実際に保存対象となる原画像bytesから算出する
-- client申告hashとserver計算hashが不一致ならPhotoBlobをcanonical利用可能状態として登録しない
-- 不一致時はentity Pushへ進まない
-- 同一User内に同一photoHashのPhotoBlobが既に存在する場合も、uploadされたbytesを受け取った経路ではhash一致を確認してから既存blob再利用として扱う
-- hash検証失敗はretryableではないデータ整合性エラーを基本とし、client側は元bytes/hashの再計算または写真再処理を必要とする
-- 通信途中で受信が不完全な場合はhash不一致として誤って確定せず、upload自体の失敗として扱えるようtransport errorとhash mismatchを区別する
+- offline登録時点でclientがthumbnailを生成し、そのままlocal表示に利用する
+- serverはthumbnailを再生成して差し替えない
+- serverは許可形式、画像としてdecode可能か、寸法上限、byte数上限等の妥当性を検証する
+- thumbnail検証NGならentity payloadをREJECTEDとして扱う
+- thumbnail bytesはcontentHash対象外
+- 同一原画像でも端末実装差によりthumbnail bytesが異なり得るが、写真同一性は原画像photoHashで判定する
+- Pull / Full Resyncではcanonical entityに保存されたthumbnailを配信する
 
-根拠: `photoHash` はPhotoBlobの識別子であり、entity contentHashの入力でもあるため、申告hashと実bytesがずれるとdedup・cache・同期競合判定まで連鎖的に壊れる。serverで再計算することで、client実装不具合や転送/保存経路の不整合をPhotoBlob確定前に検出できる。upload時のhash計算コストより整合性保証を優先する。
+根拠: 箱目録はoffline-firstであり、写真追加直後からthumbnailを利用する必要がある。server生成を正本にするとupload後のthumbnail生成・取得をentity Push前に追加する必要があり、同期フローが複雑になる。thumbnail自体はbusiness競合判定対象ではないため、client生成を正本にする方が単純である。
 
-### PhotoBlob重複排除scope
-**確定:** 同一User内のみ。
-
-```text
-same User.id + same photoHash → blob再利用可能
-different User.id + same photoHash → 別blob
-```
-
-### 未参照PhotoBlob GC
-**確定:** 未参照状態が30日継続したblobは物理削除可能。
-
-- server管理時刻で `unreferencedSince` を管理
-- 30日以内に再参照されたらGC対象解除
-- 30日は最低保持期間
-- GC job直前に再度参照有無確認
-- tombstone 30日保持と期間は合わせるが、別ライフサイクル
-
-### PhotoBlob参照管理
-**確定:** reference countを正本として保持しない。canonical entityの実参照を正本としてGC判定する。
-
-規則:
-- Box / Item / BoxLocation のcanonical写真参照がPhotoBlob参照の正本
-- referenceCount列は正本として持たない
-- 写真削除・差し替え・CONFLICT解決等で参照が外れた際、同一User内のcanonical参照を確認し、ゼロなら`unreferencedSince`をserver時刻で設定
-- その後再参照されたら`unreferencedSince=null`
-- GC時は`unreferencedSince <= now-30days`だけを候補化し、削除直前に同一User内のBox / Item / BoxLocationを再検索して実参照ゼロを確認
-- 実参照があれば削除禁止、`unreferencedSince`は必要に応じて解除
-
-根拠: reference countを正本にすると複数の同期・競合・cascade経路すべてで厳密な加減算が必要になり、更新漏れが誤削除につながる。GCは30日後の非同期処理なので、canonical参照を再確認する方式の方が安全で単純。
+### PhotoBlob GC
+- 未参照状態30日継続で物理削除可能
+- `unreferencedSince` はserver管理時刻
+- reference countを正本として持たず、Box / Item / BoxLocation canonicalの実参照を正本とする
+- GC直前に同一User内の実参照ゼロを再確認
+- 再参照されたら `unreferencedSince=null`
 
 ### tombstone / SyncChangeLog
 - tombstone物理削除可能 = DELETE受理server時刻 + 30日
 - SyncChangeLog保持 = 90日
 - 必要log欠落/完全性保証不能ならFULL_RESYNC_REQUIRED
 
-### Outbox
-- 同一 `(entityType, entityId)` につき1 rowのlatest unsynced candidate
-- CREATE/UPDATE/DELETEをfoldし、original baseRevisionを維持
-- local変更ごとにoutboxVersion++
-- PullだけではbaseRevisionを進めない
+### Outbox / Conflict / DELETE
+- 同一 `(entityType, entityId)` につき1 Outbox rowのlatest unsynced candidate
+- original baseRevision維持、local変更ごとにoutboxVersion++
 - CREATE→DELETEでもOutboxを消さない
-
-### DELETE / CONFLICT / UNASSIGNED
 - Box DELETE → child Item.boxId=UNASSIGNED
 - BoxLocation DELETE → child Box.locationId=UNASSIGNED
 - parent DELETE + child補正はserver 1 transaction
-- reserved Box/BoxLocation `UNASSIGNED` を各Userで保証
-- reserved entityはclient変更禁止
+- reserved Box/BoxLocation `UNASSIGNED` を各Userで保証しclient変更禁止
 - SyncConflictは `(userId, entityType, entityId)` につき未解決1 row
 
 ### Pull / Full Resync
@@ -236,7 +173,7 @@ different User.id + same photoHash → 別blob
 - page local適用成功後のみcursor更新
 - cursor未設定の新規DBは必ずFull Resync
 - Full Resyncはcurrent active canonicalのみ
-- snapshotSeq=Nを固定し、type別paging
+- snapshotSeq=Nを固定しtype別paging
 - staging完了後のみlocal canonicalへ採用
 - 既存canonicalありならFull Resync中もlocal編集可
 - adoptionは1 IndexedDB transaction
@@ -256,10 +193,10 @@ different User.id + same photoHash → 別blob
 - 原画像blob分離同期・オンデマンドcache未実装
 - blob先行upload / entity後確定未実装
 - user-scoped blob dedup未実装
-- 未参照blob 30日GC未実装
-- canonical実参照ベースGC未実装
-- PhotoBlobの `(User.id, photoHash)` 識別未実装
-- PhotoBlob upload時server-side hash再検証未実装
+- PhotoBlob `(User.id, photoHash)` 識別未実装
+- server-side photoHash再検証未実装
+- canonical実参照ベース30日GC未実装
+- client正本thumbnail + server妥当性検証未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -279,12 +216,12 @@ different User.id + same photoHash → 別blob
 
 ## 6. 次のアクション
 
-同期設計の主要未定義を最終点検する。
+同期・写真設計の主要未定義を最終点検する。
 
 次の判断候補:
-**thumbnailをclient生成とserver生成のどちらを正本とするかを確定する。**
+**thumbnailの具体的な生成上限・形式を確定する。**
 
-現状はthumbnailをentity JSONへ埋め込み、原画像blobとは分離している。client生成を採用するとoffline登録直後からそのまま利用できる一方、端末実装差が出る。server生成を正本にすると表現統一は容易だが、blob upload後の生成結果をentity Pushへ取り込む追加フローが必要になる。
+推奨候補は、長辺512px以内・WebPを標準・一定品質で生成し、serverでは画像decode可能性、寸法、byte数を検証する方式。既存実装とブラウザ互換性を確認してから最終値を確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
