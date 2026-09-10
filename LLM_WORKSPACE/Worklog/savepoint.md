@@ -69,7 +69,22 @@
 - thumbnailは撮影元Fileから直接生成せず、保存原画像WebPから生成する
 - EXIF補正は保存原画像生成時に完了し、thumbnail側では再解釈しない
 
-根拠: 写真の正本・識別基準は保存原画像bytesとphotoHashであるため、thumbnailも同じ正本から派生させる。
+#### thumbnail破損・欠落時の修復
+**確定:** serverはthumbnailを自動再生成しない。client再生成または明示的な修復処理で再投入する。
+
+通常Push時:
+- thumbnailが欠落・破損・仕様違反ならentity payloadを`REJECTED`とする
+- 正常な保存原画像Blobと`photoHash`がserverに存在していてもserverはthumbnailを生成・差し替えしない
+- clientは同じ保存原画像Blobからthumbnailを再生成し、entity Pushを再実行する
+- 先行upload済みの正常なPhotoBlobは保持し、thumbnail不正だけを理由に削除しない
+
+canonical保存後にthumbnail欠落・破損を検出した場合:
+- 通常同期中にserverが黙って再生成しない
+- 整合性異常として検出・記録する
+- clientまたは明示的な管理/修復処理から、同じ保存原画像に対応するthumbnailを再投入して修復する
+- 修復によってbusiness内容を勝手に変更しない。photoHash・写真順序・entityの意味的内容は維持する
+
+根拠: client生成thumbnailを正本とする責務を維持し、server側に画像変換実装・encoder差・quality差・version差を持ち込まないため。保存原画像が正常ならclientは同じ正本から再生成できるため、通常系と修復系を明確に分離する。
 
 ### 写真同期・cache
 - entity JSON=`photoHash + thumbnail + 写真順序`。原画像blobは別転送
@@ -86,16 +101,10 @@
 - serverは重複payloadを黙って正規化・削除・上書きしない
 
 #### 写真順序変更
-**確定:** 写真配列の並べ替えだけでもbusiness変更として扱う。
-
-- 写真順序はbusiness上有意であり、先頭写真は代表画像として利用可能
-- clientで順序変更した時点で`updatedAt`を更新し、Outbox payloadと`contentHash`を再生成する
-- server受理時は通常UPDATEと同様に`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERTを記録する
-- 順序変更だけを同期対象外にしない
+- 写真配列の並べ替えだけでもbusiness変更として扱う
+- clientで順序変更時に`updatedAt`更新、Outbox payload/contentHash再生成
+- server受理時は`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERT
 - 同じphotoHash集合でも順序が異なればcontentHashは異なる
-- 複数端末で同時に並べ替えた場合も通常のrevision/contentHash競合判定に従う
-
-根拠: 写真順序をbusiness dataとして扱い、代表画像も順序に依存するため。同期対象外にすると端末ごとに表示順・代表画像が食い違う。
 
 #### local original cache
 - local original cacheは正本ではなく再取得可能な内部cache
@@ -136,6 +145,7 @@
 - thumbnailを保存原画像WebPから生成する一方向pipeline未実装
 - 同一entity内のphotoHash重複をclientで既存参照再利用しserverでREJECTEDとするvalidation未実装
 - 写真順序変更をbusiness UPDATEとして同期する処理・test未実装
+- thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -156,9 +166,9 @@
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **thumbnail自体が破損・欠落しているが、photoHashと保存原画像Blobはserverに正常に存在する場合の修復方針を決める。**
+次の判断候補: **同一photoHashを複数entityが参照している場合、thumbnailもphotoHash単位で共通化するか、それとも各entity payload内に同じthumbnailを保持する現行方針を維持するかを確定する。**
 
-候補は、(A) entity payloadを不正として通常同期では受理せずclientに再生成を要求する、(B) serverが保存原画像からthumbnailを再生成して修復する、の2系統。これまでの「client thumbnailが正本、serverは再生成しない」方針との整合を確認する。
+現在はentity JSONに`photoHash + thumbnail + 写真順序`を保持する設計のため、同一User内で同じ写真を複数entityが参照するとthumbnail bytesが重複する。PhotoBlob側にthumbnailを集約するとpayloadは小さくできるが、Pull/Full Resyncやoffline-firstの依存構造が複雑になる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
