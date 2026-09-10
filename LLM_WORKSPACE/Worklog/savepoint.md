@@ -56,25 +56,13 @@
 - 写真順序は`photoId`の順序としてbusiness上有意。entity contentHashには順序付き写真情報を含める
 - 写真を別entityへ「共有」する概念は設けない。各写真は登録先entityに属する記録として扱う
 
-概念例:
-```text
-Photo
-- id = photoId
-- photoHash
-- thumbnail
-- order / entity内順序
-- 保存原画像参照
-```
-
-根拠: 箱目録では写真は共有資産ではなく、各Box / Item / BoxLocationに付随する記録である。同じ画像内容でも「どの記録に付けた写真か」が重要であり、重複排除による容量削減より、独立性・削除/並べ替え/同期の分かりやすさを優先する。
-
 #### photoId生成と衝突処理
 **確定:** `photoId`はclientがUUIDで生成し、serverはそのIDをそのまま受理する。衝突時はserver既存写真を上書きしない。
 
 - offlineでも写真追加できるよう、写真作成時点でclientがUUIDを生成する
 - `photoId`は認証済みUser scope内で一意であることを要求する
 - serverに同一`photoId`が存在しない場合は通常登録する
-- 同一`photoId`かつ同一`photoHash`の場合は、同一登録の再送・応答喪失等として`UNCHANGED`相当で扱える
+- 同一`photoId`かつ同一`photoHash`の場合は同一登録の再送・応答喪失等として`UNCHANGED`相当で扱える
 - 同一`photoId`かつ異なる`photoHash`の場合は`REJECTED / PHOTO_ID_COLLISION / retryable=false`とし、既存server写真を上書きしない
 - 同一`photoHash`でも`photoId`が異なれば正常な別写真として扱う
 - collision受信後、clientは新UUIDを生成し、旧`photoId`から新`photoId`へlocal Business参照、保存原画像cache、Outbox等を同一IndexedDB transactionで付け替えて再Pushする
@@ -91,15 +79,6 @@ Photo
 - それらの変更時は親entityの`updatedAt`、Outbox payload、`contentHash`を更新し、server受理時に親の`revision + 1 / serverUpdatedAt / syncSeq / SyncChangeLog UPSERT`を更新する
 - 保存原画像Blobだけは`photoId`で別転送・別保存するが、これは同期entityではなく添付blobとして扱う
 
-概念構造:
-```text
-Box / Item / BoxLocation
-└─ photos[]
-   ├─ photoId
-   ├─ photoHash
-   └─ thumbnail
-```
-
 根拠: 箱目録では写真単体を独立して管理・検索・同期する業務要件がなく、写真のライフサイクルは常に親entityに従う。Photoを独立同期entityにするとrevision/conflict/log/paging依存が増えるため、必要性のない複雑化を避ける。
 
 #### 写真差し替え
@@ -113,9 +92,9 @@ Box / Item / BoxLocation
 - server受理時は親entityの`revision + 1 / serverUpdatedAt / syncSeq / SyncChangeLog UPSERT`を更新する
 - 旧`photoId`の保存原画像は削除済み写真と同じGC対象になる
 - local cacheに旧`photoId`の保存原画像が残っていてもUIからは不可視とし、自動復元しない
-- 新旧の`photoHash`が偶然同一であっても、差し替え操作で新`photoId`を発行した以上は別写真として扱い、dedupしない
+- 新旧の`photoHash`が偶然同一であっても別写真として扱い、dedupしない
 
-根拠: `photoId`は「その写真記録そのもの」を識別するIDであり、画像内容が変わった後も同じIDを使うと、保存原画像cache・GC・hash整合性・衝突処理の意味が曖昧になる。旧写真と新写真を明確に分離することで、写真ライフサイクルと同期処理を単純化する。
+根拠: `photoId`は「その写真記録そのもの」を識別するIDであり、画像内容が変わった後も同じIDを使うと、保存原画像cache・GC・hash整合性・衝突処理の意味が曖昧になるため。
 
 ### 保存原画像
 - client生成WebPを「箱目録における保存原画像」とする
@@ -123,8 +102,6 @@ Box / Item / BoxLocation
 - `photoHash`はこの変換後WebP bytesから算出
 - serverはWebP decode、正寸法、1600px上限、5 MiB上限、hash一致を検証し、通常フローでは再変換しない
 - 保存原画像は`photoId`単位で保持し、同一hashでも別`photoId`なら別写真として保存する
-
-根拠: 既存`downscaleToWebp()`を仕様化し、容量を抑えつつphotoHash/server保存/local cacheの対象bytesを一致させる。
 
 ### thumbnail
 - client生成を正本としserverは再生成しない
@@ -151,8 +128,6 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - clientまたは明示的な管理/修復処理から、同じ`photoId`の保存原画像に対応するthumbnailを再投入して修復する
 - 修復によってbusiness内容を勝手に変更しない。photoId・photoHash・写真順序・親entityの意味的内容は維持する
 
-根拠: client生成thumbnailを正本とする責務を維持し、server側に画像変換実装・encoder差・quality差・version差を持ち込まないため。
-
 ### 写真同期・cache
 - 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
@@ -178,11 +153,20 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - Business / thumbnail / Outbox / SyncStateはcache整理対象にしない
 
 ### 写真削除とserver保存原画像GC
-- 写真削除は親entityから該当`photoId`を除外するbusiness変更
-- 削除された写真の保存原画像は即時物理削除必須ではない
-- serverでは削除後30日を目安にGC可能とする
+**確定:** server上の保存原画像Blobは、親entityから参照されていない期間をserver管理時刻で追跡し、30日以上未参照ならGC可能とする。
+
+- Blob upload成功時点でまだcanonical親entityから参照されていなければ、serverは`unreferencedSince = upload完了server時刻`を設定する
+- 親entity Push成功によってcanonical参照が成立した時点で`unreferencedSince = null`とする
+- 参照済み写真が親entityから削除・差し替えで外れた場合は、そのcanonical変更をserverが受理したserver時刻を新しい`unreferencedSince`とする
+- `unreferencedSince`から30日以上経過したBlobはGC候補とする
+- GC実行直前に、その`photoId`がcanonical親entityから参照されていないことを再確認する
+- upload済みだが親entity Pushが一度も成功しなかったBlobも30日後に回収可能
+- server GC後でもclient Outboxとlocal保存原画像が残っている場合は、clientがBlobを再uploadしてから親entity Pushを再試行できる
 - GC判定は`photoId`単位で行い、photoHash参照数やhash共有を使わない
 - 同じphotoHashの別photoIdが存在していても、それぞれ独立して保持・GCする
+- client business timestampはGC期限の算定に使用しない
+
+根拠: blob-first uploadでは親entity Pushが失敗・中断すると未参照Blobが残るため、参照成立経験の有無に関係なく回収可能にする必要がある。server時刻で起算することでclient時計に依存せず、Outbox/local保存原画像からの再uploadを許すことで同期の正当性も維持する。
 
 ### 写真枚数上限
 - Box / Item / BoxLocation とも0〜10枚
@@ -212,7 +196,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - Photoを独立同期entityにせず親payload内で同期する構造未実装
 - 写真差し替え時に新photoIdを発行して旧削除＋新追加として扱う処理未実装
 - photoHashによるserver受信bytes再検証未実装
-- photoId単位のblob分離同期、オンデマンドcache、blob先行upload、30日GC未実装
+- photoId単位のblob分離同期、オンデマンドcache、blob先行upload、`unreferencedSince`による30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
@@ -239,9 +223,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **保存原画像Blob upload済みだが親entity Pushが長期間成功しない場合、未参照BlobのGC起算点をいつにするかを確定する。**
+次の判断候補: **GC済みの保存原画像Blobを親entity Pushが参照した場合のserver応答とclient再upload手順を明示的に確定する。**
 
-候補は、Blob upload完了server時刻から未参照状態を開始する方式と、親entity参照が一度成立してから外れた時だけGC対象にする方式。offline/outbox再送との整合を考慮して決定する。
+推奨候補は、親entity Pushを`REJECTED / PHOTO_BLOB_NOT_AVAILABLE / retryable=true`とし、clientが該当photoIdの保存原画像を再uploadしてから同じ親entity Outboxを再Pushする方式。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
