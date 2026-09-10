@@ -28,7 +28,7 @@
 
 ### ユーザー分離・同期
 - ユーザー間データは論理的に完全分離。business identity=`(User.id, entityId)`
-- API user scopeは認証session/tokenからserverが確定。異なるUser間でentity/photoHash/PhotoBlob/sync状態を共有しない
+- API user scopeは認証session/tokenからserverが確定。異なるUser間でentity/photo/sync状態を共有しない
 - local DB=`hk-local-v2-<User.id>`
 - server metadata=`createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 - 未同期新規=revision 0/baseRevision 0。baseRevision一致=通常更新。不一致時contentHash同一=UNCHANGED、異なる=CONFLICT
@@ -44,19 +44,36 @@
 - contentHashはbusiness上の意味的内容だけ。timestamp値/server metadata/userId/entity idは対象外、active/deleted状態は対象
 - deterministic JSON + SHA-256相当
 
-### 写真hash / PhotoBlob
-- 保存原画像bytesから`photoHash`をSHA-256相当で算出。高度な画像正規化はしない
-- entity contentHashには順序付きphotoHash列を含め、写真順序はbusiness上有意
-- `photoId`は持たず`photoHash`自体を識別子とする。PhotoBlob論理キー=`(User.id, photoHash)`
-- 同一User内のみblob再利用可能。異なるUser間では共有しない
-- serverはuploadされた保存原画像bytesからhashを再計算しclient申告値との一致を必須とする
-- 未参照PhotoBlobはserver管理時刻で30日後にGC可能。削除直前にcanonical実参照ゼロを再確認する
+### 写真モデル / photoId / photoHash
+**確定:** 写真の重複排除は行わず、写真ごとに独立した`photoId`を持つ。`photoHash`は写真の論理IDではなく、保存原画像bytesの整合性確認・内容識別に使用する。
+
+- 同じ画像ファイルを複数のBox / Item / BoxLocationへ登録しても、それぞれ独立した写真として扱う
+- 同じentityに同じ画像ファイルを複数回登録することも禁止しない。利用者が登録した回数・順序をそのままbusiness dataとして扱う
+- `photoId`が写真の論理識別子。business identityはuser scope内の`photoId`
+- `photoHash`は保存原画像bytesからSHA-256相当で算出し、server受信時のbytes検証・破損検出等に利用する
+- 同一`photoHash`であっても、異なる`photoId`の保存原画像を共通化・再利用・dedupしない
+- `photoHash`一致を理由に別entity間・同一entity内で写真参照を統合しない
+- 写真順序は`photoId`の順序としてbusiness上有意。entity contentHashには順序付き写真情報を含める
+- 写真を別entityへ「共有」する概念は設けない。各写真は登録先entityに属する記録として扱う
+
+概念例:
+```text
+Photo
+- id = photoId
+- photoHash
+- thumbnail
+- order / entity内順序
+- 保存原画像参照
+```
+
+根拠: 箱目録では写真は共有資産ではなく、各Box / Item / BoxLocationに付随する記録である。同じ画像内容でも「どの記録に付けた写真か」が重要であり、重複排除による容量削減より、独立性・削除/並べ替え/同期の分かりやすさを優先する。
 
 ### 保存原画像
 - client生成WebPを「箱目録における保存原画像」とする
 - WebP、長辺1600px上限、quality 0.85、拡大なし、EXIF Orientation補正、最大5 MiB
 - `photoHash`はこの変換後WebP bytesから算出
 - serverはWebP decode、正寸法、1600px上限、5 MiB上限、hash一致を検証し、通常フローでは再変換しない
+- 保存原画像は`photoId`単位で保持し、同一hashでも別`photoId`なら別写真として保存する
 
 根拠: 既存`downscaleToWebp()`を仕様化し、容量を抑えつつphotoHash/server保存/local cacheの対象bytesを一致させる。
 
@@ -68,47 +85,42 @@
 - Pull/Full Resyncではcanonical thumbnailを配信
 - thumbnailは撮影元Fileから直接生成せず、保存原画像WebPから生成する
 - EXIF補正は保存原画像生成時に完了し、thumbnail側では再解釈しない
+- thumbnailは各`photoId`に属する。別`photoId`間で共通化・dedupしない
 
 #### thumbnail破損・欠落時の修復
 **確定:** serverはthumbnailを自動再生成しない。client再生成または明示的な修復処理で再投入する。
 
 通常Push時:
 - thumbnailが欠落・破損・仕様違反ならentity payloadを`REJECTED`とする
-- 正常な保存原画像Blobと`photoHash`がserverに存在していてもserverはthumbnailを生成・差し替えしない
-- clientは同じ保存原画像Blobからthumbnailを再生成し、entity Pushを再実行する
-- 先行upload済みの正常なPhotoBlobは保持し、thumbnail不正だけを理由に削除しない
+- 正常な保存原画像と`photoHash`がserverに存在していてもserverはthumbnailを生成・差し替えしない
+- clientは同じ`photoId`の保存原画像からthumbnailを再生成し、entity Pushを再実行する
+- 先行upload済みの正常な保存原画像は保持し、thumbnail不正だけを理由に削除しない
 
 canonical保存後にthumbnail欠落・破損を検出した場合:
 - 通常同期中にserverが黙って再生成しない
 - 整合性異常として検出・記録する
-- clientまたは明示的な管理/修復処理から、同じ保存原画像に対応するthumbnailを再投入して修復する
-- 修復によってbusiness内容を勝手に変更しない。photoHash・写真順序・entityの意味的内容は維持する
+- clientまたは明示的な管理/修復処理から、同じ`photoId`の保存原画像に対応するthumbnailを再投入して修復する
+- 修復によってbusiness内容を勝手に変更しない。photoId・photoHash・写真順序・entityの意味的内容は維持する
 
-根拠: client生成thumbnailを正本とする責務を維持し、server側に画像変換実装・encoder差・quality差・version差を持ち込まないため。保存原画像が正常ならclientは同じ正本から再生成できるため、通常系と修復系を明確に分離する。
+根拠: client生成thumbnailを正本とする責務を維持し、server側に画像変換実装・encoder差・quality差・version差を持ち込まないため。
 
 ### 写真同期・cache
-- entity JSON=`photoHash + thumbnail + 写真順序`。原画像blobは別転送
-- Outboxで原画像blobを重複保持しない
-- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → blob upload → server検証 → entity Push → canonical参照確定
-- Pull/Full Resyncでは原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
+- entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
+- 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
+- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → photoId単位blob upload → server検証 → entity Push → canonical参照確定
+- Pull/Full Resyncでは保存原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
+- cache key/参照も`photoId`基準とし、同じphotoHashの別写真を同一cache entryとして扱わない
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
-
-#### 同一entity内の重複写真
-- 同一Box / Item / BoxLocation内では同一`photoHash`を複数保持しない
-- clientでは重複選択時に新規参照を追加せず、既存写真参照を再利用する。利用者エラーにはしない
-- 同一User内の別entityから同じ`photoHash`を参照することは許可
-- server payload内に同一entityの重複`photoHash`があれば`REJECTED`
-- serverは重複payloadを黙って正規化・削除・上書きしない
 
 #### 写真順序変更
 - 写真配列の並べ替えだけでもbusiness変更として扱う
 - clientで順序変更時に`updatedAt`更新、Outbox payload/contentHash再生成
 - server受理時は`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERT
-- 同じphotoHash集合でも順序が異なればcontentHashは異なる
+- 同じ写真集合でも順序が異なればcontentHashは異なる
 
 #### local original cache
 - local original cacheは正本ではなく再取得可能な内部cache
-- Business/canonicalのphotoHash参照が利用者から見える写真状態の正本
+- Business/canonicalの`photoId`参照が利用者から見える写真状態の正本
 - 写真削除・差し替え後も旧cache bytesは即時削除不要だがUIから不可視
 - cacheの存在だけで写真を自動復元しない
 - CONFLICTで写真が戻る場合は利用者がSERVER側canonicalを選択した結果として扱う
@@ -116,9 +128,17 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - 容量逼迫時の削除優先順: 未参照かつ古い → 未参照かつ新しい → 参照中かつ古い → 参照中かつ最近
 - Business / thumbnail / Outbox / SyncStateはcache整理対象にしない
 
+### 写真削除とserver保存原画像GC
+- 写真削除はentityから該当`photoId`を除外するbusiness変更
+- 削除された写真の保存原画像は即時物理削除必須ではない
+- serverでは削除後30日を目安にGC可能とする
+- GC判定は`photoId`単位で行い、photoHash参照数やhash共有を使わない
+- 同じphotoHashの別photoIdが存在していても、それぞれ独立して保持・GCする
+
 ### 写真枚数上限
 - Box / Item / BoxLocation とも0〜10枚
 - client UIは11枚目を追加させず、serverも10件超をREJECTED
+- 同一hash写真も独立写真として枚数に数える
 - local/online/offline/backup/restore/Push/Pull/Full Resyncで共通
 
 ### Outbox / Conflict / DELETE / UNASSIGNED
@@ -138,12 +158,13 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - revision/contentHash/Outbox/SyncState/Conflict/Full Resync snapshot-staging未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
-- photoHash、blob分離同期、オンデマンドcache、blob先行upload、user-scoped dedup、server hash再検証、canonical参照ベース30日GC未実装
+- `photoId`ベースの独立写真モデル未実装。photoHash識別・dedup前提を除去する必要あり
+- photoHashによるserver受信bytes再検証未実装
+- photoId単位のblob分離同期、オンデマンドcache、blob先行upload、30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
 - thumbnailを保存原画像WebPから生成する一方向pipeline未実装
-- 同一entity内のphotoHash重複をclientで既存参照再利用しserverでREJECTEDとするvalidation未実装
 - 写真順序変更をbusiness UPDATEとして同期する処理・test未実装
 - thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
 
@@ -166,9 +187,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **同一photoHashを複数entityが参照している場合、thumbnailもphotoHash単位で共通化するか、それとも各entity payload内に同じthumbnailを保持する現行方針を維持するかを確定する。**
+次の判断候補: **`photoId`を誰が生成するかを確定する。**
 
-現在はentity JSONに`photoHash + thumbnail + 写真順序`を保持する設計のため、同一User内で同じ写真を複数entityが参照するとthumbnail bytesが重複する。PhotoBlob側にthumbnailを集約するとpayloadは小さくできるが、Pull/Full Resyncやoffline-firstの依存構造が複雑になる。
+候補は、offline-firstを優先してclientがUUID等で生成しserverがそのIDを受理する方式と、serverがIDを発行してclient temporary IDを置換する方式。新規写真はofflineでも追加できる必要があるため、client生成IDを採用する方が自然な候補である。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
