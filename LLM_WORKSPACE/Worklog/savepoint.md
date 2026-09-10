@@ -66,27 +66,10 @@
 - thumbnail bytesはcontentHash対象外
 - serverはWebP decode、正寸法、400px上限、256 KiB上限を検証
 - Pull/Full Resyncではcanonical thumbnailを配信
+- thumbnailは撮影元Fileから直接生成せず、保存原画像WebPから生成する
+- EXIF補正は保存原画像生成時に完了し、thumbnail側では再解釈しない
 
-#### thumbnail生成元
-**確定:** thumbnailは撮影元Fileから直接生成せず、箱目録の保存原画像WebPから生成する。
-
-```text
-撮影元画像
-↓ EXIF Orientation補正
-保存原画像 WebP（長辺1600px / quality 0.85）
-↓ photoHash算出
-thumbnail WebP（長辺400px / quality 0.8）
-```
-
-規則:
-- EXIF Orientation補正は保存原画像生成時に完了させる
-- thumbnail生成処理では保存原画像を入力とし、撮影元画像のEXIFを再解釈しない
-- 保存原画像が400px以下の場合はthumbnail生成でも拡大しない
-- thumbnailは対応するphotoHashの保存原画像から派生した表示用データとして扱う
-- 同一photoHashに対応するcanonical thumbnailはentity payloadに保持し、serverは再生成しない
-- 現行の`makeThumbWebp(File)`が撮影元Fileを直接入力とする実装は、仕様実装時に保存原画像Blobを入力できる形へ変更対象とする
-
-根拠: 写真の正本・識別基準は保存原画像bytesとphotoHashであるため、thumbnailもその正本から派生させることで対応関係が一意になる。EXIF補正の二重処理を避け、撮影元画像を保持しない後続処理でも同じ生成経路を利用できる。
+根拠: 写真の正本・識別基準は保存原画像bytesとphotoHashであるため、thumbnailも同じ正本から派生させる。
 
 ### 写真同期・cache
 - entity JSON=`photoHash + thumbnail + 写真順序`。原画像blobは別転送
@@ -96,36 +79,37 @@ thumbnail WebP（長辺400px / quality 0.8）
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
 
 #### 同一entity内の重複写真
-**確定:** 同一Box / Item / BoxLocation内では同一`photoHash`を複数の写真として保持しない。
+- 同一Box / Item / BoxLocation内では同一`photoHash`を複数保持しない
+- clientでは重複選択時に新規参照を追加せず、既存写真参照を再利用する。利用者エラーにはしない
+- 同一User内の別entityから同じ`photoHash`を参照することは許可
+- server payload内に同一entityの重複`photoHash`があれば`REJECTED`
+- serverは重複payloadを黙って正規化・削除・上書きしない
 
-- clientで写真追加時に保存原画像を生成して`photoHash`を算出し、同一entityの写真配列に同じ`photoHash`が既にあれば新規参照を追加しない
-- 利用者操作としてはエラーにせず、既存写真参照をそのまま再利用する
-- 同一User内の別entityから同じ`photoHash`を参照することは許可する
-- 同一entity内で重複した`photoHash`を含むserver payloadは`REJECTED`とする
-- serverは重複payloadを黙って正規化・削除・上書きしない。clientとserverでcanonical内容が異なる状態を作らないためである
-- `photoHash`が同一なら保存原画像bytesも同一なので、同じ写真として扱う。thumbnailだけを別物として上書きする用途にはしない
+#### 写真順序変更
+**確定:** 写真配列の並べ替えだけでもbusiness変更として扱う。
 
-根拠: 同じ写真を同一entityに複数回並べる実用上の意味は薄く、10枚上限・順序変更・削除・代表画像判定を複雑にする。一方で利用者の重複選択を単純なエラーにすると操作感が悪いため、clientでは既存参照再利用、server境界では不正payloadをREJECTEDとする。
+- 写真順序はbusiness上有意であり、先頭写真は代表画像として利用可能
+- clientで順序変更した時点で`updatedAt`を更新し、Outbox payloadと`contentHash`を再生成する
+- server受理時は通常UPDATEと同様に`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERTを記録する
+- 順序変更だけを同期対象外にしない
+- 同じphotoHash集合でも順序が異なればcontentHashは異なる
+- 複数端末で同時に並べ替えた場合も通常のrevision/contentHash競合判定に従う
 
-#### local original cacheの意味
+根拠: 写真順序をbusiness dataとして扱い、代表画像も順序に依存するため。同期対象外にすると端末ごとに表示順・代表画像が食い違う。
+
+#### local original cache
 - local original cacheは正本ではなく再取得可能な内部cache
 - Business/canonicalのphotoHash参照が利用者から見える写真状態の正本
 - 写真削除・差し替え後も旧cache bytesは即時削除不要だがUIから不可視
 - cacheの存在だけで写真を自動復元しない
-- canonicalで同じphotoHashが再び必要な場合だけcacheを再利用可能
-- CONFLICTで写真が戻る場合は、利用者がSERVER側canonicalを選択した結果であり、cache自動復元ではない
-
-#### local original cache容量管理
-- 固定容量ではなく、ブラウザ/PWAのStorage Quotaに応じたbest-effort管理
-- `navigator.storage.estimate()` 等を利用可能なら容量管理に使用
-- original cacheだけを容量調整対象とし、Business / thumbnail / Outbox / SyncStateは削除しない
-- 削除優先順: 未参照かつ古い → 未参照かつ新しい → 参照中かつ古い → 参照中かつ最近
-- 固定MiB上限・固定保持日数は設けない
+- CONFLICTで写真が戻る場合は利用者がSERVER側canonicalを選択した結果として扱う
+- 固定容量ではなくブラウザ/PWAのStorage Quotaに応じたbest-effort管理
+- 容量逼迫時の削除優先順: 未参照かつ古い → 未参照かつ新しい → 参照中かつ古い → 参照中かつ最近
+- Business / thumbnail / Outbox / SyncStateはcache整理対象にしない
 
 ### 写真枚数上限
 - Box / Item / BoxLocation とも0〜10枚
 - client UIは11枚目を追加させず、serverも10件超をREJECTED
-- 写真順序はbusiness上有意。先頭写真を代表画像として利用可能
 - local/online/offline/backup/restore/Push/Pull/Full Resyncで共通
 
 ### Outbox / Conflict / DELETE / UNASSIGNED
@@ -149,8 +133,9 @@ thumbnail WebP（長辺400px / quality 0.8）
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
-- thumbnailを保存原画像WebPから生成する一方向pipeline未実装（現行は撮影元Fileから別生成）
+- thumbnailを保存原画像WebPから生成する一方向pipeline未実装
 - 同一entity内のphotoHash重複をclientで既存参照再利用しserverでREJECTEDとするvalidation未実装
+- 写真順序変更をbusiness UPDATEとして同期する処理・test未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -171,9 +156,9 @@ thumbnail WebP（長辺400px / quality 0.8）
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **写真の並べ替えだけを行った場合もbusiness変更として`updatedAt` / `revision` / `contentHash` / `syncSeq`を更新するかを確定する。**
+次の判断候補: **thumbnail自体が破損・欠落しているが、photoHashと保存原画像Blobはserverに正常に存在する場合の修復方針を決める。**
 
-写真順序はbusiness上有意かつ先頭写真を代表画像に利用可能としているため、順序変更は内容変更として扱うのが一貫する候補である。
+候補は、(A) entity payloadを不正として通常同期では受理せずclientに再生成を要求する、(B) serverが保存原画像からthumbnailを再生成して修復する、の2系統。これまでの「client thumbnailが正本、serverは再生成しない」方針との整合を確認する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
