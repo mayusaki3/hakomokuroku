@@ -68,6 +68,20 @@ Photo
 
 根拠: 箱目録では写真は共有資産ではなく、各Box / Item / BoxLocationに付随する記録である。同じ画像内容でも「どの記録に付けた写真か」が重要であり、重複排除による容量削減より、独立性・削除/並べ替え/同期の分かりやすさを優先する。
 
+#### photoId生成と衝突処理
+**確定:** `photoId`はclientがUUIDで生成し、serverはそのIDをそのまま受理する。衝突時はserver既存写真を上書きしない。
+
+- offlineでも写真追加できるよう、写真作成時点でclientがUUIDを生成する
+- `photoId`は認証済みUser scope内で一意であることを要求する
+- serverに同一`photoId`が存在しない場合は通常登録する
+- 同一`photoId`かつ同一`photoHash`の場合は、同一登録の再送・応答喪失等として`UNCHANGED`相当で扱える
+- 同一`photoId`かつ異なる`photoHash`の場合は`REJECTED / PHOTO_ID_COLLISION / retryable=false`とし、既存server写真を上書きしない
+- 同一`photoHash`でも`photoId`が異なれば正常な別写真として扱う
+- collision受信後、clientは新UUIDを生成し、旧`photoId`から新`photoId`へlocal Business参照、保存原画像cache、Outbox等を同一IndexedDB transactionで付け替えて再Pushする
+- `photoId`は再生成後もserver側に存在する既存写真と衝突しないことを再確認する。再衝突時は同処理を繰り返す
+
+根拠: UUID衝突確率は極めて低いが、同期正当性を確率だけに依存させない。offline-firstを維持しつつ、万一のID衝突で別写真を誤上書きしないため。
+
 ### 保存原画像
 - client生成WebPを「箱目録における保存原画像」とする
 - WebP、長辺1600px上限、quality 0.85、拡大なし、EXIF Orientation補正、最大5 MiB
@@ -159,6 +173,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - `photoId`ベースの独立写真モデル未実装。photoHash識別・dedup前提を除去する必要あり
+- client UUID生成photoIdとPHOTO_ID_COLLISION検出・再ID付与処理未実装
 - photoHashによるserver受信bytes再検証未実装
 - photoId単位のblob分離同期、オンデマンドcache、blob先行upload、30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
@@ -187,9 +202,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **`photoId`を誰が生成するかを確定する。**
+次の判断候補: **写真をentity payload内の埋め込み構造として扱うか、独立した同期entityとして扱うかを確定する。**
 
-候補は、offline-firstを優先してclientがUUID等で生成しserverがそのIDを受理する方式と、serverがIDを発行してclient temporary IDを置換する方式。新規写真はofflineでも追加できる必要があるため、client生成IDを採用する方が自然な候補である。
+現在はBox / Item / BoxLocationのpayload内に`photoId + photoHash + thumbnail + 順序`を持つ前提だが、`photoId`を独立IDとして導入したため、写真自身にrevision/contentHash/syncSeqを持たせる必要があるかを整理する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
