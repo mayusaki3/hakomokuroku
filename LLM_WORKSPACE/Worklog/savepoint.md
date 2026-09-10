@@ -168,6 +168,20 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 
 根拠: blob-first uploadでは親entity Pushが失敗・中断すると未参照Blobが残るため、参照成立経験の有無に関係なく回収可能にする必要がある。server時刻で起算することでclient時計に依存せず、Outbox/local保存原画像からの再uploadを許すことで同期の正当性も維持する。
 
+#### GC済みBlobを親entityが参照した場合
+**確定:** 親entity Pushが参照する`photoId`の保存原画像Blobがserverに存在しない場合、親entityをcanonicalへ受理せず、再upload可能なエラーとして返す。
+
+- server応答は`REJECTED / PHOTO_BLOB_NOT_AVAILABLE / retryable=true`とする
+- serverはBlob欠落を理由に写真参照だけを黙って削除したり、thumbnailのみで親entityを受理したりしない
+- clientは該当`photoId`のlocal保存原画像を確認し、存在する場合は同じ`photoId` / `photoHash`でBlobを再uploadする
+- serverは再upload時にも保存原画像仕様と`photoHash`を通常どおり再検証する
+- Blob再upload成功後、clientは同じ親entity Outboxを再Pushする。`baseRevision`や`outboxVersion`をBlob欠落だけを理由に変更しない
+- 親entity Pushが成功するまでOutboxを削除しない
+- local保存原画像自体が失われていて再upload不能な場合は自動的に写真を削除して同期成功扱いにせず、利用者対応が必要な同期エラーとして残す
+- Blob再upload後に競合や別validation errorが発生した場合は、それぞれ通常の同期規則に従う
+
+根拠: 30日GCと無期限保持するOutboxを両立させつつ、保存原画像が存在しない不完全なcanonical状態を作らないため。Blob欠落はserver側で再試行可能な前提条件不足であり、同じphotoIdのBlobを再投入すれば元の業務変更を維持したまま同期を継続できる。
+
 ### 写真枚数上限
 - Box / Item / BoxLocation とも0〜10枚
 - client UIは11枚目を追加させず、serverも10件超をREJECTED
@@ -197,6 +211,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - 写真差し替え時に新photoIdを発行して旧削除＋新追加として扱う処理未実装
 - photoHashによるserver受信bytes再検証未実装
 - photoId単位のblob分離同期、オンデマンドcache、blob先行upload、`unreferencedSince`による30日GC未実装
+- `PHOTO_BLOB_NOT_AVAILABLE`検出、同photoId Blob再upload、同一Outbox再Pushのretry flow未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
@@ -223,9 +238,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **GC済みの保存原画像Blobを親entity Pushが参照した場合のserver応答とclient再upload手順を明示的に確定する。**
+次の判断候補: **親entityのpayloadに含める写真配列のcanonicalなcontentHash計算形式を確定する。**
 
-推奨候補は、親entity Pushを`REJECTED / PHOTO_BLOB_NOT_AVAILABLE / retryable=true`とし、clientが該当photoIdの保存原画像を再uploadしてから同じ親entity Outboxを再Pushする方式。
+候補として、写真配列について`photoId + photoHash`を配列順どおりhash対象にし、thumbnail bytesは既定どおり除外する方式を推奨候補とする。これにより同一画像の別photoId、写真追加/削除/差し替え/並べ替えをすべてbusiness変更として検出できる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
