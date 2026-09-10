@@ -102,6 +102,21 @@ Box / Item / BoxLocation
 
 根拠: 箱目録では写真単体を独立して管理・検索・同期する業務要件がなく、写真のライフサイクルは常に親entityに従う。Photoを独立同期entityにするとrevision/conflict/log/paging依存が増えるため、必要性のない複雑化を避ける。
 
+#### 写真差し替え
+**確定:** 既存写真の画像内容を差し替える場合は同じ`photoId`を維持せず、新しい`photoId`を生成して旧写真削除＋新写真追加として扱う。
+
+- 旧写真の`photoId` / `photoHash`は変更しない
+- clientは新しい保存原画像を生成し、新UUIDの`photoId`と新しい`photoHash`を割り当てる
+- 親entityの写真配列から旧`photoId`を除外し、新`photoId`を原則として同じ配列位置へ追加する
+- 差し替え全体は親entityの1回のbusiness UPDATEとして扱う
+- 親entityの`updatedAt`、Outbox payload、`contentHash`を更新する
+- server受理時は親entityの`revision + 1 / serverUpdatedAt / syncSeq / SyncChangeLog UPSERT`を更新する
+- 旧`photoId`の保存原画像は削除済み写真と同じGC対象になる
+- local cacheに旧`photoId`の保存原画像が残っていてもUIからは不可視とし、自動復元しない
+- 新旧の`photoHash`が偶然同一であっても、差し替え操作で新`photoId`を発行した以上は別写真として扱い、dedupしない
+
+根拠: `photoId`は「その写真記録そのもの」を識別するIDであり、画像内容が変わった後も同じIDを使うと、保存原画像cache・GC・hash整合性・衝突処理の意味が曖昧になる。旧写真と新写真を明確に分離することで、写真ライフサイクルと同期処理を単純化する。
+
 ### 保存原画像
 - client生成WebPを「箱目録における保存原画像」とする
 - WebP、長辺1600px上限、quality 0.85、拡大なし、EXIF Orientation補正、最大5 MiB
@@ -195,6 +210,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - `photoId`ベースの独立写真要素モデル未実装。photoHash識別・dedup前提を除去する必要あり
 - client UUID生成photoIdとPHOTO_ID_COLLISION検出・再ID付与処理未実装
 - Photoを独立同期entityにせず親payload内で同期する構造未実装
+- 写真差し替え時に新photoIdを発行して旧削除＋新追加として扱う処理未実装
 - photoHashによるserver受信bytes再検証未実装
 - photoId単位のblob分離同期、オンデマンドcache、blob先行upload、30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
@@ -223,7 +239,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **親entity内で写真を差し替える場合、同じ`photoId`を維持して`photoHash`だけ変更するか、新しい`photoId`を発行して旧写真を削除＋新写真追加として扱うかを確定する。**
+次の判断候補: **保存原画像Blob upload済みだが親entity Pushが長期間成功しない場合、未参照BlobのGC起算点をいつにするかを確定する。**
+
+候補は、Blob upload完了server時刻から未参照状態を開始する方式と、親entity参照が一度成立してから外れた時だけGC対象にする方式。offline/outbox再送との整合を考慮して決定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
