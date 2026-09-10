@@ -62,17 +62,36 @@
 
 ### thumbnail
 - client生成を正本としserverは再生成しない
-- WebP、長辺400px上限、quality 0.8、拡大なし、EXIF Orientation補正、最大256 KiB
+- WebP、長辺400px上限、quality 0.8、拡大なし、最大256 KiB
 - thumbnail bytesはcontentHash対象外
 - serverはWebP decode、正寸法、400px上限、256 KiB上限を検証
 - Pull/Full Resyncではcanonical thumbnailを配信
 
-根拠: offline-firstで登録直後から必要で、既存`makeThumbWebp()`の挙動をそのまま仕様化できるため。
+#### thumbnail生成元
+**確定:** thumbnailは撮影元Fileから直接生成せず、箱目録の保存原画像WebPから生成する。
+
+```text
+撮影元画像
+↓ EXIF Orientation補正
+保存原画像 WebP（長辺1600px / quality 0.85）
+↓ photoHash算出
+thumbnail WebP（長辺400px / quality 0.8）
+```
+
+規則:
+- EXIF Orientation補正は保存原画像生成時に完了させる
+- thumbnail生成処理では保存原画像を入力とし、撮影元画像のEXIFを再解釈しない
+- 保存原画像が400px以下の場合はthumbnail生成でも拡大しない
+- thumbnailは対応するphotoHashの保存原画像から派生した表示用データとして扱う
+- 同一photoHashに対応するcanonical thumbnailはentity payloadに保持し、serverは再生成しない
+- 現行の`makeThumbWebp(File)`が撮影元Fileを直接入力とする実装は、仕様実装時に保存原画像Blobを入力できる形へ変更対象とする
+
+根拠: 写真の正本・識別基準は保存原画像bytesとphotoHashであるため、thumbnailもその正本から派生させることで対応関係が一意になる。EXIF補正の二重処理を避け、撮影元画像を保持しない後続処理でも同じ生成経路を利用できる。
 
 ### 写真同期・cache
 - entity JSON=`photoHash + thumbnail + 写真順序`。原画像blobは別転送
 - Outboxで原画像blobを重複保持しない
-- upload順=保存原画像生成 → photoHash算出 → blob upload → server検証 → entity Push → canonical参照確定
+- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → blob upload → server検証 → entity Push → canonical参照確定
 - Pull/Full Resyncでは原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
 
@@ -85,22 +104,11 @@
 - CONFLICTで写真が戻る場合は、利用者がSERVER側canonicalを選択した結果であり、cache自動復元ではない
 
 #### local original cache容量管理
-**確定:** 固定容量ではなく、ブラウザ/PWAのStorage Quotaに応じたbest-effort管理とする。
-
-- `navigator.storage.estimate()` 等で利用可能容量・使用量を取得できる場合は、その情報を容量管理に利用する
-- original cacheだけを容量調整対象とし、Business / thumbnail / Outbox / SyncStateはcache整理のために削除しない
-- 容量逼迫時は以下の優先順でoriginal cacheを削除可能
-  1. 未参照かつ最終利用が古いcache
-  2. 未参照かつ比較的新しいcache
-  3. canonical参照中だが最終利用が古いcache
-  4. canonical参照中かつ最近利用したcache
-- canonical参照中cacheも再取得可能なため、必要なら削除してよい。ただし未参照cacheを先に削除する
-- original cache削除でBusiness/canonical/thumbnail/同期状態は変更しない
-- 削除済みoriginalが必要になった場合、ONLINEなら再取得し、OFFLINEならthumbnailを表示して原画像未取得状態を示す
+- 固定容量ではなく、ブラウザ/PWAのStorage Quotaに応じたbest-effort管理
+- `navigator.storage.estimate()` 等を利用可能なら容量管理に使用
+- original cacheだけを容量調整対象とし、Business / thumbnail / Outbox / SyncStateは削除しない
+- 削除優先順: 未参照かつ古い → 未参照かつ新しい → 参照中かつ古い → 参照中かつ最近
 - 固定MiB上限・固定保持日数は設けない
-- Storage Quota APIが利用できない環境でも、original cacheを機能必須状態にせずbest-effortで運用する
-
-根拠: ブラウザ/PWAの実際の保存可能量は端末・OS・ブラウザで異なるため固定容量は過大/過小になりやすい。originalはserverから再取得可能なので、正本データを保護したまま端末容量に適応するcacheとして扱う方が安全で単純。
 
 ### 写真枚数上限
 - Box / Item / BoxLocation とも0〜10枚
@@ -129,6 +137,7 @@
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
+- thumbnailを保存原画像WebPから生成する一方向pipeline未実装（現行は撮影元Fileから別生成）
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -149,9 +158,9 @@
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **写真追加時、thumbnail生成は撮影元画像から直接行うか、保存原画像WebPから行うかを正式に統一する。**
+次の判断候補: **同一entity内で同じphotoHashを複数回登録することを許可するかを確定する。**
 
-既存実装では`downscaleToWebp()`と`makeThumbWebp()`がそれぞれ入力FileからEXIF補正して生成するため、同じ撮影元から別々に生成される。photoHashは保存原画像bytesを基準とするため、thumbnailが保存原画像由来である必要があるかを次に判断する。
+写真配列の順序はbusiness上有意だが、同じ写真を同じBox/Item/BoxLocationへ複数回並べる実用上の意味は薄い。一方、同じphotoHashを異なるentityから参照することは同一User内で許可済みである。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
