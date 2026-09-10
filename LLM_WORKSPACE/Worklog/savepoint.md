@@ -95,6 +95,18 @@ thumbnail WebP（長辺400px / quality 0.8）
 - Pull/Full Resyncでは原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
 
+#### 同一entity内の重複写真
+**確定:** 同一Box / Item / BoxLocation内では同一`photoHash`を複数の写真として保持しない。
+
+- clientで写真追加時に保存原画像を生成して`photoHash`を算出し、同一entityの写真配列に同じ`photoHash`が既にあれば新規参照を追加しない
+- 利用者操作としてはエラーにせず、既存写真参照をそのまま再利用する
+- 同一User内の別entityから同じ`photoHash`を参照することは許可する
+- 同一entity内で重複した`photoHash`を含むserver payloadは`REJECTED`とする
+- serverは重複payloadを黙って正規化・削除・上書きしない。clientとserverでcanonical内容が異なる状態を作らないためである
+- `photoHash`が同一なら保存原画像bytesも同一なので、同じ写真として扱う。thumbnailだけを別物として上書きする用途にはしない
+
+根拠: 同じ写真を同一entityに複数回並べる実用上の意味は薄く、10枚上限・順序変更・削除・代表画像判定を複雑にする。一方で利用者の重複選択を単純なエラーにすると操作感が悪いため、clientでは既存参照再利用、server境界では不正payloadをREJECTEDとする。
+
 #### local original cacheの意味
 - local original cacheは正本ではなく再取得可能な内部cache
 - Business/canonicalのphotoHash参照が利用者から見える写真状態の正本
@@ -138,6 +150,7 @@ thumbnail WebP（長辺400px / quality 0.8）
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
 - thumbnailを保存原画像WebPから生成する一方向pipeline未実装（現行は撮影元Fileから別生成）
+- 同一entity内のphotoHash重複をclientで既存参照再利用しserverでREJECTEDとするvalidation未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -158,9 +171,9 @@ thumbnail WebP（長辺400px / quality 0.8）
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **同一entity内で同じphotoHashを複数回登録することを許可するかを確定する。**
+次の判断候補: **写真の並べ替えだけを行った場合もbusiness変更として`updatedAt` / `revision` / `contentHash` / `syncSeq`を更新するかを確定する。**
 
-写真配列の順序はbusiness上有意だが、同じ写真を同じBox/Item/BoxLocationへ複数回並べる実用上の意味は薄い。一方、同じphotoHashを異なるentityから参照することは同一User内で許可済みである。
+写真順序はbusiness上有意かつ先頭写真を代表画像に利用可能としているため、順序変更は内容変更として扱うのが一貫する候補である。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
