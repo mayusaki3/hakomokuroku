@@ -78,9 +78,29 @@ Photo
 - 同一`photoId`かつ異なる`photoHash`の場合は`REJECTED / PHOTO_ID_COLLISION / retryable=false`とし、既存server写真を上書きしない
 - 同一`photoHash`でも`photoId`が異なれば正常な別写真として扱う
 - collision受信後、clientは新UUIDを生成し、旧`photoId`から新`photoId`へlocal Business参照、保存原画像cache、Outbox等を同一IndexedDB transactionで付け替えて再Pushする
-- `photoId`は再生成後もserver側に存在する既存写真と衝突しないことを再確認する。再衝突時は同処理を繰り返す
+- 再衝突時は同処理を繰り返す
 
 根拠: UUID衝突確率は極めて低いが、同期正当性を確率だけに依存させない。offline-firstを維持しつつ、万一のID衝突で別写真を誤上書きしないため。
+
+#### Photoの同期単位
+**確定:** Photoは独立した同期entityにはせず、Box / Item / BoxLocationのpayload内に埋め込まれる写真要素として扱う。
+
+- `photoId`は写真要素を安定して識別するために持つが、Photo自身に`revision / contentHash / syncSeq / SyncChangeLog`は持たせない
+- 同期・競合の単位は親entity（Box / Item / BoxLocation）のままとする
+- 写真追加・削除・差し替え・並べ替えは親entityのbusiness変更として扱う
+- それらの変更時は親entityの`updatedAt`、Outbox payload、`contentHash`を更新し、server受理時に親の`revision + 1 / serverUpdatedAt / syncSeq / SyncChangeLog UPSERT`を更新する
+- 保存原画像Blobだけは`photoId`で別転送・別保存するが、これは同期entityではなく添付blobとして扱う
+
+概念構造:
+```text
+Box / Item / BoxLocation
+└─ photos[]
+   ├─ photoId
+   ├─ photoHash
+   └─ thumbnail
+```
+
+根拠: 箱目録では写真単体を独立して管理・検索・同期する業務要件がなく、写真のライフサイクルは常に親entityに従う。Photoを独立同期entityにするとrevision/conflict/log/paging依存が増えるため、必要性のない複雑化を避ける。
 
 ### 保存原画像
 - client生成WebPを「箱目録における保存原画像」とする
@@ -107,21 +127,21 @@ Photo
 通常Push時:
 - thumbnailが欠落・破損・仕様違反ならentity payloadを`REJECTED`とする
 - 正常な保存原画像と`photoHash`がserverに存在していてもserverはthumbnailを生成・差し替えしない
-- clientは同じ`photoId`の保存原画像からthumbnailを再生成し、entity Pushを再実行する
+- clientは同じ`photoId`の保存原画像からthumbnailを再生成し、親entity Pushを再実行する
 - 先行upload済みの正常な保存原画像は保持し、thumbnail不正だけを理由に削除しない
 
 canonical保存後にthumbnail欠落・破損を検出した場合:
 - 通常同期中にserverが黙って再生成しない
 - 整合性異常として検出・記録する
 - clientまたは明示的な管理/修復処理から、同じ`photoId`の保存原画像に対応するthumbnailを再投入して修復する
-- 修復によってbusiness内容を勝手に変更しない。photoId・photoHash・写真順序・entityの意味的内容は維持する
+- 修復によってbusiness内容を勝手に変更しない。photoId・photoHash・写真順序・親entityの意味的内容は維持する
 
 根拠: client生成thumbnailを正本とする責務を維持し、server側に画像変換実装・encoder差・quality差・version差を持ち込まないため。
 
 ### 写真同期・cache
-- entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
+- 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
-- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → photoId単位blob upload → server検証 → entity Push → canonical参照確定
+- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → photoId単位blob upload → server検証 → 親entity Push → canonical参照確定
 - Pull/Full Resyncでは保存原画像を取得せず、必要時オンデマンド取得してuser別local DBへcache
 - cache key/参照も`photoId`基準とし、同じphotoHashの別写真を同一cache entryとして扱わない
 - cache未取得/原画像取得失敗はentity同期失敗ではない。offline時はcache済み原画像、未取得ならthumbnail表示
@@ -129,7 +149,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 #### 写真順序変更
 - 写真配列の並べ替えだけでもbusiness変更として扱う
 - clientで順序変更時に`updatedAt`更新、Outbox payload/contentHash再生成
-- server受理時は`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERT
+- server受理時は親entityの`revision + 1`、`serverUpdatedAt`更新、`syncSeq`発行、SyncChangeLogへUPSERT
 - 同じ写真集合でも順序が異なればcontentHashは異なる
 
 #### local original cache
@@ -143,7 +163,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - Business / thumbnail / Outbox / SyncStateはcache整理対象にしない
 
 ### 写真削除とserver保存原画像GC
-- 写真削除はentityから該当`photoId`を除外するbusiness変更
+- 写真削除は親entityから該当`photoId`を除外するbusiness変更
 - 削除された写真の保存原画像は即時物理削除必須ではない
 - serverでは削除後30日を目安にGC可能とする
 - GC判定は`photoId`単位で行い、photoHash参照数やhash共有を使わない
@@ -172,15 +192,16 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - revision/contentHash/Outbox/SyncState/Conflict/Full Resync snapshot-staging未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
-- `photoId`ベースの独立写真モデル未実装。photoHash識別・dedup前提を除去する必要あり
+- `photoId`ベースの独立写真要素モデル未実装。photoHash識別・dedup前提を除去する必要あり
 - client UUID生成photoIdとPHOTO_ID_COLLISION検出・再ID付与処理未実装
+- Photoを独立同期entityにせず親payload内で同期する構造未実装
 - photoHashによるserver受信bytes再検証未実装
 - photoId単位のblob分離同期、オンデマンドcache、blob先行upload、30日GC未実装
 - thumbnail 400px/256 KiB server検証、保存原画像1600px/5 MiB server検証未実装
 - Box/Item/BoxLocation写真最大10枚の共通validation未実装
 - local original cacheのQuota連動best-effort管理と優先削除未実装
 - thumbnailを保存原画像WebPから生成する一方向pipeline未実装
-- 写真順序変更をbusiness UPDATEとして同期する処理・test未実装
+- 写真順序変更を親business UPDATEとして同期する処理・test未実装
 - thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
 
 ## 5. ロードマップ
@@ -202,9 +223,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **写真をentity payload内の埋め込み構造として扱うか、独立した同期entityとして扱うかを確定する。**
-
-現在はBox / Item / BoxLocationのpayload内に`photoId + photoHash + thumbnail + 順序`を持つ前提だが、`photoId`を独立IDとして導入したため、写真自身にrevision/contentHash/syncSeqを持たせる必要があるかを整理する。
+次の判断候補: **親entity内で写真を差し替える場合、同じ`photoId`を維持して`photoHash`だけ変更するか、新しい`photoId`を発行して旧写真を削除＋新写真追加として扱うかを確定する。**
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
