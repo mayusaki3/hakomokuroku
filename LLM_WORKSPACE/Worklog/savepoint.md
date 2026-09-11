@@ -144,6 +144,20 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - clientまたは明示的な管理/修復処理から、同じ`photoId`の保存原画像に対応するthumbnailを再投入して修復する
 - 修復によってbusiness内容を勝手に変更しない。photoId・photoHash・写真順序・親entityの意味的内容は維持する
 
+#### thumbnail単独修復の同期扱い
+**確定:** thumbnailのみの再生成・修復はbusiness変更ではなく派生表示データの修復として扱う。
+
+- thumbnail単独修復では親entityの`updatedAt / revision / syncSeq / contentHash`を変更しない
+- thumbnail修復を理由に親entityのSyncChangeLog UPSERTを発行しない
+- thumbnailは`photoId`単位の専用取得APIから最新canonical thumbnailを取得可能にする
+- Pull / Full Resyncで親entityを取得する場合は、その時点の最新canonical thumbnailをpayloadへ含める
+- 通常Pullだけでthumbnail単独修復を即時に全deviceへ通知・配布することは保証しない
+- clientは表示時、thumbnail欠落/破損検出時、または明示的な再取得操作で`photoId`単位に最新thumbnailを取得してlocal表示データを更新できる
+- thumbnail専用取得・修復APIも認証済みUser scopeをserverが確定し、他UserのphotoIdを取得・更新できないようにする
+- thumbnail更新はphotoId/photoHash/写真順序などbusiness dataを変更しない
+
+根拠: thumbnailはcontentHash対象外の派生表示データであり、その修復をbusiness revision/conflictへ混入させると不要な競合が発生する。一方、修復後の表示データを取得する経路は必要なため、親entityのbusiness同期とは分離したphotoId単位の取得経路を設ける。
+
 ### 写真同期・cache
 - 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
@@ -235,6 +249,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - thumbnailを保存原画像WebPから生成する一方向pipeline未実装
 - 写真順序変更を親business UPDATEとして同期する処理・test未実装
 - thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
+- thumbnail単独修復をbusiness revisionから分離し、photoId単位で最新thumbnailを再取得する経路未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -255,9 +270,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **写真のthumbnailだけを再生成・修復した場合、親entityの`updatedAt / revision / syncSeq`を変更するかを確定する。**
+次の判断候補: **thumbnail単独修復を他deviceがいつ再取得するか、cache freshness規則をどこまでv0.8で保証するかを確定する。**
 
-既にthumbnail bytesはcontentHash対象外と確定したため、business変更ではなく派生表示データの修復として扱い、親entityの`updatedAt / revision / syncSeq`を変更しない方式を推奨候補とする。ただしPull/Full Resyncで新thumbnailを配布するための伝播方法を別途定義する必要がある。
+推奨候補は、通常表示ではlocal thumbnailを優先し、欠落/破損時は即時再取得、利用者の明示的refresh時は再取得可能とする。正常に表示できているthumbnailについて定期pollingやTTLによる自動更新はv0.8では行わず、Full Resyncまたは親entityが別business変更で再取得された時に最新canonicalへ更新する方式。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
