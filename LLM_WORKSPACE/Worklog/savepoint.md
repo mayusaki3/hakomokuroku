@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-10
+更新: 2026-09-11
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -43,6 +43,22 @@
 - RFC3339/ISO8601 offset必須、server保存UTC milliseconds。形式が有効なら極端な未来/過去でも補正しない
 - contentHashはbusiness上の意味的内容だけ。timestamp値/server metadata/userId/entity idは対象外、active/deleted状態は対象
 - deterministic JSON + SHA-256相当
+- 写真配列は各要素の`photoId + photoHash`のみを、親entity内の配列順そのままでcontentHash対象にする
+- thumbnail bytesおよびthumbnailそのものの再生成差はcontentHash対象外とする
+- 写真の追加・削除・差し替え・並べ替えは、`photoId`または配列順が変化するためcontentHashが変化する
+- 同一画像で`photoHash`が同じでも`photoId`が異なれば別写真としてhash結果も異なる
+
+写真部分のcanonical概念:
+```json
+{
+  "photos": [
+    { "photoId": "A", "photoHash": "H1" },
+    { "photoId": "B", "photoHash": "H2" }
+  ]
+}
+```
+
+根拠: 写真の論理同一性は`photoId`、画像内容の整合性は`photoHash`、写真順序もbusiness dataとして確定済みである。一方thumbnailは表示用派生データであり、再生成やencoder差をbusiness conflictにしないためhash対象から除外する。
 
 ### 写真モデル / photoId / photoHash
 **確定:** 写真の重複排除は行わず、写真ごとに独立した`photoId`を持つ。`photoHash`は写真の論理IDではなく、保存原画像bytesの整合性確認・内容識別に使用する。
@@ -209,6 +225,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - client UUID生成photoIdとPHOTO_ID_COLLISION検出・再ID付与処理未実装
 - Photoを独立同期entityにせず親payload内で同期する構造未実装
 - 写真差し替え時に新photoIdを発行して旧削除＋新追加として扱う処理未実装
+- 写真配列`photoId + photoHash`を順序付きでcanonical contentHashへ反映しthumbnailを除外する処理未実装
 - photoHashによるserver受信bytes再検証未実装
 - photoId単位のblob分離同期、オンデマンドcache、blob先行upload、`unreferencedSince`による30日GC未実装
 - `PHOTO_BLOB_NOT_AVAILABLE`検出、同photoId Blob再upload、同一Outbox再Pushのretry flow未実装
@@ -238,9 +255,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **親entityのpayloadに含める写真配列のcanonicalなcontentHash計算形式を確定する。**
+次の判断候補: **写真のthumbnailだけを再生成・修復した場合、親entityの`updatedAt / revision / syncSeq`を変更するかを確定する。**
 
-候補として、写真配列について`photoId + photoHash`を配列順どおりhash対象にし、thumbnail bytesは既定どおり除外する方式を推奨候補とする。これにより同一画像の別photoId、写真追加/削除/差し替え/並べ替えをすべてbusiness変更として検出できる。
+既にthumbnail bytesはcontentHash対象外と確定したため、business変更ではなく派生表示データの修復として扱い、親entityの`updatedAt / revision / syncSeq`を変更しない方式を推奨候補とする。ただしPull/Full Resyncで新thumbnailを配布するための伝播方法を別途定義する必要がある。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
