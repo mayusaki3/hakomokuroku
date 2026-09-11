@@ -158,6 +158,20 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 
 根拠: thumbnailはcontentHash対象外の派生表示データであり、その修復をbusiness revision/conflictへ混入させると不要な競合が発生する。一方、修復後の表示データを取得する経路は必要なため、親entityのbusiness同期とは分離したphotoId単位の取得経路を設ける。
 
+#### thumbnail cache freshness
+**確定:** v0.8では正常なlocal thumbnailにTTLや定期pollingを設けず、必要時だけ最新canonical thumbnailを再取得する。
+
+- 正常に表示できるlocal thumbnailは通常表示でそのまま使用する
+- local thumbnailが欠落または破損している場合は、ONLINEなら`photoId`単位で最新thumbnailを即時再取得する
+- 利用者の明示的なrefresh操作では、正常表示中でも最新thumbnailを再取得可能にする
+- Full Resyncで親entityを再構築する際は、その時点の最新canonical thumbnailへ更新する
+- 親entityが別のbusiness変更によるPull/取得対象になった場合、そのpayloadに含まれる最新canonical thumbnailでlocal表示データを更新する
+- 正常表示中のthumbnailについて、v0.8ではTTL満了による自動再取得・定期polling・thumbnail専用background同期は行わない
+- OFFLINE時にthumbnailが欠落/破損している場合は自動取得できないため、取得不能表示または既存の利用可能な表示へfallbackし、ONLINE復帰後に再取得可能とする
+- thumbnail freshnessの遅延はbusiness同期状態や親entityのrevision/contentHashには影響しない
+
+根拠: thumbnailは派生表示データであり、即時整合性をbusiness同期と同等に保証する必要はない。TTL/pollingを導入すると通信・状態管理・再試行が増えるため、v0.8では欠落/破損・明示refresh・Full Resync・親entity再取得という自然な更新点だけで最新化する。
+
 ### 写真同期・cache
 - 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
@@ -250,6 +264,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - 写真順序変更を親business UPDATEとして同期する処理・test未実装
 - thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
 - thumbnail単独修復をbusiness revisionから分離し、photoId単位で最新thumbnailを再取得する経路未実装
+- thumbnail正常時はTTL/pollingなし、欠落/破損・明示refresh・Full Resync・親entity再取得時のみ最新化するcache freshness規則未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -270,9 +285,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **thumbnail単独修復を他deviceがいつ再取得するか、cache freshness規則をどこまでv0.8で保証するかを確定する。**
+次の判断候補: **thumbnail専用取得APIで、正常なlocal thumbnailの再取得時に無駄なbytes転送を避けるためのHTTP cache validationをv0.8で導入するかを確定する。**
 
-推奨候補は、通常表示ではlocal thumbnailを優先し、欠落/破損時は即時再取得、利用者の明示的refresh時は再取得可能とする。正常に表示できているthumbnailについて定期pollingやTTLによる自動更新はv0.8では行わず、Full Resyncまたは親entityが別business変更で再取得された時に最新canonicalへ更新する方式。
+推奨候補は、thumbnail bytesから生成したHTTP `ETag`を返し、clientが明示refresh等で既存thumbnailを持つ場合は`If-None-Match`を送る方式。ETagはbusiness `contentHash`とは別物で、thumbnail修復によってETagだけが変化する。serverが同一なら`304 Not Modified`、変更済みなら新しいWebPを返す。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
