@@ -119,6 +119,19 @@
 - serverはWebP decode、正寸法、1600px上限、5 MiB上限、hash一致を検証し、通常フローでは再変換しない
 - 保存原画像は`photoId`単位で保持し、同一hashでも別`photoId`なら別写真として保存する
 
+#### 保存原画像オンデマンド取得APIの参照制約
+**確定:** 保存原画像のオンデマンド取得APIもthumbnail専用取得APIと同じ認可規則を適用し、認証中Userの現在canonical親entityから参照されている`photoId`だけ取得可能とする。
+
+- 現在canonicalのBox / Item / BoxLocationのいずれかから参照されている写真のみ保存原画像を取得可能とする
+- 親entityから削除済みのphotoId、差し替えで外れた旧photoId、親entity Push未成立のorphan photoIdは取得対象にしない
+- 対象Userに存在しないphotoId、他UserのphotoId、未参照photoIdはいずれも外部応答上は`404 Not Found`相当として扱い、存在有無・保存状態・GC状態を区別して漏らさない
+- 認可判定は認証session/tokenからserverが確定したUser scopeとcanonical参照状態で行い、client payloadでUser scopeを指定させない
+- canonical参照成立後は通常どおり取得可能になり、canonical参照が解除された時点で取得不可になる
+- local cacheに旧保存原画像が残っている場合でも、それはdevice内部cacheでありserver取得権限を延長しない
+- Outbox再送やGC後復旧に用いるBlob upload/re-upload経路は保存原画像取得APIとは分離し、orphan photoIdを取得可能にする理由にはしない
+
+根拠: thumbnailと保存原画像で認可モデルを統一し、利用中のcanonical business dataだけを取得対象にすることで、削除済み写真・orphan Blob・他User写真の存在推測を防ぐ。Outbox復旧は取得ではなく再upload経路で処理するため、未参照Blobの読み出しを許可する必要はない。
+
 ### thumbnail
 - client生成を正本としserverは再生成しない
 - WebP、長辺400px上限、quality 0.8、拡大なし、最大256 KiB
@@ -295,6 +308,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - thumbnail正常時はTTL/pollingなし、欠落/破損・明示refresh・Full Resync・親entity再取得時のみ最新化するcache freshness規則未実装
 - thumbnail専用取得APIの`ETag / If-None-Match / 304` conditional request未実装
 - thumbnail取得APIでcanonical参照中photoIdだけ許可し、削除済み/orphan/他Userを404相当へ統一する認可・秘匿処理未実装
+- 保存原画像取得APIでcanonical参照中photoIdだけ許可し、削除済み/orphan/他Userを404相当へ統一する認可・秘匿処理未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -315,9 +329,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **保存原画像のオンデマンド取得APIについてもthumbnailと同様に、現在canonical親entityから参照されているphotoIdだけ取得可能とするかを確定する。**
+次の判断候補: **保存原画像オンデマンド取得にもHTTP conditional requestを導入するかを確定する。**
 
-推奨候補は同じ認可規則を適用し、canonical参照中のみ取得可能、削除済み・差し替え済み・orphan・他User photoIdは`404 Not Found`相当とする方式。これにより表示用thumbnailと保存原画像で認可モデルを統一できる。
+推奨候補は、保存原画像は`photoId`生成後に内容を変更しない設計であるため、`photoHash`をstrong validatorとして扱い、取得APIで`ETag`を返す。clientが同じphotoIdのlocal original cacheを持つ場合は`If-None-Match`を送信し、同一なら`304 Not Modified`、cache欠落時のみ`200 OK + WebP`を受け取る方式。thumbnail用ETagとは独立させる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
