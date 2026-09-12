@@ -60,6 +60,25 @@
 - canonical JSONの文字列表現は同一business値から常に同一bytesになるよう固定する
 - SHA-256出力表現もclient/serverで固定する
 
+#### business field canonical値
+**確定:** 保存前およびhash生成前に、client/server双方で以下のfield normalizationを共通適用する。
+
+- optional文字列（例: `note`）は前後空白をtrimする
+- optional文字列がtrim後に空文字ならcanonical値は`null`とする
+- optional文字列の未指定・`undefined`・空文字は、当該fieldで「値なし」が同義なら`null`へ統一する
+- `tags`は各要素をtrimし、Unicode NFC正規化を行う
+- trim後に空となるtagは除外する
+- tagの重複は正規化後の完全一致で除去する。大文字小文字は別値として扱う
+- `tags`はcode point順の決定的な順序へsortし、0件は`[]`とする
+- 必須参照IDは常にstringとし、`null`・空文字・未指定を許可しない
+- 未設定状態が必要な参照はreserved `UNASSIGNED`をcanonical値として使用する
+- optional配列は未指定・`undefined`・`null`を`[]`へ統一する
+- business上順序に意味のないoptional配列はfield仕様に従って決定的にsortする
+- business上順序に意味がある配列（例: photos）は配列順を維持する
+- client/serverとも保存前とcontentHash計算前に同じ正規化を行い、保存値とhash対象値の意味を一致させる
+
+根拠: `null`・空文字・未指定など表現上の差だけで不要なconflictを発生させず、同じbusiness意味から常に同じcanonical JSONとcontentHashを得るため。tagsは集合として扱い、入力順やUnicode表現差を同期差にしない。一方、写真順序などbusiness意味を持つ順序は保持する。
+
 #### 写真配列のcontentHash
 写真配列は各要素の`photoId + photoHash`のみを、親entity内の配列順そのままでhash対象にする。thumbnail bytesは対象外。
 
@@ -166,6 +185,7 @@
 - Prisma sync metadata/composite user identity不足、current Push ownership risk、Pull timestamp基準
 - revision/contentHash/Outbox/SyncState/Conflict/Full Resync snapshot-staging未実装
 - entity別contentHash canonical schemaとfield normalization未実装
+- optional文字列/null、tags NFC/sort/dedup、optional配列[]、参照UNASSIGNEDのcanonical化未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立写真モデル、UUID/collision/re-ID未実装
@@ -198,14 +218,14 @@
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **各business fieldの具体的canonical値、とくにoptional文字列・tags・参照IDについて、`null / 空文字 / 空配列 / 未指定`をどう正規化するか確定する。**
+次の判断候補: **必須文字列field（Box.name / Item.name / BoxLocation.name / Box.code等）のUnicode・空白正規化をどこまで行うか確定する。**
 
 推奨候補:
-- optional文字列（例: note）は入力時trimし、空文字は`null`へ正規化
-- tagsは各tagをtrim + NFC正規化し、空tag除外、完全一致重複を除去してcode point順にsort。0件は`[]`
-- 必須参照IDは常にstring。未設定を許す参照は既定のreserved `UNASSIGNED`を使い、`null`と空文字は許さない
-- optional配列は未指定/nullではなく常に`[]`へ正規化
-- client/server双方が保存前・hash前に同じ正規化を行う
+- 利用者入力の必須表示文字列はtrim + Unicode NFC正規化
+- trim後空文字はvalidation errorとして拒否
+- 内部空白は保持し、自動圧縮しない
+- 大文字小文字は保持し、case-sensitiveなbusiness値として扱う
+- `Box.code`のようなシステム識別子は表示文字列とは別にfield固有形式を定義し、一般文字列正規化をそのまま流用しない
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
