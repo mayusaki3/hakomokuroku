@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-11
+更新: 2026-09-12
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -172,6 +172,21 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 
 根拠: thumbnailは派生表示データであり、即時整合性をbusiness同期と同等に保証する必要はない。TTL/pollingを導入すると通信・状態管理・再試行が増えるため、v0.8では欠落/破損・明示refresh・Full Resync・親entity再取得という自然な更新点だけで最新化する。
 
+#### thumbnail HTTP cache validation
+**確定:** thumbnail専用取得APIではHTTP `ETag` / `If-None-Match`を用いて、既存thumbnailと同一の場合のbytes再転送を避ける。
+
+- serverはcanonical thumbnail bytesに対応する`ETag`を返す
+- clientはlocal thumbnailと対応するETagを保持できる
+- clientが既存thumbnailを持つ状態で明示refresh等の再取得を行う場合、`If-None-Match`へ保持中ETagを設定する
+- server側thumbnailが同一なら`304 Not Modified`を返し、thumbnail bytesは送信しない
+- server側thumbnailが変更済みなら`200 OK`で最新WebP bytesと新しい`ETag`を返す
+- thumbnail用ETagは親entityのbusiness `contentHash`とは完全に独立したcache validatorとする
+- thumbnail単独修復では親entityの`updatedAt / revision / syncSeq / contentHash`は変化せず、thumbnail bytesの変化に応じてthumbnail用ETagだけが変化する
+- ETag validationの成否は親entityの同期成功・競合判定・cursorには影響させない
+- thumbnail取得APIもUser scopeを認証から決定し、他UserのphotoIdに対する存在確認や取得を許さない
+
+根拠: thumbnailはbusiness同期とは独立した派生表示データである一方、明示refresh等で同じbytesを繰り返し取得する可能性がある。HTTP標準のconditional requestを使うことで、専用のthumbnail version同期機構を追加せず通信量を抑えられる。
+
 ### 写真同期・cache
 - 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
@@ -265,6 +280,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - thumbnail破損/欠落時にserver再生成せずclient/明示的修復で再投入する検出・修復経路未実装
 - thumbnail単独修復をbusiness revisionから分離し、photoId単位で最新thumbnailを再取得する経路未実装
 - thumbnail正常時はTTL/pollingなし、欠落/破損・明示refresh・Full Resync・親entity再取得時のみ最新化するcache freshness規則未実装
+- thumbnail専用取得APIの`ETag / If-None-Match / 304` conditional request未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -285,9 +301,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **thumbnail専用取得APIで、正常なlocal thumbnailの再取得時に無駄なbytes転送を避けるためのHTTP cache validationをv0.8で導入するかを確定する。**
+次の判断候補: **thumbnail専用取得APIで指定された`photoId`が現在のcanonical親entityから参照されていない場合、取得を許可するかを確定する。**
 
-推奨候補は、thumbnail bytesから生成したHTTP `ETag`を返し、clientが明示refresh等で既存thumbnailを持つ場合は`If-None-Match`を送る方式。ETagはbusiness `contentHash`とは別物で、thumbnail修復によってETagだけが変化する。serverが同一なら`304 Not Modified`、変更済みなら新しいWebPを返す。
+推奨候補は、現在canonicalから参照されている写真だけ取得可能とし、削除済み・差し替え済み・親Push未成立のorphan photoIdは取得APIでは`404 Not Found`相当とする方式。認可上も「存在しない」と同じ応答にして、他Userや未参照Blobの存在を外部へ漏らさない。Outbox再送用のBlob upload/re-upload経路はthumbnail取得APIとは別扱いとする。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
