@@ -79,6 +79,20 @@
 
 根拠: `null`・空文字・未指定など表現上の差だけで不要なconflictを発生させず、同じbusiness意味から常に同じcanonical JSONとcontentHashを得るため。tagsは集合として扱い、入力順やUnicode表現差を同期差にしない。一方、写真順序などbusiness意味を持つ順序は保持する。
 
+#### 必須表示文字列のcanonical値
+**確定:** `Box.name / Item.name / BoxLocation.name`など利用者入力の必須表示文字列は、保存前・hash前に`trim + Unicode NFC`で正規化する。
+
+- 前後空白をtrimする
+- trim後にUnicode NFC正規化する
+- trim後に空文字になった場合はvalidation errorとして拒否し、canonicalへ保存しない
+- 文字列内部の空白は保持し、複数空白を1個へ圧縮しない
+- 大文字小文字は入力どおり保持し、case-sensitiveなbusiness値として扱う
+- 同じ見た目でもNFC前後で表現が異なるUnicodeはNFC後の値へ統一する
+- client/server双方が保存前・hash前に同じ正規化を行う
+- `Box.code`などのシステム識別子は一般表示文字列とは別fieldとして扱い、専用の形式・文字種・canonical化規則を定義する。表示文字列向けの一般規則をそのまま流用しない
+
+根拠: 利用者が意図した内部空白や大文字小文字を保持しつつ、前後の不要空白とUnicode表現差だけを除去することで、端末差・入力方式差による不要なcontentHash差を防ぐため。システム識別子は表示文字列と用途が異なるため、別規則に分離する。
+
 #### 写真配列のcontentHash
 写真配列は各要素の`photoId + photoHash`のみを、親entity内の配列順そのままでhash対象にする。thumbnail bytesは対象外。
 
@@ -186,6 +200,8 @@
 - revision/contentHash/Outbox/SyncState/Conflict/Full Resync snapshot-staging未実装
 - entity別contentHash canonical schemaとfield normalization未実装
 - optional文字列/null、tags NFC/sort/dedup、optional配列[]、参照UNASSIGNEDのcanonical化未実装
+- 必須表示文字列のtrim + NFC、空文字validation、内部空白/case保持未実装
+- Box.code等system identifier固有canonical規則未確定・未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立写真モデル、UUID/collision/re-ID未実装
@@ -218,14 +234,9 @@
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **必須文字列field（Box.name / Item.name / BoxLocation.name / Box.code等）のUnicode・空白正規化をどこまで行うか確定する。**
+次の判断候補: **`Box.code`のfield固有canonical規則を確定する。**
 
-推奨候補:
-- 利用者入力の必須表示文字列はtrim + Unicode NFC正規化
-- trim後空文字はvalidation errorとして拒否
-- 内部空白は保持し、自動圧縮しない
-- 大文字小文字は保持し、case-sensitiveなbusiness値として扱う
-- `Box.code`のようなシステム識別子は表示文字列とは別にfield固有形式を定義し、一般文字列正規化をそのまま流用しない
+推奨候補は、QR payloadでもあるため人手入力自由文字列にはせず、ASCII英数字のみのserver/client共通形式へ固定し、保存時に大文字へ正規化する方式。既存実装・生成規則を確認してから、長さ・使用文字・一意性scopeを最終確定する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
