@@ -10,6 +10,7 @@
 作業順: 要件確認 → 利用者確認 → 設計 → 利用者確認 → テストケース → 利用者確認 → テストコード → 実装 → 検証。重要判断には根拠を残す。現在は設計段階で、アプリケーションコードはまだ変更しない。
 
 詳細記録: `LLM_WORKSPACE/Worklog/requirements-v0.8-v1.0.md`
+補足調査: `LLM_WORKSPACE/Worklog/box-code-investigation.md`
 
 ## 2. 現在位置
 **全体アーキテクチャ / データモデル / 同期設計の最終確定中。**
@@ -92,6 +93,40 @@
 - `Box.code`などのシステム識別子は一般表示文字列とは別fieldとして扱い、専用の形式・文字種・canonical化規則を定義する。表示文字列向けの一般規則をそのまま流用しない
 
 根拠: 利用者が意図した内部空白や大文字小文字を保持しつつ、前後の不要空白とUnicode表現差だけを除去することで、端末差・入力方式差による不要なcontentHash差を防ぐため。システム識別子は表示文字列と用途が異なるため、別規則に分離する。
+
+#### Box.code canonical規則
+**確定:** 今後新規発行する`Box.code`は読み違いを避けた固定形式へ統一し、既存codeは互換維持する。
+
+新規発行形式:
+```text
+BX-XXXXXXXX
+```
+
+使用文字集合:
+```text
+ABCDEFGHJKMNPQRSTUVWXYZ23456789
+```
+
+- prefixは固定で`BX-`
+- suffixは上記文字集合から8文字固定
+- `O / I / L / 0 / 1`は読み違い防止のため使用しない
+- client生成は`crypto.getRandomValues()`等のcryptographically secure random sourceを使用し、`Math.random()`は使用しない
+- canonical表現はASCII大文字。入力・scanner経由で小文字が来た場合は大文字へ正規化してから検証する
+- 新規発行codeはUser scope内で一意でなければならない
+- server canonical受理時の一意性判定を最終判定とし、衝突した場合は既存Boxを上書きせず、新しいcodeを生成して再試行する
+- canonicalとして成立した`Box.code`は原則immutableとし、通常編集では変更不可とする
+- QR payloadはcanonical済み`Box.code`文字列そのもの
+- 既存データに存在する旧形式（例: `BX-ABCDE`、`BX-xxxxx-yyyyy`系）は自動変換・再発行しない
+- 既存codeは保存済みQR互換のため、現行で有効に参照できる範囲をlegacy codeとして引き続き読み取り・検索可能にする
+- legacy codeを新規発行規則へ無理に適合させず、「新規発行規則」と「既存互換受理規則」を分離する
+
+現行実装との差異:
+- `apps/web/src/lib/id.ts`は`BX-` + 読み違い防止文字集合5文字で、乱数sourceは`crypto.getRandomValues()`。方向性は採用するがsuffix長を8文字へ拡張する
+- `apps/web/src/lib/codegen.ts`はBase36時刻+乱数を`Math.random()`で生成しており、新規発行経路から廃止・統合対象
+- `apps/web/src/lib/qrpayload.ts`は`/b/<code>`を生成する旧仕様が残っているが、確定仕様はQR payload=`Box.code`そのものなので修正対象
+- `QrLabel24.tsx`は現状すでに`code`そのものをQR化しており、確定仕様と一致する
+
+根拠: 箱ラベルは人が目視・入力する可能性があり、読み違いしやすい文字を除外した短い識別子が適している。8文字へ伸ばすことで5文字より衝突余裕を大きくしつつ、24mmラベルで扱える可読性を維持できる。既存codeを自動変換すると印刷済みQRが無効化されるため、legacy互換を維持する。
 
 #### 写真配列のcontentHash
 写真配列は各要素の`photoId + photoHash`のみを、親entity内の配列順そのままでhash対象にする。thumbnail bytesは対象外。
@@ -201,7 +236,10 @@
 - entity別contentHash canonical schemaとfield normalization未実装
 - optional文字列/null、tags NFC/sort/dedup、optional配列[]、参照UNASSIGNEDのcanonical化未実装
 - 必須表示文字列のtrim + NFC、空文字validation、内部空白/case保持未実装
-- Box.code等system identifier固有canonical規則未確定・未実装
+- Box.code新規発行規則が2系統に分裂。`id.ts`系へ統一しsuffixを8文字化、`codegen.ts`系廃止対象
+- Box.code User scope一意性のserver最終判定・collision再発行・canonical後immutable未実装
+- legacy Box.code互換受理規則の明文化・validation未実装
+- `qrpayload.ts`の`/b/<code>`生成は確定QR payload=`Box.code`と矛盾し修正対象
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立写真モデル、UUID/collision/re-ID未実装
@@ -234,9 +272,13 @@
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **`Box.code`のfield固有canonical規則を確定する。**
+次の判断候補: **legacy `Box.code`の受理形式をどこまで許可するかを明確化する。**
 
-推奨候補は、QR payloadでもあるため人手入力自由文字列にはせず、ASCII英数字のみのserver/client共通形式へ固定し、保存時に大文字へ正規化する方式。既存実装・生成規則を確認してから、長さ・使用文字・一意性scopeを最終確定する。
+推奨候補は、既存互換専用として少なくとも現行で生成実績のある次の2形式を受理する。
+- `BX-` + 読み違い防止文字集合5文字（旧`id.ts`）
+- `BX-` + Base36大文字5文字 + `-` + Base36大文字5文字（旧`codegen.ts`）
+
+新規発行は常に`BX-XXXXXXXX`のみとし、legacy形式は既存参照・import/restore・scan用途に限定する。一般的な任意`BX-*`を無制限に受理しない。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
