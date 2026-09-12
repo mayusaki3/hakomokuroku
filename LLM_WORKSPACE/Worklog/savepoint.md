@@ -132,6 +132,21 @@
 
 根拠: thumbnailと保存原画像で認可モデルを統一し、利用中のcanonical business dataだけを取得対象にすることで、削除済み写真・orphan Blob・他User写真の存在推測を防ぐ。Outbox復旧は取得ではなく再upload経路で処理するため、未参照Blobの読み出しを許可する必要はない。
 
+#### 保存原画像 HTTP cache validation
+**確定:** 保存原画像オンデマンド取得APIではHTTP `ETag / If-None-Match`を使用し、`photoHash`を保存原画像bytesのstrong validator相当として扱う。
+
+- 保存原画像は`photoId`発行後に内容を上書き変更しない。不変のbytesと`photoHash`が1対1に対応する
+- serverは保存原画像取得時に、当該`photoHash`を表すstrong `ETag`を返す
+- clientが同じ`photoId`のlocal original cacheと対応するETagを保持している場合、再検証時に`If-None-Match`を送信する
+- 認可・canonical参照確認を先に行い、その後に`If-None-Match`を評価する
+- ETagが一致すれば`304 Not Modified`として保存原画像bytesを再送しない
+- local cacheがない、ETagを持たない、またはvalidatorが一致しない場合は`200 OK`で保存原画像WebPとETagを返す
+- 保存原画像ETagはthumbnail用ETagおよび親entityのbusiness `contentHash`とは別概念とする
+- 同一`photoHash`の別`photoId`が存在しても写真は共有・dedupしない。ETag文字列が同じになり得ても、取得認可・cache key・Blob保存単位は常に`photoId`単位とする
+- ETag validationの成否は親entityのrevision/contentHash/syncSeq/cursorや競合判定に影響させない
+
+根拠: 保存原画像は最大5 MiBであり、再検証のたびに同じbytesを転送する必要はない。既に内容整合性のために保存原画像bytesから算出している`photoHash`をstrong validatorとして再利用すれば、新たなoriginal version管理を追加せずHTTP標準のconditional requestで通信量を削減できる。
+
 ### thumbnail
 - client生成を正本としserverは再生成しない
 - WebP、長辺400px上限、quality 0.8、拡大なし、最大256 KiB
@@ -309,6 +324,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - thumbnail専用取得APIの`ETag / If-None-Match / 304` conditional request未実装
 - thumbnail取得APIでcanonical参照中photoIdだけ許可し、削除済み/orphan/他Userを404相当へ統一する認可・秘匿処理未実装
 - 保存原画像取得APIでcanonical参照中photoIdだけ許可し、削除済み/orphan/他Userを404相当へ統一する認可・秘匿処理未実装
+- 保存原画像取得APIの`photoHash` strong ETag / `If-None-Match / 304` conditional request未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -329,9 +345,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **保存原画像オンデマンド取得にもHTTP conditional requestを導入するかを確定する。**
+次の判断候補: **親entity全体の`contentHash`について、optional field・`null`・空配列・tags等をどのようにcanonical化して意味的同値を保証するかを確定する。**
 
-推奨候補は、保存原画像は`photoId`生成後に内容を変更しない設計であるため、`photoHash`をstrong validatorとして扱い、取得APIで`ETag`を返す。clientが同じphotoIdのlocal original cacheを持つ場合は`If-None-Match`を送信し、同一なら`304 Not Modified`、cache欠落時のみ`200 OK + WebP`を受け取る方式。thumbnail用ETagとは独立させる。
+推奨候補は、entity typeごとにhash対象business schemaを固定し、そのschemaへ正規化してからcanonical JSON化する方式。object key順を固定し、順序に意味のない集合型（例: tags）は正規化してsort、写真配列など順序に意味がある配列は順序を保持する。`undefined/未指定/null/空値`の扱いはfieldごとにbusiness上の意味を定義してからcanonical値へ統一し、client/server双方が同一アルゴリズムでhashを生成する。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
