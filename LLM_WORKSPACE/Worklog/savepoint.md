@@ -187,6 +187,19 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 
 根拠: thumbnailはbusiness同期とは独立した派生表示データである一方、明示refresh等で同じbytesを繰り返し取得する可能性がある。HTTP標準のconditional requestを使うことで、専用のthumbnail version同期機構を追加せず通信量を抑えられる。
 
+#### thumbnail取得APIの参照制約
+**確定:** thumbnail専用取得APIでは、認証中Userの現在canonical親entityから参照されている`photoId`だけ取得可能とする。
+
+- 現在canonicalのBox / Item / BoxLocationのいずれかから参照されている写真のみ取得対象とする
+- 親entityから削除済みのphotoId、差し替えで外れた旧photoId、親entity Push未成立のorphan photoIdはthumbnail取得対象にしない
+- 対象Userに存在しないphotoId、他UserのphotoId、未参照photoIdはいずれも外部応答上は`404 Not Found`相当として扱い、存在有無や保存状態を区別して漏らさない
+- `ETag / If-None-Match`評価は、参照・認可確認を通過したphotoIdに対してのみ行う
+- Outbox再送やGC後復旧に用いる保存原画像Blob upload/re-upload経路はthumbnail取得APIとは分離し、orphan photoIdをthumbnail APIから参照可能にする理由にはしない
+- canonical参照成立後は通常どおりthumbnail取得可能になる
+- canonical参照が解除された時点で、そのphotoIdのthumbnail専用取得も不可になる
+
+根拠: thumbnail取得は利用中のbusiness data表示を支えるAPIであり、未参照・削除済み・他Userの写真を参照できる必要はない。認可失敗と不存在を同一応答にすることで、photoIdを通じた他Userデータやorphan Blobの存在推測を避ける。
+
 ### 写真同期・cache
 - 親entity JSONは写真ごとに`photoId + photoHash + thumbnail + 写真順序`を持つ。保存原画像blobは別転送
 - 保存原画像blobは`photoId`単位で扱う。hash一致による別写真間の共有・dedupはしない
@@ -281,6 +294,7 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 - thumbnail単独修復をbusiness revisionから分離し、photoId単位で最新thumbnailを再取得する経路未実装
 - thumbnail正常時はTTL/pollingなし、欠落/破損・明示refresh・Full Resync・親entity再取得時のみ最新化するcache freshness規則未実装
 - thumbnail専用取得APIの`ETag / If-None-Match / 304` conditional request未実装
+- thumbnail取得APIでcanonical参照中photoIdだけ許可し、削除済み/orphan/他Userを404相当へ統一する認可・秘匿処理未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -301,9 +315,9 @@ canonical保存後にthumbnail欠落・破損を検出した場合:
 ## 6. 次のアクション
 同期・写真設計の残る主要未定義を最終点検する。
 
-次の判断候補: **thumbnail専用取得APIで指定された`photoId`が現在のcanonical親entityから参照されていない場合、取得を許可するかを確定する。**
+次の判断候補: **保存原画像のオンデマンド取得APIについてもthumbnailと同様に、現在canonical親entityから参照されているphotoIdだけ取得可能とするかを確定する。**
 
-推奨候補は、現在canonicalから参照されている写真だけ取得可能とし、削除済み・差し替え済み・親Push未成立のorphan photoIdは取得APIでは`404 Not Found`相当とする方式。認可上も「存在しない」と同じ応答にして、他Userや未参照Blobの存在を外部へ漏らさない。Outbox再送用のBlob upload/re-upload経路はthumbnail取得APIとは別扱いとする。
+推奨候補は同じ認可規則を適用し、canonical参照中のみ取得可能、削除済み・差し替え済み・orphan・他User photoIdは`404 Not Found`相当とする方式。これにより表示用thumbnailと保存原画像で認可モデルを統一できる。
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
