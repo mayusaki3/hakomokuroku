@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-12
+更新: 2026-09-13
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -20,238 +20,119 @@
 ### リリース・業務
 - v0.8 = Vision以外の完成版、v1.0 = v0.8 + Vision/LLM画像認識
 - 登録順序 = 箱登録 → アイテム → 箱写真 → ラベル → 場所
-- 写真フィールド = `thumbs`
-- QR payload = Box.codeのみ
-- Item「取り出す」= `boxId=UNASSIGNED` の通常UPDATE、Item「削除」= DELETE/tombstone
+- 写真field = `thumbs`
+- QR payload = canonical `Box.code`文字列そのもの
+- Item「取り出す」= `boxId=UNASSIGNED`の通常UPDATE、Item「削除」= DELETE/tombstone
 - Box削除 = 子ItemをUNASSIGNEDへ移動後Boxをtombstone
-- BoxLocationは独立フラットマスタ、Boxが`locationId`を参照
+- BoxLocationはUser scoped独立flat master、Boxが`locationId`参照
 - Vision対象はBox/Item写真のみ
 
 ### ユーザー分離・同期
-- business identity=`(User.id, entityId)`。User間データは論理的に完全分離
-- API user scopeは認証session/tokenからserverが確定
+- business identity=`(User.id, entityId)`。User間データは完全分離
+- API scopeは認証session/tokenからserverが確定
 - local DB=`hk-local-v2-<User.id>`
 - server metadata=`createdAt, updatedAt, deletedAt, serverUpdatedAt, revision, contentHash, syncSeq`
 - baseRevision一致=通常更新。不一致時contentHash同一=UNCHANGED、異なる=CONFLICT
 - SyncChangeLogがPull差分履歴の正本。syncSeqはDB全体で単調増加signed 64-bit
 - local 3層=Business / SyncState / Outbox。local業務変更+Outboxは同一IndexedDB transaction
-- 通常同期=Pull → Outbox reapply → Push → Pull。Push中再編集はoutboxVersionで保護
-- tombstone物理削除可能=DELETE受理server時刻+30日、SyncChangeLog保持=90日。必要log欠落時はFULL_RESYNC_REQUIRED
+- 通常同期=Pull → Outbox reapply → Push → Pull
+- tombstone物理削除可能=DELETE受理server時刻+30日、SyncChangeLog保持=90日
 - cursor未設定の新規DBはFull Resync。snapshotSeq固定、type別paging、staging完了後のみ採用
 - Outbox reapply順=BoxLocation → Box → Item
 
-### business timestamp
+### timestamp / canonicalization
 - `createdAt / updatedAt / deletedAt`はbusiness時刻、`serverUpdatedAt`はserver canonical更新時刻
 - client business timestampは競合勝者・Pull順序・cursor・retentionに使わない
 - RFC3339/ISO8601 offset必須、server保存UTC milliseconds
-- 形式が有効なら極端な未来/過去でも補正しない
+- contentHashはentity type固定business schemaをcanonical化後SHA-256
+- metadata時刻、revision、syncSeq、contentHash自身、userId、entity idはhash対象外
+- active/deleted状態はhash対象
+- optional文字列はtrim、意味上値なしならnull
+- tagsはtrim + NFC、空除去、exact重複除去、case-sensitive、決定的sort
+- optional配列は意味上空なら`[]`
+- 必須参照IDはnull/空/未指定不可。未設定参照はreserved `UNASSIGNED`
+- `Box.name / Item.name / BoxLocation.name`等の必須表示文字列はtrim + NFC、trim後空はvalidation error、内部空白/case保持
 
-### contentHash canonicalization
-**確定:** entity typeごとにhash対象business schemaを固定し、そのschemaへ正規化後、canonical JSONをSHA-256して`contentHash`を生成する。
+### Box.code
+**確定:** legacy互換なし。全データで単一形式のみ有効。
 
-- `contentHash`はbusiness上の意味的内容のみを対象にする
-- `createdAt / updatedAt / deletedAt`のtimestamp値、`serverUpdatedAt / revision / syncSeq / contentHash`自身、`userId`、entity idはhash対象外
-- active/deleted状態はbusiness意味を持つためhash対象
-- client/server双方で同一のcanonicalization algorithmを使用する
-- object key順はentity schemaで固定する。runtime objectの挿入順には依存しない
-- 順序に意味がない配列・集合はfieldごとの正規化規則に従ってsortする。例: `tags`
-- 順序に意味がある配列は並びを保持する。例: `photos`
-- `undefined / field未指定 / null / 空文字 / 空配列`は一律変換せず、fieldごとのbusiness意味を仕様で定義し、意味的に同値な値だけを同一canonical値へ正規化する
-- hash対象外fieldはcanonical JSONへ入れない
-- canonical JSONの文字列表現は同一business値から常に同一bytesになるよう固定する
-- SHA-256出力表現もclient/serverで固定する
-
-#### business field canonical値
-**確定:** 保存前およびhash生成前に、client/server双方で以下のfield normalizationを共通適用する。
-
-- optional文字列（例: `note`）は前後空白をtrimする
-- optional文字列がtrim後に空文字ならcanonical値は`null`とする
-- optional文字列の未指定・`undefined`・空文字は、当該fieldで「値なし」が同義なら`null`へ統一する
-- `tags`は各要素をtrimし、Unicode NFC正規化を行う
-- trim後に空となるtagは除外する
-- tagの重複は正規化後の完全一致で除去する。大文字小文字は別値として扱う
-- `tags`はcode point順の決定的な順序へsortし、0件は`[]`とする
-- 必須参照IDは常にstringとし、`null`・空文字・未指定を許可しない
-- 未設定状態が必要な参照はreserved `UNASSIGNED`をcanonical値として使用する
-- optional配列は未指定・`undefined`・`null`を`[]`へ統一する
-- business上順序に意味のないoptional配列はfield仕様に従って決定的にsortする
-- business上順序に意味がある配列（例: photos）は配列順を維持する
-- client/serverとも保存前とcontentHash計算前に同じ正規化を行い、保存値とhash対象値の意味を一致させる
-
-根拠: `null`・空文字・未指定など表現上の差だけで不要なconflictを発生させず、同じbusiness意味から常に同じcanonical JSONとcontentHashを得るため。tagsは集合として扱い、入力順やUnicode表現差を同期差にしない。一方、写真順序などbusiness意味を持つ順序は保持する。
-
-#### 必須表示文字列のcanonical値
-**確定:** `Box.name / Item.name / BoxLocation.name`など利用者入力の必須表示文字列は、保存前・hash前に`trim + Unicode NFC`で正規化する。
-
-- 前後空白をtrimする
-- trim後にUnicode NFC正規化する
-- trim後に空文字になった場合はvalidation errorとして拒否し、canonicalへ保存しない
-- 文字列内部の空白は保持し、複数空白を1個へ圧縮しない
-- 大文字小文字は入力どおり保持し、case-sensitiveなbusiness値として扱う
-- 同じ見た目でもNFC前後で表現が異なるUnicodeはNFC後の値へ統一する
-- client/server双方が保存前・hash前に同じ正規化を行う
-- `Box.code`などのシステム識別子は一般表示文字列とは別fieldとして扱い、専用の形式・文字種・canonical化規則を定義する。表示文字列向けの一般規則をそのまま流用しない
-
-根拠: 利用者が意図した内部空白や大文字小文字を保持しつつ、前後の不要空白とUnicode表現差だけを除去することで、端末差・入力方式差による不要なcontentHash差を防ぐため。システム識別子は表示文字列と用途が異なるため、別規則に分離する。
-
-#### Box.code canonical規則
-**確定:** `Box.code`は既存互換を持たず、全データで単一の固定形式のみを有効とする。
-
-有効形式:
 ```text
-BX-XXXXXXXX
+BX-<DevicePrefix 4文字><LocalSequence 4文字>
 ```
 
-使用文字集合:
+使用alphabet:
 ```text
 ABCDEFGHJKMNPQRSTUVWXYZ23456789
 ```
 
-- prefixは固定で`BX-`
-- suffixは上記文字集合から8文字固定
-- `O / I / L / 0 / 1`は読み違い防止のため使用しない
-- client生成は`crypto.getRandomValues()`等のcryptographically secure random sourceを使用し、`Math.random()`は使用しない
-- canonical表現はASCII大文字。入力・scanner経由で小文字が来た場合は大文字へ正規化してから検証する
-- `Box.code`はUser scope内で一意でなければならない
-- server canonical受理時の一意性判定を最終判定とし、衝突した場合は既存Boxを上書きせず、新しいcodeを生成して再試行する
-- canonicalとして成立した`Box.code`は原則immutableとし、通常編集では変更不可とする
-- QR payloadはcanonical済み`Box.code`文字列そのもの
-- 旧`BX-ABCDE`形式、旧`BX-xxxxx-yyyyy`形式その他のlegacy形式は受理・検索・restore互換の対象にしない
-- backup/restore、scan、search、Push、Pull、Full Resyncを含むすべての入口・canonical dataで同じ単一形式を要求する
-- 現在の開発中データに旧形式が残っている場合はv0.8完成前に破棄または開発データ再作成で対応し、互換migrationは作らない
+- `O / I / L / 0 / 1`は使用しない
+- suffix 8文字 = DevicePrefix 4文字 + LocalSequence 4文字
+- canonicalはASCII uppercase。scanner/input小文字はuppercase化後に検証
+- `Box.code`は作成時点で正式確定し、仮発行を行わない
+- QRは作成直後から正式ラベルとして印刷可能
+- sync collisionを理由とするBox.code再発行は行わない
+- canonical Box.codeはimmutable
+- legacy形式はbackup/restore/scan/search/Push/Pull/Full Resyncを含め受理しない
+- 開発中の旧形式データは破棄または再作成し、migrationは作らない
 
-現行実装との差異:
-- `apps/web/src/lib/id.ts`は`BX-` + 読み違い防止文字集合5文字で、乱数sourceは`crypto.getRandomValues()`。方向性は採用するがsuffix長を8文字へ拡張する
-- `apps/web/src/lib/codegen.ts`はBase36時刻+乱数を`Math.random()`で生成しており、新規発行経路から廃止・統合対象
-- `apps/web/src/lib/qrpayload.ts`は`/b/<code>`を生成する旧仕様が残っているが、確定仕様はQR payload=`Box.code`そのものなので修正対象
-- `QrLabel24.tsx`は現状すでに`code`そのものをQR化しており、確定仕様と一致する
+#### DevicePrefix / LocalSequence
+- DevicePrefixはserverがUser scope内で一意に割り当てる4文字
+- LocalSequenceはdevice内の4文字単調増加counter
+- 1 deviceあたり最大`31^4 = 923,521` code space
+- Box作成とcounter incrementは同一local transactionで行う
+- sequenceは巻き戻さず、一度使用した値を再利用しない
+- sequence枯渇時はonlineで新DevicePrefixを取得し、既存Box.codeは変更しない
+- DB上の`(User.id, Box.code)` unique制約は不変条件検査として保持する
 
-根拠: 既存互換が不要な開発段階であるため、legacy受理分岐・migration・validation例外を持たず単一形式へ統一する方が仕様・テスト・実装を簡潔にできる。読み違いしやすい文字を除外した8文字suffixにより、人による目視・入力の扱いやすさと十分な衝突余裕を両立する。
+#### Device登録record
+**確定:** serverにUser配下のdevice registrationを持つ。
 
-#### 写真配列のcontentHash
-写真配列は各要素の`photoId + photoHash`のみを、親entity内の配列順そのままでhash対象にする。thumbnail bytesは対象外。
-
-```json
-{
-  "photos": [
-    { "photoId": "A", "photoHash": "H1" },
-    { "photoId": "B", "photoHash": "H2" }
-  ]
-}
+```text
+deviceId     : client生成UUID
+devicePrefix : server割当4文字
+createdAt
+lastSeenAt
 ```
 
-- 写真追加・削除・差し替え・並べ替えはcontentHashが変化する
-- 同じphotoHashでもphotoIdが異なれば別写真なのでcontentHashも異なる
-- thumbnail再生成・修復だけではcontentHashは変えない
+- `deviceId`はclientが初回セットアップ時にUUID生成し、localへ永続保存する
+- serverは`(User.id, deviceId)`を一意として扱う
+- 同じUser + 同じdeviceIdの再登録/再ログインには同じDevicePrefixを返す
+- DevicePrefixはUser scope内で一意
+- 一度払い出したDevicePrefixは、そのdeviceが使われなくなっても**永久に再利用しない**
+- local dataを消去して端末を再セットアップした場合は、新deviceIdを生成し、新しいDevicePrefixをserverから取得する
+- 旧deviceId/DevicePrefix/counterを推測・復元して再利用しない
+- device registrationにはbusiness syncのrevision/contentHash/syncSeqを持たせず、Box/Item等とは別のsystem registration dataとして扱う
+- `lastSeenAt`はserver管理時刻で、認証済み端末がdevice registration APIまたはsyncを正常利用した際に更新可能
 
-根拠: conflict判定を端末実装差・JSON生成順・表示用派生データ差に依存させず、business上の意味が同じなら同一hash、意味が異なれば異なるhashにするため。
+根拠: serverがDevicePrefix namespaceを一意に割り当て、各deviceがそのnamespace内で単調counterを採番すれば、offline作成時点でBox.codeを正式確定できる。過去prefixを再利用しないことで、Box削除や端末再セットアップ後も過去codeとの衝突を構造的に防止できる。
 
 ### 写真モデル
-- 写真のdedupは行わない。写真ごとに独立した`photoId`
-- `photoId`=論理写真ID、`photoHash`=保存原画像bytesのSHA-256相当
-- 同じ画像を複数entity・同一entityへ複数回登録可能。各写真は別photoId
-- photoIdはclient生成UUID。User scope内一意
-- same photoId + same photoHash = 再送としてUNCHANGED相当可
-- same photoId + different photoHash = `REJECTED / PHOTO_ID_COLLISION / retryable=false`
-- collision時clientは新UUIDへBusiness/cache/Outbox参照を同一transactionで付け替えて再Push
-- Photoは独立sync entityにせず、Box / Item / BoxLocationのphotos配列要素
-- Photo自身にrevision/contentHash/syncSeq/SyncChangeLogを持たせない
-- 写真追加・削除・差し替え・並べ替えは親entityのbusiness UPDATE
-- 写真差し替えは旧photoIdを変更せず、新photoIdを発行し旧削除＋新追加。原則同じ配列位置
-- Box / Item / BoxLocationの写真枚数は0〜10枚
-
-### 保存原画像
-- client生成WebPを箱目録での保存原画像とする
-- WebP、長辺1600px上限、quality 0.85、拡大なし、EXIF Orientation補正、最大5 MiB
-- `photoHash`は変換後WebP bytesから算出
-- serverはWebP decode、寸法、size、hash一致を検証し通常フローでは再変換しない
-- 保存単位/cache key/GCはphotoId基準。hash一致でも別photoId間で共有・dedupしない
-
-#### 保存原画像取得API
-- 現在canonical親entityから参照中のphotoIdだけ取得可能
-- 削除済み、差し替え済み、orphan、他User、不存在はいずれも`404 Not Found`相当
-- User scopeは認証からserverが確定
-- Outbox復旧用Blob upload/re-upload経路とは分離
-- HTTP conditional requestを使用
-- `photoHash`をstrong ETag相当として返す
-- local cache+ETagありなら`If-None-Match`
-- 一致=`304 Not Modified`、不一致/cacheなし=`200 OK + WebP + ETag`
-- 同じETag文字列になってもcache key/認可/Blob保存単位はphotoId
-
-### thumbnail
-- 保存原画像WebPからclient生成。WebP、長辺400px上限、quality 0.8、拡大なし、最大256 KiB
-- serverはvalidateのみ。通常フローで再生成しない
-- thumbnail bytesはcontentHash対象外
-- thumbnailはphotoIdに属し、別photoId間で共有・dedupしない
-- Push時thumbnail欠落/破損/仕様違反はREJECTED。clientが同じphotoIdの保存原画像から再生成して再Push
-- canonical保存後のthumbnail修復もbusiness変更にはしない
-- thumbnail単独修復で親`updatedAt / revision / syncSeq / contentHash`は変更しない
-- thumbnail修復理由のSyncChangeLog UPSERTは発行しない
-
-#### thumbnail cache freshness / API
-- 正常local thumbnailはそのまま使用。TTL・定期polling・専用background同期なし
-- 欠落/破損時ONLINEなら即時再取得
-- 明示refreshで再取得可能
-- Full Resyncまたは親entity再取得時に最新canonical thumbnailへ更新
-- thumbnail専用取得APIはcanonical参照中photoIdのみ許可
-- 削除済み、差し替え済み、orphan、他User、不存在は`404`相当
-- thumbnail bytesに対応する専用ETagを返し`If-None-Match`対応
-- 同一なら304、変更済みなら200 + WebP + 新ETag
-- thumbnail ETagはbusiness contentHashやoriginal ETagとは別
-
-### 写真Blob upload / GC
-- upload順=保存原画像生成 → photoHash算出 → thumbnail生成 → photoId単位Blob upload → server検証 → 親entity Push → canonical参照確定
-- unreferencedSinceはBlob upload完了server時刻から開始。canonical参照成立でnull
-- 参照解除時はserver受理時刻をunreferencedSinceへ設定
-- 30日連続未参照でGC候補。削除直前にcanonical参照を再確認
-- GCはphotoId単位
-- 親Pushが参照するBlob欠落時=`REJECTED / PHOTO_BLOB_NOT_AVAILABLE / retryable=true`
-- local原画像ありなら同photoId/photoHashで再uploadし同じOutboxを再Push
-- Blob欠落だけでbaseRevision/outboxVersionを変更しない
-- local原画像も失われている場合は自動削除せず利用者対応が必要なsync error
-
-### local original cache
-- 正本ではなく再取得可能なcache
-- 削除/差し替え後に旧cacheが残ってもUI不可視、自動復元しない
-- Storage Quotaに応じたbest-effort管理
-- 削除優先: 未参照古い → 未参照新しい → 参照中古い → 参照中最近
-- Business / thumbnail / Outbox / SyncStateはcache整理対象外
+- dedupなし。写真ごとに独立`photoId`
+- photoId=論理写真ID、photoHash=保存原画像bytesのSHA-256相当
+- Photoは独立sync entityではなく親Box/Item/BoxLocationのphotos配列要素
+- 写真差し替えは新photoId、順序はbusiness意味あり
+- 各親0〜10枚
+- 保存原画像=client生成WebP、長辺1600px、q0.85、拡大なし、EXIF補正、最大5MiB
+- thumbnail=保存原画像からWebP、長辺400px、q0.8、最大256KiB
+- original BlobはphotoId単位、blob-first upload、未参照30日でGC候補
+- thumbnail bytesは親contentHash対象外
 
 ### BoxLocation / UNASSIGNED
-- BoxLocationはuser scoped独立flat master。Box.locationIdが参照
+- BoxLocationはUser scoped独立flat master
 - reserved Box/BoxLocation `UNASSIGNED`を各Userで保証しclient変更禁止
 - Box削除時子Item→UNASSIGNED、Location削除時子Box→UNASSIGNED
 - parent DELETE + child correctionはserver 1 transaction
 
-### Outbox / Conflict
-- `(entityType, entityId)`につき1 Outbox row
-- original baseRevision維持、local変更ごとoutboxVersion++
-- CREATE→DELETEでもOutboxを消さない
-- SyncConflictは`(userId, entityType, entityId)`につき未解決1 row
-- Pullはserver baseline + Outbox overlay。Pullだけでlocal unsynced内容を失わない
-
 ## 4. 現行実装との差異
 - Prisma sync metadata/composite user identity不足、current Push ownership risk、Pull timestamp基準
 - revision/contentHash/Outbox/SyncState/Conflict/Full Resync snapshot-staging未実装
-- entity別contentHash canonical schemaとfield normalization未実装
-- optional文字列/null、tags NFC/sort/dedup、optional配列[]、参照UNASSIGNEDのcanonical化未実装
-- 必須表示文字列のtrim + NFC、空文字validation、内部空白/case保持未実装
-- Box.code生成規則が2系統に分裂。`id.ts`系へ統一しsuffixを8文字化、`codegen.ts`系廃止対象
-- Box.code User scope一意性のserver最終判定・collision再発行・canonical後immutable未実装
-- legacy Box.code互換は実装しない。旧形式データは開発データ破棄/再作成対象
-- `qrpayload.ts`の`/b/<code>`生成は確定QR payload=`Box.code`と矛盾し修正対象
+- canonicalization/field normalization未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
+- Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
+- Device registration / DevicePrefix割当 / local monotonic sequence未実装
+- `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
-- photoId独立写真モデル、UUID/collision/re-ID未実装
-- Photo親embedded sync、写真差し替え新photoId、写真順序business update未実装
-- photoHash server bytes再検証未実装
-- photoId単位Blob分離同期、blob-first、30日GC、PHOTO_BLOB_NOT_AVAILABLE retry未実装
-- thumbnail 400px/256KiB、original 1600px/5MiB server validation未実装
-- 写真最大10枚共通validation未実装
-- original cache Quota管理未実装
-- thumbnailを保存原画像から生成するpipeline未実装
-- thumbnail repair/freshness/専用取得API/ETag conditional request未実装
-- original取得APIのcanonical参照認可、photoHash ETag conditional request未実装
+- photoId独立モデル、Blob分離同期、server検証、thumbnail/original API・cache管理未実装
 
 ## 5. ロードマップ
 0. 現状棚卸し — 完了
@@ -272,9 +153,14 @@ ABCDEFGHJKMNPQRSTUVWXYZ23456789
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **`Box.code`衝突時のclient再発行を、どの同期単位まで自動で付け替えるかを確定する。**
+次の判断候補: **DevicePrefix払い出しAPIの競合・枯渇時挙動を確定する。**
 
-推奨候補は、`Box.id`は変更せず`Box.code`だけ新規生成し、同じBox Outbox payload/contentHash/outboxVersionを更新して再Pushする方式。Item等はBox.id参照なので付け替え不要。既に印刷・表示した未同期QRは無効になるため、server canonical受理前のcode/QRは「仮発行」と位置付け、同期成功後に正式ラベル印刷を推奨する。
+推奨候補:
+- registration requestは`deviceId`のみ（Userは認証から確定）
+- 同じdeviceIdならidempotentに既存prefixを返す
+- 新deviceIdならserver transaction内で未使用prefixを選び、User scope unique制約で確定
+- allocation collisionはserver内部で別prefixを再試行し、clientへは露出させない
+- 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`として明示的に失敗し、Box新規作成を停止する
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
