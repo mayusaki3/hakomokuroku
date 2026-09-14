@@ -165,6 +165,20 @@ retiredAt? / status
 
 根拠: 乱数割当ならdevice数やprefix追加回数に依存する中央sequenceを管理せずに済み、User scope unique制約で一意性を保証できる。乱数collisionはnamespace使用率が上がれば増えるため、単純なretry上限を枯渇判定に使わず、`DEVICE_PREFIX_EXHAUSTED`は実際に未使用空間がない場合だけ返す。
 
+#### DevicePrefix高使用率fallback
+**確定:** 通常はsecure-random allocationを使用し、collisionが異常に続いた場合だけ決定的fallbackへ切り替える。
+
+- 通常経路はsecure-random candidate生成 + `(User.id, prefix)` unique制約 + collision時再抽選
+- random collisionが異常に続いた場合のみfallback確認へ入る
+- fallbackでは当該Userに永久予約されている使用済みprefix集合を取得する。active/retiredを問わずすべて使用済みとして扱う
+- 31文字alphabetによる4文字空間を決定的な順序で走査し、使用済み集合に存在しない最初のprefixをcandidateとする
+- fallback candidateも最終的には同じ`(User.id, prefix)` unique制約で確定し、並行allocationとの競合が起きた場合は次の未使用候補へ進む
+- 使用済みprefix数が`923,521`件に達していることを確認できた場合はnamespace完全枯渇として`DEVICE_PREFIX_EXHAUSTED`を返す
+- 使用済み件数が`923,521`未満ならrandom retry失敗だけを理由に`DEVICE_PREFIX_EXHAUSTED`とはしない
+- fallback走査は高使用率・異常collision時のみの例外経路であり、通常allocationごとに全namespaceを走査しない
+
+根拠: random allocationは通常利用で軽量だが、namespace使用率が高くなるとcollision確率が上がる。使用済み集合と決定的走査をfallbackに限定することで通常時の簡潔さを保ちつつ、高使用率でもrandom collisionをnamespace枯渇と誤認せず、最後の未使用prefixまで確実に割り当てられる。
+
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
 - photoId=論理写真ID、photoHash=保存原画像bytesのSHA-256相当
@@ -189,7 +203,7 @@ retiredAt? / status
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
 - Device registration / 1:N DevicePrefix allocation / active-retired管理 / `expectedActivePrefix`付き追加割当API未実装
-- DevicePrefix secure-random allocation / User-scope unique retry / exhaustion確認未実装
+- DevicePrefix secure-random allocation / User-scope unique retry / deterministic fallback / exhaustion確認未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
@@ -214,14 +228,13 @@ retiredAt? / status
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **DevicePrefix namespaceの「未使用prefix存在確認」をどの方法で行うかを確定する。**
+次の判断候補: **Box.code用のlocal device stateをどこまでbackup/restore対象に含めるかを確定する。**
 
 推奨候補:
-- 通常時はsecure-random + unique retryだけで割り当てる
-- retryが異常に多い場合だけfallback確認へ入る
-- fallbackでは当該Userの使用済みprefix集合を取得し、31^4空間を決定的に走査して最初の未使用prefixを割り当てる
-- 使用済み件数が`31^4`なら`DEVICE_PREFIX_EXHAUSTED`
-- これにより高使用率でもrandom collisionを枯渇と誤認しない
+- `deviceId / activePrefix / LocalSequence counter`は端末固有system stateであり、通常のユーザーデータbackup/restoreには含めない
+- backupから別端末へ復元しても、その端末は自分のdeviceId/prefix namespaceを使って新しいBoxを作る
+- backup内の既存Box.codeはbusiness dataとしてそのまま復元する
+- device stateをコピーしないことで、同じprefix/counter namespaceを複数端末が並行使用する事故を防ぐ
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
