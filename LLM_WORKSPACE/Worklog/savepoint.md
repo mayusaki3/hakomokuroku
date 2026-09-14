@@ -134,18 +134,23 @@ retiredAt? / status
 - 初回device登録時は`deviceId`だけを受け取り、device registration + 最初のactive prefixをserver transaction内で作成する
 - 同じdeviceIdの通常再登録/再ログインでは既存active prefixを返し、新規prefixを増やさない
 - sequence枯渇時だけ、同じdeviceIdに対して明示的なprefix追加割当を要求する
-- prefix追加割当はserver transaction内で行い、旧active prefixをretired、新prefixをactiveとして切り替える
+- prefix追加割当requestは`deviceId`と`expectedActivePrefix`を送る
+- `expectedActivePrefix`はclientが使い切った現在のactive prefixを指定する
+- serverは認証User配下の当該deviceについて現在active prefixをtransaction内で取得し、`expectedActivePrefix`と比較する
+- 一致した場合のみ旧active prefixをretiredにし、新しいprefixを割り当ててactiveへ切り替える
+- すでに別requestでactive prefixが切替済みで不一致の場合は、さらにprefixを発行せず、現在のactive prefixを返す
+- したがって同じ`expectedActivePrefix`による再送・多重request・response lossでも、1回の枯渇につき新prefixは最大1件だけ追加される
+- prefix追加割当はserver transaction内で行い、旧active prefix retired化と新active prefix作成をatomicにする
 - `(User.id, deviceId)`と`(User.id, prefix)`の一意制約をDBで保持する
 - 1 deviceあたりactive prefixは常に最大1件
-- prefix割当中の競合はserver内部で別prefixを選択して再試行し、通常のallocation collisionをclientへ露出しない
+- prefix割当中のprefix値競合はserver内部で別prefixを選択して再試行し、通常のallocation collisionをclientへ露出しない
 - 過去に払い出したprefixはallocation recordを保持し、永久予約として再利用しない
 - 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`を返す
 - `DEVICE_PREFIX_EXHAUSTED`時は既存Boxの閲覧・編集・同期を継続可能とし、新しいprefixが必要なBox新規作成だけを停止する
 - initial registrationは同じdeviceIdならidempotentに同じactive prefixを返す
-- prefix追加割当もnetwork response lossを考慮し、同じ枯渇済みactive prefixを基準に再送した場合は既に切替済みの新active prefixを返せるidempotent設計とする
-- clientはactive prefix取得成功後にlocalへ永続保存し、そのprefix用LocalSequenceを`0`から開始する
+- clientは新active prefix取得後にlocalへ永続保存し、そのprefix用LocalSequenceを`0`から開始する
 
-根拠: 通常ログインとsequence枯渇時の追加割当を分離することで、再ログインのたびにprefixが増えることを防止する。追加割当を旧active prefix基準でidempotentにすれば、応答消失時にも二重allocationを避けられる。
+根拠: `expectedActivePrefix`をcompare-and-switch用の整合キーにすることで、clientが「どのprefixの枯渇に対する切替か」をserverへ明示できる。server側の現在active prefixがすでに進んでいれば再割当せず現値を返すため、通信再送・並行request・応答消失でもprefixを余分に消費せず、Box.code namespaceの不変性を維持できる。
 
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
@@ -170,7 +175,7 @@ retiredAt? / status
 - canonicalization/field normalization未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
-- Device registration / 1:N DevicePrefix allocation / active-retired管理 / 追加割当API未実装
+- Device registration / 1:N DevicePrefix allocation / active-retired管理 / `expectedActivePrefix`付き追加割当API未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
@@ -195,14 +200,14 @@ retiredAt? / status
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **DevicePrefix追加割当時のclient/server状態整合をどのキーで保証するかを確定する。**
+次の判断候補: **DevicePrefix server割当方式を、ランダム抽選にするかserver-side sequence/予約表にするかを確定する。**
 
 推奨候補:
-- clientは枯渇した現在prefixを`expectedActivePrefix`として送る
-- serverは同じdeviceIdの現在active prefixと比較する
-- 一致する場合だけ旧prefixをretiredにして新prefixを割り当てる
-- 既に別prefixへ切替済みなら新規割当せず、現在active prefixを返す
-- これにより通信再送・多重requestでも1回の枯渇につき1 prefixだけ追加される
+- prefix文字列自体は4文字alphabet spaceからserverがcryptographically secure randomで候補生成する
+- `(User.id, prefix)` unique制約により未使用だけを確定する
+- collision時はserver内部で再抽選する
+- 全prefixの事前予約表やper-user巨大counterは持たない
+- namespace枯渇判定は再試行上限だけで誤判定せず、必要なら未使用存在確認を行ってから`DEVICE_PREFIX_EXHAUSTED`とする
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
