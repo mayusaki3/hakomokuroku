@@ -54,15 +54,19 @@ RestoreConflict
 - entityId
 - conflictType
 - existingSnapshot
+- existingContentHash
 - backupSnapshot
 - resolution
     null
     KEEP_EXISTING
     USE_BACKUP
+- stale
 - resolvedAt
 ```
 
 利用者が1件判断するたびに`resolution`をIndexedDBへ即時保存する。
+
+`existingContentHash`は競合作成時点のlocal Business内容を表す。RestoreSessionの判断中も通常の箱目録操作を許可するため、適用前のstale判定に使用する。
 
 ## 5. staging
 
@@ -82,7 +86,7 @@ restore開始時に、restore処理に必要なbackup内容をIndexedDB内のRes
 - RestoreSessionとstaging、競合一覧、判断済みresolutionを保持する
 - Business / SyncState / Outboxは競合選択だけを理由に変更しない
 - 次回起動時に未完了RestoreSessionを検出し、「復元作業を再開」できる
-- 再開時は未解決の競合から続行する
+- 再開時は未解決またはstaleになった競合から続行する
 
 ### キャンセル
 
@@ -92,11 +96,33 @@ restore開始時に、restore処理に必要なbackup内容をIndexedDB内のRes
 
 ### 完了
 
-- すべての必須判断が解決された後にのみ`APPLYING`へ進む
+- すべての必須判断が解決され、かつstale競合がない場合にのみ`APPLYING`へ進む
 - 適用完了後に`COMPLETED`とする
 - 完了後のstagingは削除可能
 
-## 7. 適用原則
+## 7. 競合選択中の通常利用とstale判定
+
+**確定:** RestoreSessionが`RESOLVING`の間も、通常の箱・アイテム・置き場所等の閲覧・編集を原則許可する。
+
+- restore競合を作成した時点で、対象entityの`existingContentHash`を保存する
+- 利用者の`KEEP_EXISTING / USE_BACKUP`選択は、その時点のexisting snapshotに対する判断として保存する
+- `APPLYING`へ遷移する直前に、すべての競合対象entityについて現在のBusiness contentHashを再計算/取得し、保存済み`existingContentHash`と比較する
+- hash一致なら、その競合の既存判断は有効なまま適用可能
+- hash不一致なら、その競合だけを`stale=true`として既存resolutionを無効化する
+- stale化した競合は最新existing snapshot / 最新existing contentHashへ更新し、同じbackup snapshotとの比較を利用者へ再提示する
+- stale対象以外の判断済みresolutionは維持する
+- stale化により内容がbackupと同一になった場合はUNCHANGED相当として利用者再選択なしで解決可能
+- stale判定は`updatedAt`ではなくbusiness `contentHash`で行う
+- stale競合が残る間は`APPLYING`へ進まない
+- RestoreSession判断中の通常編集自体を禁止・rollbackしない
+
+### 根拠
+
+restoreの競合選択が長時間に及ぶ場合、アプリ全体をロックすると通常利用を不必要に妨げる。一方、競合作成時snapshotに対する選択を、その後編集されたentityへそのまま適用すると利用者の新しい変更を上書きする危険がある。
+
+business contentHashをcompare-and-revalidate用に使えば、時刻ずれや単なるmetadata変更に依存せず「利用者が判断した対象内容がまだ同じか」を判定できる。変更があったentityだけ再判断に戻すことで、安全性を維持しつつ他の判断済み作業を失わない。
+
+## 8. 適用原則
 
 - 競合選択中にentityを部分適用しない
 - `KEEP_EXISTING`は対象Businessを変更しない
@@ -104,23 +130,22 @@ restore開始時に、restore処理に必要なbackup内容をIndexedDB内のRes
 - restore由来であってもOutboxのbaseRevision等は現在local SyncStateを基準にする
 - backup由来のrevision / syncSeq / cursor等をそのまま採用しない
 - Box.code immutable / User-scope unique制約を含む既存のrestore検証規則を優先し、識別子不整合は選択競合ではなくrestore errorとする
+- `APPLYING`開始前にstale再検証を必ず完了する
 
-## 8. 根拠
+## 9. 根拠
 
 競合ごとに判断直後からBusinessへ反映すると、10件中4件だけ解決した状態でアプリ終了した場合に「部分restore済み」の曖昧な状態が残る。RestoreSessionへ判断だけを永続化し、全判断後に適用すれば、途中終了・ブラウザ再起動・利用者都合の中断を安全に扱える。
 
 また元backupファイルを再指定させる方式では、ブラウザのfile handle権限やファイル移動・削除に依存して再開不能になる可能性がある。restore開始時に必要内容をlocal stagingへコピーすることで、再開可能性をrestore session自身で保証できる。
 
-## 9. 次の設計判断候補
+## 10. 次の設計判断候補
 
-RestoreSessionが`RESOLVING`の間も通常の箱目録操作を許可する場合、session作成後に対象entityが編集される可能性がある。そのため、**restore開始時の`existingSnapshot`からBusinessが変化した場合のstale判定・再競合化規則**を確定する必要がある。
+`APPLYING`中の原子性と中断可能範囲を確定する必要がある。
 
 推奨案:
-- 通常利用は止めない
-- RestoreConflict作成時にexisting側のbusiness contentHashを記録する
-- `APPLYING`直前に現在のcontentHashと比較する
-- 一致なら選択済みresolutionを適用可能
-- 不一致ならその競合判断をstaleとして無効化し、最新existing vs backupで再度利用者判断を要求する
-- stale対象以外の判断は維持する
-
-これにより長時間のrestore判断中でもアプリ全体をロックせず、古いsnapshotに対する判断を誤適用しない。
+- `RESOLVING`までは自由に中断可能
+- stale再検証が全件通った後、適用対象を確定snapshotとして固定して`APPLYING`へ遷移する
+- `APPLYING`ではBusiness / Outbox / 必要な参照修正を可能な範囲で1 IndexedDB transactionにまとめる
+- transaction成功後のみ`COMPLETED`へ遷移する
+- transaction失敗時はBusiness変更をrollbackし、RestoreSessionを`ERROR`または再試行可能状態に残す
+- `APPLYING`中の利用者操作による手動中断は提供しない
