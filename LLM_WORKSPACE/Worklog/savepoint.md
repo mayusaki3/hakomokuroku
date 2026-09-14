@@ -143,14 +143,27 @@ retiredAt? / status
 - prefix追加割当はserver transaction内で行い、旧active prefix retired化と新active prefix作成をatomicにする
 - `(User.id, deviceId)`と`(User.id, prefix)`の一意制約をDBで保持する
 - 1 deviceあたりactive prefixは常に最大1件
-- prefix割当中のprefix値競合はserver内部で別prefixを選択して再試行し、通常のallocation collisionをclientへ露出しない
 - 過去に払い出したprefixはallocation recordを保持し、永久予約として再利用しない
 - 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`を返す
 - `DEVICE_PREFIX_EXHAUSTED`時は既存Boxの閲覧・編集・同期を継続可能とし、新しいprefixが必要なBox新規作成だけを停止する
 - initial registrationは同じdeviceIdならidempotentに同じactive prefixを返す
 - clientは新active prefix取得後にlocalへ永続保存し、そのprefix用LocalSequenceを`0`から開始する
 
-根拠: `expectedActivePrefix`をcompare-and-switch用の整合キーにすることで、clientが「どのprefixの枯渇に対する切替か」をserverへ明示できる。server側の現在active prefixがすでに進んでいれば再割当せず現値を返すため、通信再送・並行request・応答消失でもprefixを余分に消費せず、Box.code namespaceの不変性を維持できる。
+#### DevicePrefix server割当方式
+**確定:** prefix値はserverが暗号学的乱数で候補生成し、DB一意制約で確定する。
+
+- 候補は`ABCDEFGHJKMNPQRSTUVWXYZ23456789`の31文字alphabetから4文字をcryptographically secure random sourceで生成する
+- `(User.id, prefix)` unique制約を最終的な未使用判定とする
+- candidate collision時は既存allocationを変更せず、server内部で別candidateを再抽選する
+- 通常のcollisionはclientへ露出しない
+- 全prefixの事前予約表やper-user巨大counterは持たない
+- 実装上の再試行回数超過だけではnamespace枯渇と判定しない
+- 再試行で候補確保できない場合は、当該Userで未使用prefixが実際に存在するかを別途確認する
+- 未使用prefixが存在するならallocationを継続し、存在しないことを確認できた場合だけ`DEVICE_PREFIX_EXHAUSTED`とする
+- namespace総数は1 Userあたり`31^4 = 923,521` prefix
+- prefixの永久予約方針により、retired prefixも使用済み数へ含める
+
+根拠: 乱数割当ならdevice数やprefix追加回数に依存する中央sequenceを管理せずに済み、User scope unique制約で一意性を保証できる。乱数collisionはnamespace使用率が上がれば増えるため、単純なretry上限を枯渇判定に使わず、`DEVICE_PREFIX_EXHAUSTED`は実際に未使用空間がない場合だけ返す。
 
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
@@ -176,6 +189,7 @@ retiredAt? / status
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
 - Device registration / 1:N DevicePrefix allocation / active-retired管理 / `expectedActivePrefix`付き追加割当API未実装
+- DevicePrefix secure-random allocation / User-scope unique retry / exhaustion確認未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
@@ -200,14 +214,14 @@ retiredAt? / status
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **DevicePrefix server割当方式を、ランダム抽選にするかserver-side sequence/予約表にするかを確定する。**
+次の判断候補: **DevicePrefix namespaceの「未使用prefix存在確認」をどの方法で行うかを確定する。**
 
 推奨候補:
-- prefix文字列自体は4文字alphabet spaceからserverがcryptographically secure randomで候補生成する
-- `(User.id, prefix)` unique制約により未使用だけを確定する
-- collision時はserver内部で再抽選する
-- 全prefixの事前予約表やper-user巨大counterは持たない
-- namespace枯渇判定は再試行上限だけで誤判定せず、必要なら未使用存在確認を行ってから`DEVICE_PREFIX_EXHAUSTED`とする
+- 通常時はsecure-random + unique retryだけで割り当てる
+- retryが異常に多い場合だけfallback確認へ入る
+- fallbackでは当該Userの使用済みprefix集合を取得し、31^4空間を決定的に走査して最初の未使用prefixを割り当てる
+- 使用済み件数が`31^4`なら`DEVICE_PREFIX_EXHAUSTED`
+- これにより高使用率でもrandom collisionを枯渇と誤認しない
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
