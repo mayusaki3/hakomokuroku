@@ -78,7 +78,7 @@ ABCDEFGHJKMNPQRSTUVWXYZ23456789
 #### DevicePrefix / LocalSequence
 - DevicePrefixはserverがUser scope内で一意に割り当てる4文字
 - LocalSequenceはdevice内の4文字単調増加counter
-- 1 deviceあたり最大`31^4 = 923,521` code space
+- 1 prefixあたり最大`31^4 = 923,521` code space
 - internal counterは整数`0..923520`
 - 表示4文字は上記31文字alphabetによる固定長4桁base31表現
 - 初回Boxはcounter=`0`をencodeして使用する
@@ -88,47 +88,64 @@ ABCDEFGHJKMNPQRSTUVWXYZ23456789
 - commit済みBox自身を保持し、そのBoxの後続処理をretryする
 - counterは巻き戻さず、一度commit済みの値を再利用しない
 - counter=`923520`を正常使用した時点で当該prefixをlocal exhaustedとして扱う
-- exhausted prefixでは次Boxを作成せず、onlineで新DevicePrefixを取得してから新counter=`0`で続行する
+- exhausted prefixでは次Boxを作成せず、onlineで同じdeviceIdへ新DevicePrefixを取得してから新counter=`0`で続行する
 - 既存Box.codeはprefix切替時も変更しない
 - DB上の`(User.id, Box.code)` unique制約は不変条件検査として保持する
 
 根拠: 整数counterをlocal正本にし固定長base31へencodeすることで、文字列incrementの曖昧さを排除する。Box/Outbox/counterを同一transactionに含めることで、クラッシュやtransaction失敗時の二重採番・counterだけ先行する状態を防止する。commit済みcodeを再利用しないことで、作成直後から印刷可能なBox.codeの不変性を維持する。
 
 #### Device登録record
-**確定:** serverにUser配下のdevice registrationを持つ。
+**確定:** serverにUser配下のdevice registrationを持ち、prefix allocationは1対多で分離する。
 
+Device registration:
 ```text
-deviceId     : client生成UUID
-devicePrefix : server割当4文字
+deviceId   : client生成UUID
 createdAt
 lastSeenAt
 ```
 
+Device prefix allocation:
+```text
+deviceId
+prefix
+createdAt
+retiredAt? / status
+```
+
 - `deviceId`はclientが初回セットアップ時にUUID生成し、localへ永続保存する
 - serverは`(User.id, deviceId)`を一意として扱う
-- 同じUser + 同じdeviceIdの再登録/再ログインには同じDevicePrefixを返す
 - DevicePrefixはUser scope内で一意
-- 一度払い出したDevicePrefixは、そのdeviceが使われなくなっても**永久に再利用しない**
-- local dataを消去して端末を再セットアップした場合は、新deviceIdを生成し、新しいDevicePrefixをserverから取得する
+- 同じdeviceIdに複数DevicePrefixを時系列で割り当て可能
+- Box新規作成には最新のactive prefixだけを使用する
+- sequence枯渇時もdeviceIdは変更せず、同じdeviceIdへ新prefixを追加割当する
+- 過去prefixはretired扱いにしても永久予約を維持し、別device・別allocationへ再利用しない
+- 過去prefixで作成済みのBox.codeはそのまま有効で、変更しない
+- local dataを消去して端末を再セットアップした場合だけ新deviceIdを生成し、新しいDevicePrefixをserverから取得する
 - 旧deviceId/DevicePrefix/counterを推測・復元して再利用しない
-- device registrationにはbusiness syncのrevision/contentHash/syncSeqを持たせず、Box/Item等とは別のsystem registration dataとして扱う
+- device registration / prefix allocationにはbusiness syncのrevision/contentHash/syncSeqを持たせず、Box/Item等とは別のsystem registration dataとして扱う
 - `lastSeenAt`はserver管理時刻で、認証済み端末がdevice registration APIまたはsyncを正常利用した際に更新可能
 
-#### DevicePrefix払い出しAPI
-**確定:** 認証済みUserとclient `deviceId`だけでidempotentにdevice registrationを取得・作成する。
+根拠: `deviceId`を端末identityとして固定し、counter namespaceであるDevicePrefixを別recordへ分離することで、sequence枯渇を理由に端末identityを変更せずに済む。過去prefixを永久予約すれば、既存ラベルを維持したまま同一端末で採番空間を継続拡張できる。
 
-- request payloadは`deviceId`のみとし、Userはsession/tokenからserverが確定する
-- `(User.id, deviceId)`が既存なら新規prefixを発行せず、既存`devicePrefix`をそのまま返す
-- 新deviceIdならserver transaction内でUser scope未使用の4文字prefixを選択し、device registrationを作成する
-- `(User.id, deviceId)`と`(User.id, devicePrefix)`の一意制約をDBで保持する
+#### DevicePrefix払い出しAPI
+**確定:** 認証済みUserとclient `deviceId`でdevice registrationをidempotentに取得・作成し、必要時のみactive prefixを追加割当する。
+
+- Userはsession/tokenからserverが確定する
+- 初回device登録時は`deviceId`だけを受け取り、device registration + 最初のactive prefixをserver transaction内で作成する
+- 同じdeviceIdの通常再登録/再ログインでは既存active prefixを返し、新規prefixを増やさない
+- sequence枯渇時だけ、同じdeviceIdに対して明示的なprefix追加割当を要求する
+- prefix追加割当はserver transaction内で行い、旧active prefixをretired、新prefixをactiveとして切り替える
+- `(User.id, deviceId)`と`(User.id, prefix)`の一意制約をDBで保持する
+- 1 deviceあたりactive prefixは常に最大1件
 - prefix割当中の競合はserver内部で別prefixを選択して再試行し、通常のallocation collisionをclientへ露出しない
-- 過去に払い出したprefixはregistration recordを削除して再利用せず、永久予約として扱う
+- 過去に払い出したprefixはallocation recordを保持し、永久予約として再利用しない
 - 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`を返す
 - `DEVICE_PREFIX_EXHAUSTED`時は既存Boxの閲覧・編集・同期を継続可能とし、新しいprefixが必要なBox新規作成だけを停止する
-- API再送・network response lossでも同じdeviceIdなら同じprefixが返るため、払い出しはidempotent
-- clientはprefix取得成功後にlocalへ永続保存し、そのprefixを用いてofflineのLocalSequence採番を行う
+- initial registrationは同じdeviceIdならidempotentに同じactive prefixを返す
+- prefix追加割当もnetwork response lossを考慮し、同じ枯渇済みactive prefixを基準に再送した場合は既に切替済みの新active prefixを返せるidempotent設計とする
+- clientはactive prefix取得成功後にlocalへ永続保存し、そのprefix用LocalSequenceを`0`から開始する
 
-根拠: User identityをrequestへ持たせず認証から確定することでscope誤指定を防ぎ、deviceIdをidempotency keyとして扱うことで通信再送時の重複割当を防止する。prefix競合をserver内部で閉じ込めれば、Box.codeは作成時点から正式値として維持できる。namespace枯渇は通常運用では極めて起こりにくいが、仕様上silent fallbackやcode再発行をせず明示的に停止させる。
+根拠: 通常ログインとsequence枯渇時の追加割当を分離することで、再ログインのたびにprefixが増えることを防止する。追加割当を旧active prefix基準でidempotentにすれば、応答消失時にも二重allocationを避けられる。
 
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
@@ -153,7 +170,7 @@ lastSeenAt
 - canonicalization/field normalization未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
-- Device registration / DevicePrefix割当API / local monotonic sequence未実装
+- Device registration / 1:N DevicePrefix allocation / active-retired管理 / 追加割当API未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
@@ -178,14 +195,14 @@ lastSeenAt
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **sequence枯渇時に、同じdeviceIdへ新DevicePrefixを追加割当するか、新deviceIdへ切り替えるかを確定する。**
+次の判断候補: **DevicePrefix追加割当時のclient/server状態整合をどのキーで保証するかを確定する。**
 
 推奨候補:
-- `deviceId`は端末identityなのでsequence枯渇では変更しない
-- 同じdeviceIdへ新DevicePrefixを追加割当し、active prefixを切り替える
-- 過去prefixは永久予約・既存Box参照専用として保持する
-- device registrationとprefix allocationを1対多に分離する
-- これによりdeviceIdの意味を「counter namespace」ではなく「端末identity」として一貫させる
+- clientは枯渇した現在prefixを`expectedActivePrefix`として送る
+- serverは同じdeviceIdの現在active prefixと比較する
+- 一致する場合だけ旧prefixをretiredにして新prefixを割り当てる
+- 既に別prefixへ切替済みなら新規割当せず、現在active prefixを返す
+- これにより通信再送・多重requestでも1回の枯渇につき1 prefixだけ追加される
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
