@@ -179,6 +179,21 @@ retiredAt? / status
 
 根拠: random allocationは通常利用で軽量だが、namespace使用率が高くなるとcollision確率が上がる。使用済み集合と決定的走査をfallbackに限定することで通常時の簡潔さを保ちつつ、高使用率でもrandom collisionをnamespace枯渇と誤認せず、最後の未使用prefixまで確実に割り当てられる。
 
+#### Box.code用local device stateのbackup/restore
+**確定:** `deviceId / activePrefix / LocalSequence counter`は端末固有system stateとし、通常のユーザーデータbackup/restore対象には含めない。
+
+- `deviceId`は端末identityなのでbackupへ含めない
+- active/retired DevicePrefix allocation情報はserver-side system registration dataであり、通常backupへ含めない
+- local `activePrefix`およびLocalSequence counterも通常backupへ含めない
+- backup内の既存Box.codeはBoxのbusiness dataとしてそのまま保持・復元する
+- 別端末へbackupをrestoreしても、復元先端末は自分自身の`deviceId`とserverから割り当て済みのactive prefixを使用して新規Boxを採番する
+- restoreによって復元元端末のprefix/counter namespaceを複製しない
+- 同一端末へのrestoreでもdevice stateはbackupから上書きせず、その端末に現在存在するdevice stateを維持する
+- device stateが存在しない新規/再セットアップ端末ではonline認証後に新deviceIdを生成し、DevicePrefixをserverから取得してから新規Box作成を許可する
+- restoreされた既存Box.codeが復元先deviceのprefixと無関係でも正常とし、Box.codeはimmutableのまま維持する
+
+根拠: device stateまでbackup/restoreすると、同一`deviceId + prefix + counter` namespaceが複数端末へ複製され、offlineで同じBox.codeを発行できる危険がある。既存Box.codeだけをbusiness dataとして持ち運び、新規採番は各端末固有namespaceへ分離することで、backupの可搬性とBox.code一意性を両立する。
+
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
 - photoId=論理写真ID、photoHash=保存原画像bytesのSHA-256相当
@@ -205,6 +220,7 @@ retiredAt? / status
 - Device registration / 1:N DevicePrefix allocation / active-retired管理 / `expectedActivePrefix`付き追加割当API未実装
 - DevicePrefix secure-random allocation / User-scope unique retry / deterministic fallback / exhaustion確認未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
+- device stateを通常backupから除外する仕様未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立モデル、Blob分離同期、server検証、thumbnail/original API・cache管理未実装
@@ -228,13 +244,14 @@ retiredAt? / status
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **Box.code用のlocal device stateをどこまでbackup/restore対象に含めるかを確定する。**
+次の判断候補: **backup/restore時に既存Box.codeの重複をどう扱うかを確定する。**
 
 推奨候補:
-- `deviceId / activePrefix / LocalSequence counter`は端末固有system stateであり、通常のユーザーデータbackup/restoreには含めない
-- backupから別端末へ復元しても、その端末は自分のdeviceId/prefix namespaceを使って新しいBoxを作る
-- backup内の既存Box.codeはbusiness dataとしてそのまま復元する
-- device stateをコピーしないことで、同じprefix/counter namespaceを複数端末が並行使用する事故を防ぐ
+- backup内Boxは`Box.id`をbusiness identityとしてrestoreする
+- 同じBox.id + 同じBox.codeなら同一entityとしてmerge対象
+- 同じBox.id + 異なるBox.codeはimmutable規則違反としてrestoreを拒否/要利用者対応
+- 異なるBox.id + 同じBox.codeはUser scope unique違反としてrestoreを拒否/要利用者対応
+- restore時にBox.codeを自動再発行・書換えしない
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
