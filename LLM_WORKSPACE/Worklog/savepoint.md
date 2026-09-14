@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-13
+更新: 2026-09-14
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -104,7 +104,21 @@ lastSeenAt
 - device registrationにはbusiness syncのrevision/contentHash/syncSeqを持たせず、Box/Item等とは別のsystem registration dataとして扱う
 - `lastSeenAt`はserver管理時刻で、認証済み端末がdevice registration APIまたはsyncを正常利用した際に更新可能
 
-根拠: serverがDevicePrefix namespaceを一意に割り当て、各deviceがそのnamespace内で単調counterを採番すれば、offline作成時点でBox.codeを正式確定できる。過去prefixを再利用しないことで、Box削除や端末再セットアップ後も過去codeとの衝突を構造的に防止できる。
+#### DevicePrefix払い出しAPI
+**確定:** 認証済みUserとclient `deviceId`だけでidempotentにdevice registrationを取得・作成する。
+
+- request payloadは`deviceId`のみとし、Userはsession/tokenからserverが確定する
+- `(User.id, deviceId)`が既存なら新規prefixを発行せず、既存`devicePrefix`をそのまま返す
+- 新deviceIdならserver transaction内でUser scope未使用の4文字prefixを選択し、device registrationを作成する
+- `(User.id, deviceId)`と`(User.id, devicePrefix)`の一意制約をDBで保持する
+- prefix割当中の競合はserver内部で別prefixを選択して再試行し、通常のallocation collisionをclientへ露出しない
+- 過去に払い出したprefixはregistration recordを削除して再利用せず、永久予約として扱う
+- 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`を返す
+- `DEVICE_PREFIX_EXHAUSTED`時は既存Boxの閲覧・編集・同期を継続可能とし、新しいprefixが必要なBox新規作成だけを停止する
+- API再送・network response lossでも同じdeviceIdなら同じprefixが返るため、払い出しはidempotent
+- clientはprefix取得成功後にlocalへ永続保存し、そのprefixを用いてofflineのLocalSequence採番を行う
+
+根拠: User identityをrequestへ持たせず認証から確定することでscope誤指定を防ぎ、deviceIdをidempotency keyとして扱うことで通信再送時の重複割当を防止する。prefix競合をserver内部で閉じ込めれば、Box.codeは作成時点から正式値として維持できる。namespace枯渇は通常運用では極めて起こりにくいが、仕様上silent fallbackやcode再発行をせず明示的に停止させる。
 
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
@@ -129,7 +143,7 @@ lastSeenAt
 - canonicalization/field normalization未実装
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
-- Device registration / DevicePrefix割当 / local monotonic sequence未実装
+- Device registration / DevicePrefix割当API / local monotonic sequence未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立モデル、Blob分離同期、server検証、thumbnail/original API・cache管理未実装
@@ -153,14 +167,16 @@ lastSeenAt
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **DevicePrefix払い出しAPIの競合・枯渇時挙動を確定する。**
+次の判断候補: **LocalSequenceの初期値・文字列エンコード・採番失敗時の挙動を確定する。**
 
 推奨候補:
-- registration requestは`deviceId`のみ（Userは認証から確定）
-- 同じdeviceIdならidempotentに既存prefixを返す
-- 新deviceIdならserver transaction内で未使用prefixを選び、User scope unique制約で確定
-- allocation collisionはserver内部で別prefixを再試行し、clientへは露出させない
-- 4文字namespaceが本当に枯渇した場合のみ`DEVICE_PREFIX_EXHAUSTED`として明示的に失敗し、Box新規作成を停止する
+- internal counterは整数`0..923520`
+- 表示4文字は上記31文字alphabetによる固定4桁base31表現
+- 初回Boxはcounter=0を4文字へencodeして使用
+- Box作成transaction内で「現在値をcodeに使用 → 次値へincrement」をatomicに行う
+- transaction失敗時はBoxもcounter更新もrollback
+- 正常commit後に後続処理が失敗しても採番済みcodeは再利用せず、そのBox recordを保持してretryする
+- counter=923520を使用した後はそのprefixをexhausted扱いとし、次Box作成前にonlineで新prefixを取得する
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
