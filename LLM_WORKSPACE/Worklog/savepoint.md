@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-14
+更新: 2026-09-15
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -194,6 +194,19 @@ retiredAt? / status
 
 根拠: device stateまでbackup/restoreすると、同一`deviceId + prefix + counter` namespaceが複数端末へ複製され、offlineで同じBox.codeを発行できる危険がある。既存Box.codeだけをbusiness dataとして持ち運び、新規採番は各端末固有namespaceへ分離することで、backupの可搬性とBox.code一意性を両立する。
 
+#### backup/restore時のBox.code整合性
+**確定:** restoreは既存Box.codeを尊重し、Box.code不整合を自動修復しない。
+
+- backup内Boxのbusiness identityは`Box.id`
+- 同じ`Box.id`かつ同じ`Box.code`なら同一entityとしてmerge対象にできる
+- 同じ`Box.id`で`Box.code`が異なる場合はBox.code immutable規則違反としてrestoreを拒否し、利用者対応が必要なエラーとする
+- 異なる`Box.id`で同じ`Box.code`が存在する場合はUser scope unique違反としてrestoreを拒否し、利用者対応が必要なエラーとする
+- restore処理はBox.codeを自動再発行・書換え・再採番しない
+- backup内Box.code自身も現行canonical formatを満たさなければrestoreを拒否する
+- merge時も既存canonical Box.codeを保持し、backup側/既存側どちらかのcodeへ勝手に寄せない
+
+根拠: Box.codeは物理QRラベルへ印刷されるimmutable business identifierであり、restore都合で書き換えると現物ラベルとの対応が壊れる。同一IDのcode不一致や別IDのcode重複は単純なmerge競合ではなく識別子不変条件の破壊なので、自動修復より明示的拒否を優先する。
+
 ### 写真モデル
 - dedupなし。写真ごとに独立`photoId`
 - photoId=論理写真ID、photoHash=保存原画像bytesのSHA-256相当
@@ -221,6 +234,7 @@ retiredAt? / status
 - DevicePrefix secure-random allocation / User-scope unique retry / deterministic fallback / exhaustion確認未実装
 - LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - device stateを通常backupから除外する仕様未実装
+- restore時Box.code immutable/unique検証未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立モデル、Blob分離同期、server検証、thumbnail/original API・cache管理未実装
@@ -244,14 +258,14 @@ retiredAt? / status
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **backup/restore時に既存Box.codeの重複をどう扱うかを確定する。**
+次の判断候補: **backup restoreで同一Box.id + 同一Box.codeをmergeする場合の内容競合をどう扱うかを確定する。**
 
 推奨候補:
-- backup内Boxは`Box.id`をbusiness identityとしてrestoreする
-- 同じBox.id + 同じBox.codeなら同一entityとしてmerge対象
-- 同じBox.id + 異なるBox.codeはimmutable規則違反としてrestoreを拒否/要利用者対応
-- 異なるBox.id + 同じBox.codeはUser scope unique違反としてrestoreを拒否/要利用者対応
-- restore時にBox.codeを自動再発行・書換えしない
+- restoreは通常sync conflictとは別処理として扱う
+- 同一Box.id + 同一Box.codeでbusiness contentが同じならUNCHANGED相当
+- 内容が異なる場合は自動でupdatedAt勝者を選ばず、利用者に既存優先 / backup優先を選択させる
+- 選択後は通常のlocal business updateとして反映し、Outboxを生成してserverと同期する
+- backup側のsync metadata/revision/cursor等は持ち込まない
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
