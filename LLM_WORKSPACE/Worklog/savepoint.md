@@ -79,10 +79,20 @@ ABCDEFGHJKMNPQRSTUVWXYZ23456789
 - DevicePrefixはserverがUser scope内で一意に割り当てる4文字
 - LocalSequenceはdevice内の4文字単調増加counter
 - 1 deviceあたり最大`31^4 = 923,521` code space
-- Box作成とcounter incrementは同一local transactionで行う
-- sequenceは巻き戻さず、一度使用した値を再利用しない
-- sequence枯渇時はonlineで新DevicePrefixを取得し、既存Box.codeは変更しない
+- internal counterは整数`0..923520`
+- 表示4文字は上記31文字alphabetによる固定長4桁base31表現
+- 初回Boxはcounter=`0`をencodeして使用する
+- Box作成transaction内で「現在counterをcodeに使用 → Box/Outboxを作成 → counterを次値へincrement」をatomicに行う
+- transaction失敗時はBox/Outbox/counter更新をすべてrollbackする
+- 正常commit後に同期・写真upload・UI処理等の後続処理が失敗しても、そのcodeは別Boxへ再利用しない
+- commit済みBox自身を保持し、そのBoxの後続処理をretryする
+- counterは巻き戻さず、一度commit済みの値を再利用しない
+- counter=`923520`を正常使用した時点で当該prefixをlocal exhaustedとして扱う
+- exhausted prefixでは次Boxを作成せず、onlineで新DevicePrefixを取得してから新counter=`0`で続行する
+- 既存Box.codeはprefix切替時も変更しない
 - DB上の`(User.id, Box.code)` unique制約は不変条件検査として保持する
+
+根拠: 整数counterをlocal正本にし固定長base31へencodeすることで、文字列incrementの曖昧さを排除する。Box/Outbox/counterを同一transactionに含めることで、クラッシュやtransaction失敗時の二重採番・counterだけ先行する状態を防止する。commit済みcodeを再利用しないことで、作成直後から印刷可能なBox.codeの不変性を維持する。
 
 #### Device登録record
 **確定:** serverにUser配下のdevice registrationを持つ。
@@ -144,6 +154,7 @@ lastSeenAt
 - IndexedDB固定`hk-local-v1`、BoxLocationモデル不一致
 - Box.code生成が`id.ts`/`codegen.ts`の2系統。どちらも確定方式へ置換対象
 - Device registration / DevicePrefix割当API / local monotonic sequence未実装
+- LocalSequence整数counter・base31固定長encode・Box/Outbox/counter atomic transaction未実装
 - `qrpayload.ts`の`/b/<code>`生成は確定仕様と矛盾
 - backupのphotoThumbs/thumbs不一致、BoxLocation不足
 - photoId独立モデル、Blob分離同期、server検証、thumbnail/original API・cache管理未実装
@@ -167,16 +178,14 @@ lastSeenAt
 ## 6. 次のアクション
 同期・データモデル設計の残る主要未定義を最終点検する。
 
-次の判断候補: **LocalSequenceの初期値・文字列エンコード・採番失敗時の挙動を確定する。**
+次の判断候補: **sequence枯渇時に、同じdeviceIdへ新DevicePrefixを追加割当するか、新deviceIdへ切り替えるかを確定する。**
 
 推奨候補:
-- internal counterは整数`0..923520`
-- 表示4文字は上記31文字alphabetによる固定4桁base31表現
-- 初回Boxはcounter=0を4文字へencodeして使用
-- Box作成transaction内で「現在値をcodeに使用 → 次値へincrement」をatomicに行う
-- transaction失敗時はBoxもcounter更新もrollback
-- 正常commit後に後続処理が失敗しても採番済みcodeは再利用せず、そのBox recordを保持してretryする
-- counter=923520を使用した後はそのprefixをexhausted扱いとし、次Box作成前にonlineで新prefixを取得する
+- `deviceId`は端末identityなのでsequence枯渇では変更しない
+- 同じdeviceIdへ新DevicePrefixを追加割当し、active prefixを切り替える
+- 過去prefixは永久予約・既存Box参照専用として保持する
+- device registrationとprefix allocationを1対多に分離する
+- これによりdeviceIdの意味を「counter namespace」ではなく「端末identity」として一貫させる
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
