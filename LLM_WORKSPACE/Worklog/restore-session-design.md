@@ -117,7 +117,6 @@ restore開始時、Business/thumbnail系stagingとoriginal blob stagingを論理
 現行`apps/web/src/lib/backup.ts`は`hakomokuroku-backup@1`のJSONでBox/Item中心、`photoThumbs`を扱い、original blobを含まず、BoxLocationも対象外である。現行mergeは`updatedAt`で勝者を選び、replaceではID再採番を行う。確定仕様・テスト完成後の実装段階で置換対象とする。
 
 ## 12. backup container形式 — 確定
-
 **確定:** 自己完結backupはZIPをcontainer形式として使用する。JSONへのBase64埋め込みは使用しない。
 
 基本構造:
@@ -127,7 +126,7 @@ restore開始時、Business/thumbnail系stagingとoriginal blob stagingを論理
 ├─ photos/
 │  └─ <photoId>.webp
 └─ thumbnails/
-   └─ <photoId>.webp   # thumbnail格納方式は次判断で最終確定
+   └─ <photoId>.webp
 ```
 
 ### manifest.json
@@ -137,45 +136,61 @@ rootの`manifest.json`をbackupの入口/目録とし、少なくとも次を持
 - counts
 - Box / Item / BoxLocation等のactive Business snapshot
 - photo metadata (`photoId`, `photoHash`, order, parentとの対応)
-- binary entryへのpath mapping
+- original/thumbnail binary entryへのpath mapping
 - binary entryの検証情報
 
 ### original
 - 保存原画像は`photos/<photoId>.webp`としてbinaryのまま格納する。
 - Base64へ変換しない。
-- `photoId`とmanifest mappingでBusinessから参照する。
 - original bytesは既存の`photoHash`で整合性検証する。
 
 ### versioning
 - containerの物理形式はZIPで固定し、論理schema versionをmanifestで管理する。
 - restoreはmanifest schema/versionを先に検証してから他entryを採用する。
 - 未対応の将来versionを推測して読み込まない。
-- migration対応を追加する場合はversion単位で明示的に行う。
-- 現行`hakomokuroku-backup@1` JSONは開発中旧形式であり、v0.8確定backupとのlegacy互換を必須にしない。旧開発データを破棄可能という既決方針に合わせる。
+- migration対応はversion単位で明示的に行う。
+- 現行`hakomokuroku-backup@1` JSONとのlegacy互換は必須にしない。
 
 ### ファイル拡張子
-- 利用者向けには箱目録backupと識別できる固有拡張子を採用する方向とする。
-- 実体は標準ZIPなので、診断・将来migration・toolingを容易にする。
+- 利用者向けには箱目録backupと識別できる固有拡張子を採用する方向。
+- 実体は標準ZIP。
 - MIME typeや具体的拡張子文字列はbackup仕様確定時に固定する。
 
 ### integrity
-- ZIP自体のCRCだけに完全性判断を依存しない。
+- ZIP CRCだけに完全性判断を依存しない。
 - manifestに各binary entryの期待hashを持たせる。
-- originalは`photoHash`と実bytesのSHA-256を照合する。
-- manifest自体およびcontainer全体の追加hash/signature要否は別途判断する。
 - 不一致entryがあればPREPARINGを失敗させBusinessへ反映しない。
 
 ### 根拠
-写真originalをJSONへBase64埋め込みするとファイルサイズ増加、巨大JSON parse時のmemory負荷、binary検証/stream処理の複雑化が生じる。ZIP内にbinaryを独立entryとして保持すれば、自己完結性を維持しながらmanifestと大容量binaryを分離できる。また論理schemaをmanifestで管理することで、container形式を変えず将来migrationを追加できる。
+写真originalをJSONへBase64埋め込みするとファイルサイズ増加、巨大JSON parse時のmemory負荷、binary検証/stream処理の複雑化が生じる。ZIP内にbinaryを独立entryとして保持すれば、自己完結性を維持しながらmanifestと大容量binaryを分離できる。
 
-## 13. 次の設計判断候補
+## 13. thumbnail backup entry — 確定
 
-thumbnailのbackup格納方式を確定する必要がある。
+**確定:** thumbnailもZIP内の独立binary entryとして格納する。
+
+- pathは`thumbnails/<photoId>.webp`。
+- thumbnail bytesをmanifest JSONへBase64等で埋め込まない。
+- manifestの各photo metadataに少なくとも`thumbnailPath`, `thumbnailHash`, `thumbnailSize`を保持する。
+- `thumbnailHash`はthumbnail bytesのSHA-256とし、backup integrity検証専用値とする。
+- `thumbnailHash`はparent Businessの`contentHash`には含めない。既決の「thumbnail bytes変更だけではparent hash/revision/syncSeqを変えない」を維持する。
+- restore `PREPARING`で実thumbnail bytesのSHA-256と`thumbnailHash`を照合する。
+- `thumbnailSize`と実entry sizeも一致確認する。
+- originalは`photoHash`、thumbnailは`thumbnailHash`という独立validatorを使用する。
+- original/thumbnailとも同じbinary-entry validation pipelineを利用できるようにする。
+- thumbnailが欠落・hash不一致・size不一致なら自己完結backupの完全性違反としてPREPARINGを失敗させる。restore中にoriginalから暗黙再生成して継続しない。
+
+### 根拠
+thumbnailをJSONへ埋め込むとmanifestが肥大化し、Base64変換と巨大JSON parseの負荷が増える。originalと同様にbinary entryへ分離すればmanifestを軽量に保ち、hash/size検証を共通化できる。またbackupは自己完結型としたため、thumbnail破損をrestore時に黙って補正するよりbackup破損として明示する方が完全性の境界が明確になる。
+
+## 14. 次の設計判断候補
+
+backup container自体のintegrity範囲を確定する必要がある。
 
 推奨案:
-- thumbnailも`thumbnails/<photoId>.webp`としてbinary entry化する。
-- manifestにはthumbnail path + thumbnail hash/sizeを保持する。
-- thumbnail bytesをJSON/Base64へ埋め込まない。
-- restore PREPARINGでthumbnail hashを検証する。
-- originalとは独立したthumbnail hashをbackup integrity用に持つ（これはparent business contentHashではない）。
-- これによりmanifestを小さく保ち、original/thumbnailとも同じbinary entry検証方式を利用できる。
+- v0.8では暗号署名は導入しない（backupは改ざん防止より破損検出が主目的）。
+- `manifest.json`にbinary entry hashを持たせる現行方式を基本とする。
+- manifest自身の破損はJSON parse/schema validation/business validationで検出する。
+- manifestの外側に自己参照しない`checksums.json`を追加し、`manifest.json`を含む全論理entryのSHA-256を列挙する。
+- `checksums.json`自身はhash対象外とし、ZIP CRC + checksums schema validationで読む。
+- restore PREPARINGでZIP path安全性、entry重複、manifest/checksum対応、全entry hashを検証してからstagingへ昇格する。
+- これにより写真だけでなくmanifestのbit corruptionやentry差し替えも検出しやすくする。ただし攻撃者による意図的改ざん（checksumsも同時変更）は防げないことを仕様上明記する。
