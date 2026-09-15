@@ -72,81 +72,110 @@ RestoreConflict
 - COMPLETED / CANCELLEDはactiveに数えずcleanup対象。
 
 ## 8. backupの自己完結性と写真 — 確定
-
 **確定:** 通常backupは、serverや元端末へ依存せず復元できる自己完結型とし、Businessデータ、thumbnail、保存原画像(original blob)を含める。
 
 backup対象:
 - Box / Item / BoxLocation等のactive Businessデータ
 - 各写真の`photoId / photoHash / thumbnail / array order`
-- 各写真の保存原画像blob（既に確定済みのstored-original WebP bytes）
+- 各写真の保存原画像blob
 - restoreに必要なschema/version/manifest情報
 
 backup対象外:
 - `deviceId / DevicePrefix / LocalSequence`
 - SyncState / Outbox / sync cursor / syncSeq / server revision等の同期内部状態
 - RestoreSession / RestoreConflict / restore staging
-- tombstone（通常backupはactive dataのみという既決方針を維持）
+- tombstone
 
 ### 根拠
-写真originalをbackupに含めない場合、server側blobが消失・取得不能な状況ではbackup単体から完全復元できず、backupとしての独立性が失われる。したがって通常backupはoriginalを含む。
+写真originalをbackupに含めない場合、server側blobが消失・取得不能な状況ではbackup単体から完全復元できず、backupとしての独立性が失われる。
 
 ## 9. RestoreSession stagingの写真保持 — 確定
-
 restore開始時、Business/thumbnail系stagingとoriginal blob stagingを論理的に分離する。
 
-### Business staging
-保持するもの:
-- backup Business snapshot
-- `photoId / photoHash / thumbnail / order`
-- RestoreConflictとresolution
-- manifest/validationに必要な情報
-
-通常Business / SyncState / Outboxとは別領域とし、RESOLVING中はcanonical dataとして表示・同期しない。
-
-### Blob staging
-- backupに含まれるoriginal blobはRestoreSession専用blob stagingへ保持する。
-- restore開始時点で通常photo original cache/canonical領域へ無条件に複製しない。
+- Business stagingはbackup Business snapshot、photo metadata、RestoreConflict/resolution、manifest検証情報を保持する。
+- original blobはRestoreSession専用blob stagingへ保持する。
+- restore開始時点で通常photo cache/canonical領域へ無条件に複製しない。
 - RESOLVING中はblob stagingを保持し、元backupファイルなしで再開可能にする。
-- `USE_BACKUP`等の最終結果でcanonical Businessから参照される写真だけを適用対象とする。
-- KEEP_EXISTINGや最終的に不要なbackup写真はcanonical領域へ導入しない。
+- 最終結果でcanonical Businessから参照される写真だけを適用対象とする。
+- KEEP_EXISTING等で不要なbackup写真はcanonical領域へ導入しない。
 - キャンセル時はblob stagingを削除可能。
 - COMPLETED後はcanonical側に必要originalが存在することを確認してstagingをcleanupする。
-
-### photoId / photoHash検証
-- staging作成時にbackup manifestと写真entryを検証する。
-- original bytesからphotoHashを再計算し、backup記録のphotoHashと一致しない写真はrestore errorとする。
-- 同じphotoIdが現在canonicalに存在し同じphotoHashなら同一写真bytesとして扱える。
-- 同じphotoIdで異なるphotoHashは既決の`PHOTO_ID_COLLISION`/identity不整合として自動上書きしない。
-
-### 根拠
-originalを通常cacheへ先に投入すると、キャンセルされたrestoreのblobが通常領域へ混入し、容量消費とGC判定を複雑化する。RestoreSession専用stagingならrestore確定前のデータを隔離でき、中断再開も保証できる。
+- staging作成時にoriginal bytesからphotoHashを再計算しmanifest値と照合する。
+- 同じphotoId + 同じphotoHashは同一写真bytesとして扱える。
+- 同じphotoId + 異なるphotoHashはidentity不整合として自動上書きしない。
 
 ## 10. staging容量不足 — 確定
-
-- `PREPARING`でbackup manifestを先に検証し、Business/thumbnail/originalを含む必要staging容量を見積もる。
-- `navigator.storage.estimate()`等で取得可能なquota/usageは事前警告・開始可否判断の参考値に使う。
-- quota推定値だけを成功保証には使わず、**実際のIndexedDB staging write成功を正本**とする。
+- `PREPARING`でbackup manifestを検証し必要staging容量を見積もる。
+- `navigator.storage.estimate()`等のquota/usageは参考値。
+- 最終判定は実際のIndexedDB staging write成功。
 - Businessへ一切反映する前にstaging copyを完了する。
-- quota不足、IndexedDB write failure、写真hash不一致等でPREPARINGに失敗した場合、作成途中stagingをcleanupする。
-- PREPARING失敗では既存Business / SyncState / Outboxを変更しない。
-- cleanup後、容量確保またはbackup修正後にrestoreを最初から再試行する。
-- PREPARING途中の不完全stagingをRESOLVINGへ昇格させない。
-
-### 根拠
-ブラウザstorage quotaは実装・端末・空き容量等で変動し、estimate値だけでは書込成功を保証できない。一方、staging完了前にBusinessを変更しなければ容量不足でも既存データを安全に維持できる。
+- quota不足/write failure/hash不一致等ならPREPARING失敗とし、途中stagingをcleanupする。
+- 既存Business / SyncState / Outboxは変更しない。
+- 不完全stagingをRESOLVINGへ昇格させない。
 
 ## 11. 現行実装との差異
-現行`apps/web/src/lib/backup.ts`は`hakomokuroku-backup@1`のJSONでBox/Item中心、`photoThumbs`を扱い、original blobを含まず、BoxLocationも対象外である。現行mergeは`updatedAt`で勝者を選び、replaceではID再採番を行う。これらは確定設計と一致せず、仕様・テスト確定後の実装段階で置換対象とする。
+現行`apps/web/src/lib/backup.ts`は`hakomokuroku-backup@1`のJSONでBox/Item中心、`photoThumbs`を扱い、original blobを含まず、BoxLocationも対象外である。現行mergeは`updatedAt`で勝者を選び、replaceではID再採番を行う。確定仕様・テスト完成後の実装段階で置換対象とする。
 
-## 12. 次の設計判断候補
+## 12. backup container形式 — 確定
 
-自己完結backupの**ファイル形式**を確定する必要がある。original blobを含むため、巨大Base64をJSONへ埋め込む方式は避けるのが望ましい。
+**確定:** 自己完結backupはZIPをcontainer形式として使用する。JSONへのBase64埋め込みは使用しない。
+
+基本構造:
+```text
+<backup container: ZIP>
+├─ manifest.json
+├─ photos/
+│  └─ <photoId>.webp
+└─ thumbnails/
+   └─ <photoId>.webp   # thumbnail格納方式は次判断で最終確定
+```
+
+### manifest.json
+rootの`manifest.json`をbackupの入口/目録とし、少なくとも次を持つ。
+- backup schema identifier + version
+- exportedAt
+- counts
+- Box / Item / BoxLocation等のactive Business snapshot
+- photo metadata (`photoId`, `photoHash`, order, parentとの対応)
+- binary entryへのpath mapping
+- binary entryの検証情報
+
+### original
+- 保存原画像は`photos/<photoId>.webp`としてbinaryのまま格納する。
+- Base64へ変換しない。
+- `photoId`とmanifest mappingでBusinessから参照する。
+- original bytesは既存の`photoHash`で整合性検証する。
+
+### versioning
+- containerの物理形式はZIPで固定し、論理schema versionをmanifestで管理する。
+- restoreはmanifest schema/versionを先に検証してから他entryを採用する。
+- 未対応の将来versionを推測して読み込まない。
+- migration対応を追加する場合はversion単位で明示的に行う。
+- 現行`hakomokuroku-backup@1` JSONは開発中旧形式であり、v0.8確定backupとのlegacy互換を必須にしない。旧開発データを破棄可能という既決方針に合わせる。
+
+### ファイル拡張子
+- 利用者向けには箱目録backupと識別できる固有拡張子を採用する方向とする。
+- 実体は標準ZIPなので、診断・将来migration・toolingを容易にする。
+- MIME typeや具体的拡張子文字列はbackup仕様確定時に固定する。
+
+### integrity
+- ZIP自体のCRCだけに完全性判断を依存しない。
+- manifestに各binary entryの期待hashを持たせる。
+- originalは`photoHash`と実bytesのSHA-256を照合する。
+- manifest自体およびcontainer全体の追加hash/signature要否は別途判断する。
+- 不一致entryがあればPREPARINGを失敗させBusinessへ反映しない。
+
+### 根拠
+写真originalをJSONへBase64埋め込みするとファイルサイズ増加、巨大JSON parse時のmemory負荷、binary検証/stream処理の複雑化が生じる。ZIP内にbinaryを独立entryとして保持すれば、自己完結性を維持しながらmanifestと大容量binaryを分離できる。また論理schemaをmanifestで管理することで、container形式を変えず将来migrationを追加できる。
+
+## 13. 次の設計判断候補
+
+thumbnailのbackup格納方式を確定する必要がある。
 
 推奨案:
-- backup containerをZIPとする。
-- root `manifest.json`にschema version、exportedAt、counts、Businessデータ、photo metadata/file mappingを保持する。
-- originalは`photos/<photoId>.webp`としてbinary格納する。
-- thumbnailもbinary file化するかmanifest内表現にするかは次判断。
-- container全体またはmanifest/entry hashで破損検出する。
-- 拡張子は箱目録固有形式にする場合でも実体ZIPとし、将来version migrationを容易にする。
-
+- thumbnailも`thumbnails/<photoId>.webp`としてbinary entry化する。
+- manifestにはthumbnail path + thumbnail hash/sizeを保持する。
+- thumbnail bytesをJSON/Base64へ埋め込まない。
+- restore PREPARINGでthumbnail hashを検証する。
+- originalとは独立したthumbnail hashをbackup integrity用に持つ（これはparent business contentHashではない）。
+- これによりmanifestを小さく保ち、original/thumbnailとも同じbinary entry検証方式を利用できる。
