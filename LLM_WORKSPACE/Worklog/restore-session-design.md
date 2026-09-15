@@ -123,6 +123,7 @@ restore開始時、Business/thumbnail系stagingとoriginal blob stagingを論理
 ```text
 <backup container: ZIP>
 ├─ manifest.json
+├─ checksums.json
 ├─ photos/
 │  └─ <photoId>.webp
 └─ thumbnails/
@@ -156,41 +157,76 @@ rootの`manifest.json`をbackupの入口/目録とし、少なくとも次を持
 - 実体は標準ZIP。
 - MIME typeや具体的拡張子文字列はbackup仕様確定時に固定する。
 
-### integrity
-- ZIP CRCだけに完全性判断を依存しない。
-- manifestに各binary entryの期待hashを持たせる。
-- 不一致entryがあればPREPARINGを失敗させBusinessへ反映しない。
-
-### 根拠
-写真originalをJSONへBase64埋め込みするとファイルサイズ増加、巨大JSON parse時のmemory負荷、binary検証/stream処理の複雑化が生じる。ZIP内にbinaryを独立entryとして保持すれば、自己完結性を維持しながらmanifestと大容量binaryを分離できる。
-
 ## 13. thumbnail backup entry — 確定
-
-**確定:** thumbnailもZIP内の独立binary entryとして格納する。
-
 - pathは`thumbnails/<photoId>.webp`。
 - thumbnail bytesをmanifest JSONへBase64等で埋め込まない。
-- manifestの各photo metadataに少なくとも`thumbnailPath`, `thumbnailHash`, `thumbnailSize`を保持する。
-- `thumbnailHash`はthumbnail bytesのSHA-256とし、backup integrity検証専用値とする。
-- `thumbnailHash`はparent Businessの`contentHash`には含めない。既決の「thumbnail bytes変更だけではparent hash/revision/syncSeqを変えない」を維持する。
-- restore `PREPARING`で実thumbnail bytesのSHA-256と`thumbnailHash`を照合する。
-- `thumbnailSize`と実entry sizeも一致確認する。
-- originalは`photoHash`、thumbnailは`thumbnailHash`という独立validatorを使用する。
-- original/thumbnailとも同じbinary-entry validation pipelineを利用できるようにする。
-- thumbnailが欠落・hash不一致・size不一致なら自己完結backupの完全性違反としてPREPARINGを失敗させる。restore中にoriginalから暗黙再生成して継続しない。
+- manifestに`thumbnailPath`, `thumbnailHash`, `thumbnailSize`を保持する。
+- `thumbnailHash`はthumbnail bytesのSHA-256でbackup integrity専用。
+- parent Business `contentHash`には含めない。
+- PREPARINGでhash/sizeを検証する。
+- 欠落・hash不一致・size不一致ならPREPARINGを失敗させ、originalから暗黙再生成しない。
+
+## 14. backup container integrity — 確定
+
+**確定:** v0.8のbackup integrityは意図的な改ざん防止ではなく、保存・転送・媒体等による破損検出を目的とする。暗号署名/MACは導入しない。
+
+### checksums.json
+ZIP rootに`checksums.json`を置く。
+
+概念例:
+```json
+{
+  "algorithm": "SHA-256",
+  "entries": {
+    "manifest.json": "<sha256>",
+    "photos/<photoId>.webp": "<sha256>",
+    "thumbnails/<photoId>.webp": "<sha256>"
+  }
+}
+```
+
+規則:
+- `checksums.json`は自己参照を避けるためhash対象外。
+- `manifest.json`を含む、backup仕様上の全論理entryを列挙する。
+- SHA-256はentryの展開後raw bytesに対して計算する。
+- pathはZIP内canonical relative pathで比較する。
+- algorithmはv0.8では`SHA-256`のみ受理する。
+- checksums schema自体が不正ならPREPARING失敗。
+
+### restore PREPARING validation順序
+1. ZIP/containerとして安全にopenできることを確認する。
+2. entry pathを検証し、absolute path、`..` traversal、backslash等の非canonical path、directory traversalを拒否する。
+3. 同一canonical pathの重複entryを拒否する。
+4. 必須`manifest.json` / `checksums.json`の存在を確認する。
+5. `checksums.json`をparseしschema/algorithm/path一覧を検証する。
+6. `checksums.json`に列挙された各entryが実在し、仕様上許可されたentryであることを確認する。
+7. backup内の論理file entryがchecksums一覧から欠落していないことを確認する。
+8. 各entryのSHA-256を計算して一致確認する。
+9. hash検証済み`manifest.json`をparseし、schema/version/business/photo mapping/count/size等を検証する。
+10. originalについてmanifest `photoHash`とも再照合し、thumbnailについて`thumbnailHash/thumbnailSize`とも再照合する。
+11. すべて成功後にのみ完全なstagingとしてRESOLVINGへ進める。
+
+### 不明/余分entry
+- v0.8 schemaで許可されない余分なfile entryは拒否する。
+- directory entryそのものは実装上存在してもよいが、file entryとしてBusiness dataを持たせない。
+- 将来拡張はschema versionを上げ、許可entry規則を明示的に変更する。
+
+### 改ざん耐性の境界
+- ZIP CRC、entry SHA-256、manifest schema/business validationで偶発的破損や一部entry差し替えを高確率で検出する。
+- 攻撃者が`manifest.json`/binaryと`checksums.json`を同時に再作成できる場合、v0.8方式だけでは意図的改ざんを検出できない。
+- backupファイルを信頼できない相手から受け取る用途の真正性保証はv0.8対象外。
+- 将来必要なら署名/MAC/encryptionを別versionで追加する。
 
 ### 根拠
-thumbnailをJSONへ埋め込むとmanifestが肥大化し、Base64変換と巨大JSON parseの負荷が増える。originalと同様にbinary entryへ分離すればmanifestを軽量に保ち、hash/size検証を共通化できる。またbackupは自己完結型としたため、thumbnail破損をrestore時に黙って補正するよりbackup破損として明示する方が完全性の境界が明確になる。
+manifest内hashだけではmanifest自身のbit corruptionを直接検証できない。外側の`checksums.json`にmanifestを含めて列挙すれば、自己参照問題を避けながらmanifestとbinaryを同じ検証手順で確認できる。v0.8の目的を破損検出に限定することで、鍵管理や署名鍵のライフサイクルを導入せずbackup/restoreの信頼性を高められる。
 
-## 14. 次の設計判断候補
+## 15. 次の設計判断候補
 
-backup container自体のintegrity範囲を確定する必要がある。
+backupの**固有拡張子・MIME type・ファイル名規則**を確定する必要がある。
 
 推奨案:
-- v0.8では暗号署名は導入しない（backupは改ざん防止より破損検出が主目的）。
-- `manifest.json`にbinary entry hashを持たせる現行方式を基本とする。
-- manifest自身の破損はJSON parse/schema validation/business validationで検出する。
-- manifestの外側に自己参照しない`checksums.json`を追加し、`manifest.json`を含む全論理entryのSHA-256を列挙する。
-- `checksums.json`自身はhash対象外とし、ZIP CRC + checksums schema validationで読む。
-- restore PREPARINGでZIP path安全性、entry重複、manifest/checksum対応、全entry hashを検証してからstagingへ昇格する。
-- これにより写真だけでなくmanifestのbit corruptionやentry差し替えも検出しやすくする。ただし攻撃者による意図的改ざん（checksumsも同時変更）は防げないことを仕様上明記する。
+- 拡張子: `.hkmbackup`
+- MIME type: `application/vnd.hakomokuroku.backup+zip`
+- export file name: `hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup`
+- file名timestampは利用者local timeを表示用途として使い、backup正本時刻はmanifestの`exportedAt`（UTC RFC3339 ms）とする。
+- restore時は拡張子/MIMEだけを信頼せずZIP magic + manifest schemaで判定する。
