@@ -132,20 +132,43 @@ business contentHashをcompare-and-revalidate用に使えば、時刻ずれや�
 - Box.code immutable / User-scope unique制約を含む既存のrestore検証規則を優先し、識別子不整合は選択競合ではなくrestore errorとする
 - `APPLYING`開始前にstale再検証を必ず完了する
 
-## 9. 根拠
+## 9. APPLYINGの原子性と中断範囲
+
+**確定:** `RESOLVING`までは自由に中断可能とし、`APPLYING`開始後は利用者による手動中断を提供しない。
+
+- 全競合のresolutionが確定した後、APPLYING直前にstale再検証を実施する
+- staleが1件でもあれば`RESOLVING`へ戻し、その対象だけ再判断する
+- staleがなければ、その時点のstaging + resolution + current baselineを適用対象の確定snapshotとして固定し、statusを`APPLYING`へ遷移する
+- `APPLYING`ではBusiness更新、必要な参照修正、contentHash再計算、Outbox生成/更新を、対象local DBで可能な限り単一IndexedDB readwrite transactionにまとめる
+- 同一transactionで扱えるlocal tableは一括してatomicにcommit/rollbackする
+- `KEEP_EXISTING`対象はBusinessを変更しない
+- `USE_BACKUP`対象は通常local business updateと同じ規則で反映する
+- transaction成功後にのみrestore適用済みとみなし、RestoreSessionを`COMPLETED`へ遷移する
+- transaction失敗時はBusiness / Outbox / 参照修正をrollbackし、部分restoreを残さない
+- transaction失敗後はRestoreSessionを`ERROR`または安全に再試行可能な状態として保持し、stagingとresolutionを失わない
+- `APPLYING`中に画面終了・ブラウザ終了・クラッシュが発生しても、IndexedDB transactionがcommitしていなければBusiness側は未適用、commit済みなら適用済みとして扱えるよう完了状態を復旧判定できる設計にする
+- `APPLYING`中に利用者が「中断」を押して処理途中で止めるUIは提供しない
+- restore適用transactionの実行中は、同一local DBに対する競合するBusiness writeを直列化/待機させ、確定snapshot検証後からcommitまでのraceを防ぐ
+
+### 根拠
+
+restore適用中にentity単位でcommitすると、クラッシュや手動中断によって一部だけbackup内容へ切り替わった状態が残り、再開時にどこまで適用済みかを別途管理する必要が生じる。適用対象を確定した後、BusinessとOutboxを可能な限り1 IndexedDB transactionへまとめれば、成功か未適用かの境界を明確にできる。
+
+また、stale再検証後も通常編集writeを並行させると、検証直後に内容が変わってからrestoreが上書きするTOCTOU raceが発生する。APPLYINGの短い区間だけ競合writeを直列化することで、RESOLVING中の通常利用を維持しつつ最終適用の整合性を保証できる。
+
+## 10. 根拠
 
 競合ごとに判断直後からBusinessへ反映すると、10件中4件だけ解決した状態でアプリ終了した場合に「部分restore済み」の曖昧な状態が残る。RestoreSessionへ判断だけを永続化し、全判断後に適用すれば、途中終了・ブラウザ再起動・利用者都合の中断を安全に扱える。
 
 また元backupファイルを再指定させる方式では、ブラウザのfile handle権限やファイル移動・削除に依存して再開不能になる可能性がある。restore開始時に必要内容をlocal stagingへコピーすることで、再開可能性をrestore session自身で保証できる。
 
-## 10. 次の設計判断候補
+## 11. 次の設計判断候補
 
-`APPLYING`中の原子性と中断可能範囲を確定する必要がある。
+`APPLYING`のcommit成功後、`RestoreSession`を`COMPLETED`へ記録する前にアプリが終了した場合の復旧markerを確定する必要がある。
 
 推奨案:
-- `RESOLVING`までは自由に中断可能
-- stale再検証が全件通った後、適用対象を確定snapshotとして固定して`APPLYING`へ遷移する
-- `APPLYING`ではBusiness / Outbox / 必要な参照修正を可能な範囲で1 IndexedDB transactionにまとめる
-- transaction成功後のみ`COMPLETED`へ遷移する
-- transaction失敗時はBusiness変更をrollbackし、RestoreSessionを`ERROR`または再試行可能状態に残す
-- `APPLYING`中の利用者操作による手動中断は提供しない
+- restore適用transaction内でBusiness / Outbox更新と同時に`RestoreSession.appliedAt`または`applyCommitId`を記録する
+- このmarkerを「restoreのBusiness適用がcommit済み」の正本とする
+- 起動時にstatus=`APPLYING`かつmarkerありなら再適用せず`COMPLETED`へ収束させる
+- status=`APPLYING`かつmarkerなしならBusiness適用は未commitとして安全に再試行する
+- これによりcommit直後のクラッシュでも二重適用を防止する
