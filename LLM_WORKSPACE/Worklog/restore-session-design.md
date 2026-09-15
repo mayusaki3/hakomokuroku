@@ -9,47 +9,26 @@
 backup/restore時に複数entityの内容競合が発生した場合、利用者が1件ずつ判断している途中で画面を閉じたりアプリを終了したりしても、判断済み内容を失わず後から再開できるようにする。
 
 ## 2. restore競合の基本方針
-
-同一`Box.id + Box.code`でbusiness contentが同一ならUNCHANGED相当とする。
-
-business contentが異なる場合は`updatedAt`等で自動勝者を決めず、利用者が次のどちらかを選択する。
-
-- `KEEP_EXISTING`: 現在のlocal内容を維持する
-- `USE_BACKUP`: backup内容を採用する
-
-`USE_BACKUP`はrestore専用のsync metadataを持ち込まず、通常のlocal business updateとして反映し、Outboxを生成する。backup側のrevision/cursor/serverUpdatedAt等は採用しない。
+- 同一identityでbusiness content同一ならUNCHANGED相当。
+- business content差異は`KEEP_EXISTING / USE_BACKUP`を利用者が選択する。
+- `updatedAt`で自動勝者を決めない。
+- `USE_BACKUP`は通常local business updateとして反映しOutboxを生成する。backup側sync metadataは導入しない。
 
 ## 3. RestoreSession
-
-restoreは一括で直ちにBusinessへ適用せず、永続的な作業単位`RestoreSession`を作成する。
-
-概念model:
-
 ```text
 RestoreSession
 - id
 - backupHash
-- status
-    PREPARING
-    RESOLVING
-    APPLYING
-    COMPLETED
-    CANCELLED
-    ERROR
+- status: PREPARING | RESOLVING | APPLYING | COMPLETED | CANCELLED | ERROR
 - createdAt
 - updatedAt
 - appliedAt?
 - currentConflictIndex
 ```
-
-`backupHash`は読み込んだbackup内容を識別するために使用する。restore再開のために元backupファイルを再指定する必要はない。
-
-`appliedAt`はrestore適用transactionがBusiness / Outboxとともに正常commitしたことを示すlocal commit markerであり、単なるUI完了時刻ではない。
+- backup内容をstagingへ保持し、元backupファイル再指定なしで再開可能にする。
+- `appliedAt`はBusiness / Outboxと同一transactionでcommitされる適用済みmarker。
 
 ## 4. RestoreConflict
-
-競合判断はsession配下に永続保存する。
-
 ```text
 RestoreConflict
 - restoreSessionId
@@ -59,156 +38,115 @@ RestoreConflict
 - existingSnapshot
 - existingContentHash
 - backupSnapshot
-- resolution
-    null
-    KEEP_EXISTING
-    USE_BACKUP
+- resolution: null | KEEP_EXISTING | USE_BACKUP
 - stale
 - resolvedAt
 ```
+- 判断ごとに即時永続化する。
+- RESOLVING中も通常編集を許可する。
+- APPLYING直前にcurrent business contentHashと`existingContentHash`を再比較する。
+- 不一致の競合だけstale化してresolutionを無効化し、最新existing vs backupを再判断する。
+- 他の判断済みresolutionは維持する。
 
-利用者が1件判断するたびに`resolution`をIndexedDBへ即時保存する。
+## 5. 中断・再開
+- `RESOLVING`中は任意に中断可能。
+- session / staging / resolutionを保持する。
+- 競合選択中はBusiness / SyncState / Outboxへ部分適用しない。
+- 起動時に未完了sessionを検出して再開可能にする。
+- APPLYING前ならキャンセル可能。Business未変更のままstagingを破棄する。
 
-`existingContentHash`は競合作成時点のlocal Business内容を表す。RestoreSessionの判断中も通常の箱目録操作を許可するため、適用前のstale判定に使用する。
+## 6. APPLYING
+- 全競合解決 + staleなしでのみ開始する。
+- APPLYING開始後の利用者手動中断は提供しない。
+- Business更新、参照修正、contentHash再計算、Outbox生成/更新、`RestoreSession.appliedAt`を可能な限り単一IndexedDB readwrite transactionに含める。
+- transaction失敗は全rollbackし部分restoreを残さない。
+- stale検証後からcommitまで競合Business writeを直列化する。
+- `APPLYING + appliedAtあり`なら再適用せずCOMPLETEDへ収束する。
+- `APPLYING + appliedAtなし`なら未commitとして安全に再試行する。
 
-## 5. staging
+## 7. active RestoreSession数
+- User local DBごとにactive未完了sessionは最大1件。
+- active=`PREPARING / RESOLVING / APPLYING / ERROR(retryable)`。
+- active session中は新規restore開始禁止。
+- 既存sessionを再開、またはAPPLYING前ならキャンセルしてから新規restoreする。
+- COMPLETED / CANCELLEDはactiveに数えずcleanup対象。
 
-restore開始時に、restore処理に必要なbackup内容をIndexedDB内のRestoreSession staging領域へコピーする。
+## 8. backupの自己完結性と写真 — 確定
 
-- 元backupファイルへの継続アクセスに依存しない
-- ブラウザ再起動後も同じRestoreSessionを再開できる
-- stagingは通常Business / SyncState / Outboxとは別領域に保持する
-- staging中のbackup entityはcanonical Businessとして表示・同期しない
-- backup側sync metadataはstagingへ保持する必要がある場合でも参考情報扱いとし、Business/SyncStateへ直接導入しない
+**確定:** 通常backupは、serverや元端末へ依存せず復元できる自己完結型とし、Businessデータ、thumbnail、保存原画像(original blob)を含める。
 
-## 6. 中断・再開
+backup対象:
+- Box / Item / BoxLocation等のactive Businessデータ
+- 各写真の`photoId / photoHash / thumbnail / array order`
+- 各写真の保存原画像blob（既に確定済みのstored-original WebP bytes）
+- restoreに必要なschema/version/manifest情報
 
-### 中断
-
-- `RESOLVING`中は任意の時点で中断可能
-- RestoreSessionとstaging、競合一覧、判断済みresolutionを保持する
-- Business / SyncState / Outboxは競合選択だけを理由に変更しない
-- 次回起動時に未完了RestoreSessionを検出し、「復元作業を再開」できる
-- 再開時は未解決またはstaleになった競合から続行する
-
-### キャンセル
-
-- `APPLYING`開始前なら利用者はrestoreをキャンセル可能
-- RestoreSessionのstatusを`CANCELLED`とし、stagingと未適用の判断情報を破棄可能にする
-- Business / SyncState / Outboxは変更しない
-
-### 完了
-
-- すべての必須判断が解決され、かつstale競合がない場合にのみ`APPLYING`へ進む
-- 適用transaction commit後に`appliedAt`が存在することを適用済みの正本とする
-- `appliedAt`確認後に`COMPLETED`へ収束する
-- 完了後のstagingは削除可能
-
-## 7. 競合選択中の通常利用とstale判定
-
-**確定:** RestoreSessionが`RESOLVING`の間も、通常の箱・アイテム・置き場所等の閲覧・編集を原則許可する。
-
-- restore競合を作成した時点で、対象entityの`existingContentHash`を保存する
-- 利用者の`KEEP_EXISTING / USE_BACKUP`選択は、その時点のexisting snapshotに対する判断として保存する
-- `APPLYING`へ遷移する直前に、すべての競合対象entityについて現在のBusiness contentHashを再計算/取得し、保存済み`existingContentHash`と比較する
-- hash一致なら、その競合の既存判断は有効なまま適用可能
-- hash不一致なら、その競合だけを`stale=true`として既存resolutionを無効化する
-- stale化した競合は最新existing snapshot / 最新existing contentHashへ更新し、同じbackup snapshotとの比較を利用者へ再提示する
-- stale対象以外の判断済みresolutionは維持する
-- stale化により内容がbackupと同一になった場合はUNCHANGED相当として利用者再選択なしで解決可能
-- stale判定は`updatedAt`ではなくbusiness `contentHash`で行う
-- stale競合が残る間は`APPLYING`へ進まない
-- RestoreSession判断中の通常編集自体を禁止・rollbackしない
+backup対象外:
+- `deviceId / DevicePrefix / LocalSequence`
+- SyncState / Outbox / sync cursor / syncSeq / server revision等の同期内部状態
+- RestoreSession / RestoreConflict / restore staging
+- tombstone（通常backupはactive dataのみという既決方針を維持）
 
 ### 根拠
+写真originalをbackupに含めない場合、server側blobが消失・取得不能な状況ではbackup単体から完全復元できず、backupとしての独立性が失われる。したがって通常backupはoriginalを含む。
 
-restoreの競合選択が長時間に及ぶ場合、アプリ全体をロックすると通常利用を不必要に妨げる。一方、競合作成時snapshotに対する選択を、その後編集されたentityへそのまま適用すると利用者の新しい変更を上書きする危険がある。
+## 9. RestoreSession stagingの写真保持 — 確定
 
-business contentHashをcompare-and-revalidate用に使えば、時刻ずれや単なるmetadata変更に依存せず「利用者が判断した対象内容がまだ同じか」を判定できる。変更があったentityだけ再判断に戻すことで、安全性を維持しつつ他の判断済み作業を失わない。
+restore開始時、Business/thumbnail系stagingとoriginal blob stagingを論理的に分離する。
 
-## 8. 適用原則
+### Business staging
+保持するもの:
+- backup Business snapshot
+- `photoId / photoHash / thumbnail / order`
+- RestoreConflictとresolution
+- manifest/validationに必要な情報
 
-- 競合選択中にentityを部分適用しない
-- `KEEP_EXISTING`は対象Businessを変更しない
-- `USE_BACKUP`は通常のlocal business updateとしてBusiness更新 + contentHash再計算 + Outbox生成を行う
-- restore由来であってもOutboxのbaseRevision等は現在local SyncStateを基準にする
-- backup由来のrevision / syncSeq / cursor等をそのまま採用しない
-- Box.code immutable / User-scope unique制約を含む既存のrestore検証規則を優先し、識別子不整合は選択競合ではなくrestore errorとする
-- `APPLYING`開始前にstale再検証を必ず完了する
+通常Business / SyncState / Outboxとは別領域とし、RESOLVING中はcanonical dataとして表示・同期しない。
 
-## 9. APPLYINGの原子性と中断範囲
+### Blob staging
+- backupに含まれるoriginal blobはRestoreSession専用blob stagingへ保持する。
+- restore開始時点で通常photo original cache/canonical領域へ無条件に複製しない。
+- RESOLVING中はblob stagingを保持し、元backupファイルなしで再開可能にする。
+- `USE_BACKUP`等の最終結果でcanonical Businessから参照される写真だけを適用対象とする。
+- KEEP_EXISTINGや最終的に不要なbackup写真はcanonical領域へ導入しない。
+- キャンセル時はblob stagingを削除可能。
+- COMPLETED後はcanonical側に必要originalが存在することを確認してstagingをcleanupする。
 
-**確定:** `RESOLVING`までは自由に中断可能とし、`APPLYING`開始後は利用者による手動中断を提供しない。
-
-- 全競合のresolutionが確定した後、APPLYING直前にstale再検証を実施する
-- staleが1件でもあれば`RESOLVING`へ戻し、その対象だけ再判断する
-- staleがなければ、その時点のstaging + resolution + current baselineを適用対象の確定snapshotとして固定し、statusを`APPLYING`へ遷移する
-- `APPLYING`ではBusiness更新、必要な参照修正、contentHash再計算、Outbox生成/更新を、対象local DBで可能な限り単一IndexedDB readwrite transactionにまとめる
-- 同一transactionで扱えるlocal tableは一括してatomicにcommit/rollbackする
-- `KEEP_EXISTING`対象はBusinessを変更しない
-- `USE_BACKUP`対象は通常local business updateと同じ規則で反映する
-- transaction成功後にのみrestore適用済みとみなす
-- transaction失敗時はBusiness / Outbox / 参照修正 / `appliedAt`をすべてrollbackし、部分restoreを残さない
-- transaction失敗後はRestoreSessionを`ERROR`または安全に再試行可能な状態として保持し、stagingとresolutionを失わない
-- `APPLYING`中に利用者が「中断」を押して処理途中で止めるUIは提供しない
-- restore適用transactionの実行中は、同一local DBに対する競合するBusiness writeを直列化/待機させ、確定snapshot検証後からcommitまでのraceを防ぐ
-
-## 10. 適用commit markerとクラッシュ復旧
-
-**確定:** `RestoreSession.appliedAt`をrestore Business適用commit済みの正本markerとして使用する。
-
-- `appliedAt`はserver sync metadataではなく、端末localのRestoreSession管理情報
-- `appliedAt`の値はlocal restore適用transaction commit時の時刻を記録する
-- Business / Outbox / 必要な参照修正と`appliedAt`更新を**同一IndexedDB transaction**に含める
-- transactionがabort/rollbackした場合はBusiness変更と同時に`appliedAt`も残らない
-- transactionがcommitした場合はBusiness変更と`appliedAt`が必ず同時に存在する
-- `status=APPLYING`かつ`appliedAt != null`で起動/復旧した場合、Business適用は完了済みと判定し、restoreを再適用せず`COMPLETED`へ収束させる
-- `status=APPLYING`かつ`appliedAt == null`ならBusiness適用transactionは未commitと判定し、staging/resolutionを使って安全に再試行する
-- `status=COMPLETED`では`appliedAt`必須とする
-- `appliedAt`は適用済み判定にだけ使い、business `updatedAt`やsync conflict winner判定には使わない
-- `COMPLETED`へのstatus更新とstaging cleanupはcommit marker確認後の後処理でよく、クラッシュしても次回起動時に再実行可能とする
-- cleanupの失敗はrestore Business適用失敗とは扱わない
+### photoId / photoHash検証
+- staging作成時にbackup manifestと写真entryを検証する。
+- original bytesからphotoHashを再計算し、backup記録のphotoHashと一致しない写真はrestore errorとする。
+- 同じphotoIdが現在canonicalに存在し同じphotoHashなら同一写真bytesとして扱える。
+- 同じphotoIdで異なるphotoHashは既決の`PHOTO_ID_COLLISION`/identity不整合として自動上書きしない。
 
 ### 根拠
+originalを通常cacheへ先に投入すると、キャンセルされたrestoreのblobが通常領域へ混入し、容量消費とGC判定を複雑化する。RestoreSession専用stagingならrestore確定前のデータを隔離でき、中断再開も保証できる。
 
-Business適用transactionのcommit直後、`COMPLETED`へのstatus更新前にアプリが終了すると、statusだけでは「未適用なのか、適用済みなのか」を区別できない。Business/Outboxと同一transactionでcommit markerを保存すれば、IndexedDBのatomicityを利用して適用済み境界を一意に判定できる。
+## 10. staging容量不足 — 確定
 
-`appliedAt`をmarkerにすれば追加のcommit ID照合機構を必要とせず、単一端末local restoreの用途には十分である。時刻値そのものの順序性には依存せず、null/non-nullだけをcommit判定に使用する。
-
-## 11. 未完了RestoreSessionの同時存在数
-
-**確定:** User local DBごとにactiveな未完了RestoreSessionは最大1件とする。
-
-- active扱いは`PREPARING / RESOLVING / APPLYING / ERROR(retryable)`
-- active sessionが存在する間、新しいbackup restore開始を禁止する
-- 利用者は既存sessionを再開するか、`APPLYING`開始前なら既存sessionをキャンセルしてから新しいrestoreを開始する
-- `APPLYING`中はキャンセル不可。commit markerによる復旧または未commit再試行で収束させる
-- retryable `ERROR`は既存sessionの再試行対象であり、新規restoreを並行開始しない
-- `COMPLETED / CANCELLED`はactive sessionとして数えず、後処理/cleanup対象とする
-- non-retryable errorでrestoreを継続できない場合は、Business未適用であることを確認した上でsessionを終了/破棄してから新規restoreを許可する
-- local DBがUserごとに分離されるため、別UserのRestoreSessionとは干渉しない
+- `PREPARING`でbackup manifestを先に検証し、Business/thumbnail/originalを含む必要staging容量を見積もる。
+- `navigator.storage.estimate()`等で取得可能なquota/usageは事前警告・開始可否判断の参考値に使う。
+- quota推定値だけを成功保証には使わず、**実際のIndexedDB staging write成功を正本**とする。
+- Businessへ一切反映する前にstaging copyを完了する。
+- quota不足、IndexedDB write failure、写真hash不一致等でPREPARINGに失敗した場合、作成途中stagingをcleanupする。
+- PREPARING失敗では既存Business / SyncState / Outboxを変更しない。
+- cleanup後、容量確保またはbackup修正後にrestoreを最初から再試行する。
+- PREPARING途中の不完全stagingをRESOLVINGへ昇格させない。
 
 ### 根拠
+ブラウザstorage quotaは実装・端末・空き容量等で変動し、estimate値だけでは書込成功を保証できない。一方、staging完了前にBusinessを変更しなければ容量不足でも既存データを安全に維持できる。
 
-複数の未完了restoreを同時保持すると、それぞれが異なるbackup snapshotとexisting snapshotを持ち、通常編集や別restoreの適用によって相互にstale化する。さらに適用順序によって最終Business内容が変わるため、競合判断の意味が不明瞭になる。
+## 11. 現行実装との差異
+現行`apps/web/src/lib/backup.ts`は`hakomokuroku-backup@1`のJSONでBox/Item中心、`photoThumbs`を扱い、original blobを含まず、BoxLocationも対象外である。現行mergeは`updatedAt`で勝者を選び、replaceではID再採番を行う。これらは確定設計と一致せず、仕様・テスト確定後の実装段階で置換対象とする。
 
-User local DBごとにactive sessionを1件へ限定すれば、restore対象snapshot・判断・適用順序を一意に保ち、中断再開UIとクラッシュ復旧も単純化できる。
+## 12. 次の設計判断候補
 
-## 12. 根拠
-
-競合ごとに判断直後からBusinessへ反映すると、10件中4件だけ解決した状態でアプリ終了した場合に「部分restore済み」の曖昧な状態が残る。RestoreSessionへ判断だけを永続化し、全判断後に適用すれば、途中終了・ブラウザ再起動・利用者都合の中断を安全に扱える。
-
-また元backupファイルを再指定させる方式では、ブラウザのfile handle権限やファイル移動・削除に依存して再開不能になる可能性がある。restore開始時に必要内容をlocal stagingへコピーすることで、再開可能性をrestore session自身で保証できる。
-
-## 13. 次の設計判断候補
-
-RestoreSessionのstaging容量不足時の扱いを確定する必要がある。
+自己完結backupの**ファイル形式**を確定する必要がある。original blobを含むため、巨大Base64をJSONへ埋め込む方式は避けるのが望ましい。
 
 推奨案:
-- restore開始前/`PREPARING`でbackup manifestを検証し、必要staging容量を見積もる
-- `navigator.storage.estimate()`等のquota情報は参考値として事前判定に使うが、最終的にはIndexedDB write成功を正本とする
-- staging copyはBusinessへ一切反映する前に完了させる
-- quota不足/書込失敗なら`PREPARING`を失敗させ、作成途中のstaging/sessionをcleanupする
-- 既存Business / SyncState / Outboxは変更しない
-- 容量確保後に利用者がrestoreを最初から再試行する
-- original写真blobをstagingへ二重コピーすると容量負荷が大きいため、backup形式・写真restore設計と合わせて「stagingに何を保持するか」を次に詳細化する
+- backup containerをZIPとする。
+- root `manifest.json`にschema version、exportedAt、counts、Businessデータ、photo metadata/file mappingを保持する。
+- originalは`photos/<photoId>.webp`としてbinary格納する。
+- thumbnailもbinary file化するかmanifest内表現にするかは次判断。
+- container全体またはmanifest/entry hashで破損検出する。
+- 拡張子は箱目録固有形式にする場合でも実体ZIPとし、将来version migrationを容易にする。
+
