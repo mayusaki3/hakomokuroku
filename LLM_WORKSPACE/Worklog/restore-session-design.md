@@ -175,19 +175,40 @@ Business適用transactionのcommit直後、`COMPLETED`へのstatus更新前に�
 
 `appliedAt`をmarkerにすれば追加のcommit ID照合機構を必要とせず、単一端末local restoreの用途には十分である。時刻値そのものの順序性には依存せず、null/non-nullだけをcommit判定に使用する。
 
-## 11. 根拠
+## 11. 未完了RestoreSessionの同時存在数
+
+**確定:** User local DBごとにactiveな未完了RestoreSessionは最大1件とする。
+
+- active扱いは`PREPARING / RESOLVING / APPLYING / ERROR(retryable)`
+- active sessionが存在する間、新しいbackup restore開始を禁止する
+- 利用者は既存sessionを再開するか、`APPLYING`開始前なら既存sessionをキャンセルしてから新しいrestoreを開始する
+- `APPLYING`中はキャンセル不可。commit markerによる復旧または未commit再試行で収束させる
+- retryable `ERROR`は既存sessionの再試行対象であり、新規restoreを並行開始しない
+- `COMPLETED / CANCELLED`はactive sessionとして数えず、後処理/cleanup対象とする
+- non-retryable errorでrestoreを継続できない場合は、Business未適用であることを確認した上でsessionを終了/破棄してから新規restoreを許可する
+- local DBがUserごとに分離されるため、別UserのRestoreSessionとは干渉しない
+
+### 根拠
+
+複数の未完了restoreを同時保持すると、それぞれが異なるbackup snapshotとexisting snapshotを持ち、通常編集や別restoreの適用によって相互にstale化する。さらに適用順序によって最終Business内容が変わるため、競合判断の意味が不明瞭になる。
+
+User local DBごとにactive sessionを1件へ限定すれば、restore対象snapshot・判断・適用順序を一意に保ち、中断再開UIとクラッシュ復旧も単純化できる。
+
+## 12. 根拠
 
 競合ごとに判断直後からBusinessへ反映すると、10件中4件だけ解決した状態でアプリ終了した場合に「部分restore済み」の曖昧な状態が残る。RestoreSessionへ判断だけを永続化し、全判断後に適用すれば、途中終了・ブラウザ再起動・利用者都合の中断を安全に扱える。
 
 また元backupファイルを再指定させる方式では、ブラウザのfile handle権限やファイル移動・削除に依存して再開不能になる可能性がある。restore開始時に必要内容をlocal stagingへコピーすることで、再開可能性をrestore session自身で保証できる。
 
-## 12. 次の設計判断候補
+## 13. 次の設計判断候補
 
-RestoreSessionの同時存在数を確定する必要がある。
+RestoreSessionのstaging容量不足時の扱いを確定する必要がある。
 
 推奨案:
-- User local DBごとに未完了RestoreSessionは最大1件
-- `PREPARING / RESOLVING / APPLYING / ERROR(retryable)`のsessionが存在する間は新しいrestore開始を禁止する
-- 利用者は既存sessionを再開するか、APPLYING前ならキャンセルしてから新しいbackup restoreを開始する
-- `COMPLETED / CANCELLED`はactive sessionとして数えず、cleanup対象とする
-- これにより複数backupのstaging・競合判断・適用順序の相互干渉を避ける
+- restore開始前/`PREPARING`でbackup manifestを検証し、必要staging容量を見積もる
+- `navigator.storage.estimate()`等のquota情報は参考値として事前判定に使うが、最終的にはIndexedDB write成功を正本とする
+- staging copyはBusinessへ一切反映する前に完了させる
+- quota不足/書込失敗なら`PREPARING`を失敗させ、作成途中のstaging/sessionをcleanupする
+- 既存Business / SyncState / Outboxは変更しない
+- 容量確保後に利用者がrestoreを最初から再試行する
+- original写真blobをstagingへ二重コピーすると容量負荷が大きいため、backup形式・写真restore設計と合わせて「stagingに何を保持するか」を次に詳細化する
