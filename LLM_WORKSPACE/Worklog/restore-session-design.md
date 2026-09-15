@@ -152,11 +152,6 @@ rootの`manifest.json`をbackupの入口/目録とし、少なくとも次を持
 - migration対応はversion単位で明示的に行う。
 - 現行`hakomokuroku-backup@1` JSONとのlegacy互換は必須にしない。
 
-### ファイル拡張子
-- 利用者向けには箱目録backupと識別できる固有拡張子を採用する方向。
-- 実体は標準ZIP。
-- MIME typeや具体的拡張子文字列はbackup仕様確定時に固定する。
-
 ## 13. thumbnail backup entry — 確定
 - pathは`thumbnails/<photoId>.webp`。
 - thumbnail bytesをmanifest JSONへBase64等で埋め込まない。
@@ -167,66 +162,69 @@ rootの`manifest.json`をbackupの入口/目録とし、少なくとも次を持
 - 欠落・hash不一致・size不一致ならPREPARINGを失敗させ、originalから暗黙再生成しない。
 
 ## 14. backup container integrity — 確定
-
 **確定:** v0.8のbackup integrityは意図的な改ざん防止ではなく、保存・転送・媒体等による破損検出を目的とする。暗号署名/MACは導入しない。
 
-### checksums.json
-ZIP rootに`checksums.json`を置く。
+- ZIP rootに`checksums.json`を置く。
+- `checksums.json`は自己参照を避けるためhash対象外。
+- `manifest.json`を含む全論理entryをSHA-256で列挙する。
+- SHA-256はentryの展開後raw bytesに対して計算する。
+- restore PREPARINGでZIP path安全性、重複entry、必須entry、checksums schema、全entry hash、manifest schema/business/photo mappingを検証する。
+- v0.8 schemaで許可されない余分なfile entryは拒否する。
+- ZIP CRC、entry SHA-256、manifest validationで偶発的破損を検出する。
+- 攻撃者がdataとchecksumsを同時に再作成する意図的改ざんの真正性保証はv0.8対象外。
 
-概念例:
-```json
-{
-  "algorithm": "SHA-256",
-  "entries": {
-    "manifest.json": "<sha256>",
-    "photos/<photoId>.webp": "<sha256>",
-    "thumbnails/<photoId>.webp": "<sha256>"
-  }
-}
+## 15. backup file identity — 確定
+
+**確定:** v0.8の利用者向けbackup file identityを次で固定する。
+
+```text
+extension : .hkmbackup
+MIME type : application/vnd.hakomokuroku.backup+zip
+file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 ```
 
-規則:
-- `checksums.json`は自己参照を避けるためhash対象外。
-- `manifest.json`を含む、backup仕様上の全論理entryを列挙する。
-- SHA-256はentryの展開後raw bytesに対して計算する。
-- pathはZIP内canonical relative pathで比較する。
-- algorithmはv0.8では`SHA-256`のみ受理する。
-- checksums schema自体が不正ならPREPARING失敗。
+### filename timestamp
+- `YYYYMMDD-HHmmss`はexport実行時の利用者local timeで生成する。
+- zero paddingした24時間表記を使う。
+- filename timestampは人間がファイル一覧で識別するための表示情報であり、restoreの正本情報には使わない。
+- timezone offsetをfilenameへ埋め込まない。
+- 同一秒に複数exportして同名になった場合、ブラウザ/OS側の重複名処理を許容し、backup identityとしてfilenameを使わない。
 
-### restore PREPARING validation順序
-1. ZIP/containerとして安全にopenできることを確認する。
-2. entry pathを検証し、absolute path、`..` traversal、backslash等の非canonical path、directory traversalを拒否する。
-3. 同一canonical pathの重複entryを拒否する。
-4. 必須`manifest.json` / `checksums.json`の存在を確認する。
-5. `checksums.json`をparseしschema/algorithm/path一覧を検証する。
-6. `checksums.json`に列挙された各entryが実在し、仕様上許可されたentryであることを確認する。
-7. backup内の論理file entryがchecksums一覧から欠落していないことを確認する。
-8. 各entryのSHA-256を計算して一致確認する。
-9. hash検証済み`manifest.json`をparseし、schema/version/business/photo mapping/count/size等を検証する。
-10. originalについてmanifest `photoHash`とも再照合し、thumbnailについて`thumbnailHash/thumbnailSize`とも再照合する。
-11. すべて成功後にのみ完全なstagingとしてRESOLVINGへ進める。
+### canonical exportedAt
+- `manifest.json.exportedAt`をbackup生成時刻の正本とする。
+- UTC RFC3339 milliseconds (`YYYY-MM-DDTHH:mm:ss.SSSZ`) で保存する。
+- filename timestampと`exportedAt`の一致をrestore validation条件にしない。
 
-### 不明/余分entry
-- v0.8 schemaで許可されない余分なfile entryは拒否する。
-- directory entryそのものは実装上存在してもよいが、file entryとしてBusiness dataを持たせない。
-- 将来拡張はschema versionを上げ、許可entry規則を明示的に変更する。
+### restore file recognition
+- `.hkmbackup` extensionおよびMIME typeはfile picker/filter/UXに利用する。
+- extensionまたはMIME typeだけを信用してrestore可否を決めない。
+- restoreではZIP signature/container parse、必須root entry、checksums、manifest schema/versionを順に検証して箱目録backupと判定する。
+- MIME typeがOS/browserにより空または`application/zip`等になっていても、内容がvalidならrestore可能とする。
+- `.zip`等の別extensionでも利用者が選択可能なUI経路から渡され、内容がvalidな箱目録backupならrestore可能とする。
 
-### 改ざん耐性の境界
-- ZIP CRC、entry SHA-256、manifest schema/business validationで偶発的破損や一部entry差し替えを高確率で検出する。
-- 攻撃者が`manifest.json`/binaryと`checksums.json`を同時に再作成できる場合、v0.8方式だけでは意図的改ざんを検出できない。
-- backupファイルを信頼できない相手から受け取る用途の真正性保証はv0.8対象外。
-- 将来必要なら署名/MAC/encryptionを別versionで追加する。
+### MIME typeの位置付け
+- `application/vnd.hakomokuroku.backup+zip`は箱目録側がexport時に指定するvendor media typeとして扱う。
+- 外部環境がこのMIME typeを保持・認識することは必須条件にしない。
 
 ### 根拠
-manifest内hashだけではmanifest自身のbit corruptionを直接検証できない。外側の`checksums.json`にmanifestを含めて列挙すれば、自己参照問題を避けながらmanifestとbinaryを同じ検証手順で確認できる。v0.8の目的を破損検出に限定することで、鍵管理や署名鍵のライフサイクルを導入せずbackup/restoreの信頼性を高められる。
+固有拡張子により利用者が通常ZIPや他アプリのbackupと区別しやすくなる一方、実体ZIPを維持することで診断・将来migrationが容易になる。filenameのlocal timeは可読性を優先し、データ上の正本時刻をUTC `exportedAt`へ分離することでtimezone/rename/OS挙動にrestore correctnessを依存させない。
 
-## 15. 次の設計判断候補
+## 16. 次の設計判断候補
 
-backupの**固有拡張子・MIME type・ファイル名規則**を確定する必要がある。
+backup export時に**serverにしか存在しないoriginal写真をどう扱うか**を確定する必要がある。
+
+背景:
+- 自己完結backupは全original写真を含むと確定済み。
+- 通常local original cacheはevictableで、全写真originalが端末に存在する保証はない。
+- thumbnail/Business metadataだけでは完全backupにならない。
 
 推奨案:
-- 拡張子: `.hkmbackup`
-- MIME type: `application/vnd.hakomokuroku.backup+zip`
-- export file name: `hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup`
-- file名timestampは利用者local timeを表示用途として使い、backup正本時刻はmanifestの`exportedAt`（UTC RFC3339 ms）とする。
-- restore時は拡張子/MIMEだけを信頼せずZIP magic + manifest schemaで判定する。
+- backup export開始時に対象active Business snapshotを固定する。
+- snapshotから必要な全photoId/photoHashを列挙する。
+- local cacheにoriginalがあればhash検証して利用する。
+- localに無いoriginalは認証済みserver original APIから取得する。
+- 全originalが取得・hash検証できるまでbackup fileを完成扱いにしない。
+- offlineで不足originalがある場合は完全backupを作成できないため、必要件数を示してexportを停止する。
+- serverにもoriginalが無い/破損している場合もexport失敗とし、不完全backupを生成しない。
+- export中にBusinessが変更されても開始時snapshotをbackup対象として固定し、途中で対象集合を変えない。
+- backup生成のために取得したoriginalを通常local cacheへ残すかは別判断とし、backup correctnessとは分離する。
