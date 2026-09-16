@@ -177,39 +177,39 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - 将来暗号化する場合は新backup container/schema versionとしてKDF/AEAD/UXを含めて設計する。
 
 ## 22. backup保持世代・自動backup — 確定
+- v0.8はmanual exportのみ。自動backup/世代管理/rotationは導入しない。
+- 保存済みfile一覧/path/世代数を箱目録canonical stateとして管理しない。
+- `lastBackupExportAt`はlocal preferenceの参考表示としてのみ保持可能で、file存在保証には使わない。
 
-**確定（v0.8）:** 箱目録内部の自動backupおよびbackup fileの世代管理は導入せず、利用者によるmanual exportのみを提供する。
+## 23. 写真0枚backupのcontainer構造 — 確定
 
-- 利用者が明示的に「backupを作成」を実行し、完成した`.hkmbackup`をbrowser/OSの保存機能へ渡す。
-- 定期実行、アプリ終了時自動実行、変更件数をtriggerとした自動backup等はv0.8では行わない。
-- 箱目録は保存済み`.hkmbackup`の一覧、保存path、保持世代数、削除policyをcanonical Business/System stateとして管理しない。
-- fileの保存先、同名fileの扱い、rename、copy、削除はbrowser/OS/storage providerへ委ねる。
-- 箱目録から保存済みbackup fileを後から自動削除・rotateしない。
-- restoreは利用者が選択したfileを入力とする。
+**確定:** 写真が1枚も存在しない場合も、写真ありbackupと同じ`.hkmbackup` ZIP container、同じmanifest schema、同じrestore validation pipelineを使用する。
 
-### 最終backup作成日時
-- exportが完全成功し、完成backupをbrowser/OSの保存導線へ渡せた時点で、local preferenceとして`lastBackupExportAt`を記録してよい。
-- `lastBackupExportAt`は参考表示専用であり、Business data、sync state、backup manifestへ含めない。
-- この値は「その時刻にbackup生成処理が成功した」ことだけを示し、そのfileが現在も保存先に存在する、読み取り可能である、最新であることを保証しない。
-- export失敗/キャンセル/未完成では更新しない。
-- platform上、保存完了をアプリが厳密に確認できない場合は「最終バックアップ作成」等の断定表示を避け、「最終バックアップ生成」等、確認できる事実に合わせた表現とする。
-
-### 将来の自動backup
-自動backupを追加する場合は、保存先provider、継続アクセス権、retention、quota、background execution、失敗通知、platform差を独立した機能として設計する。
+- `manifest.json`のphoto countは`0`とする。
+- photo metadata collectionは空配列`[]`とする。field自体を省略して写真なしを表現しない。
+- Business snapshotは通常どおりBox / Item / BoxLocation等を保持する。Business entity自体が0件の場合も同じschemaを使用する。
+- `photos/`および`thumbnails/`のZIP directory entryは存在しても存在しなくてもよい。
+- directory entryは論理fileではなく、`checksums.json`の対象にしない。
+- 写真0枚の場合、`photos/<photoId>.webp` / `thumbnails/<photoId>.webp` entryは存在してはならない。
+- `checksums.json`は`manifest.json`等、そのschema versionで存在する論理fileだけを列挙する。
+- restore PREPARINGはphoto count=0 + empty photo metadataを正常な自己完結backupとして受理する。
+- photo countとmetadata件数が不一致ならinvalid backupとして拒否する。
+- photo count=0なのにphoto binary logical entryが存在する場合もmanifestとの不整合として拒否する。
+- 写真の有無によってJSON-only形式、別extension、別MIME、別schemaへ切り替えない。
 
 ### 根拠
-v0.8ではself-contained backupの完全性とrestore correctnessを優先する。PWA/browserから任意の外部保存先へ継続的にbackground保存し世代管理する機能はplatform依存が大きく、manual exportと分離した方が仕様・障害境界が明確になる。
+写真の有無はBusiness dataの状態であってbackup formatの種類ではない。container/schema/validationを一本化することで、export/restore/test/version migrationの分岐を減らし、写真なしbackupだけ検証規則が弱くなることも防止できる。
 
-## 23. 次の設計判断候補
+## 24. 次の設計判断候補
 
-manual backup export時に、**写真が1枚もないbackupも同じcontainer構造・検証規則にするか**を確定する必要がある。
+**Business entityが0件の完全空backupを許可するか**を確定する必要がある。
 
 推奨案:
-- 写真0枚でも同じ`.hkmbackup` ZIP formatを使用する。
-- `manifest.json`のphoto countを0、photo metadata配列を空配列とする。
-- `photos/` / `thumbnails/` directory entry自体はZIP内に存在してもしなくてもよい。directory entryは論理fileとして扱わない。
-- `checksums.json`には`manifest.json`のみ（および将来追加される必須論理file）が列挙され、存在しないphoto binaryを要求しない。
-- restore PREPARINGはphoto count 0を正常なbackupとして受理する。
-- 写真有無によって別schemaやJSON-only backupへ切り替えない。
+- authenticated Userのlocal Businessが0件でもmanual backup生成を許可する。
+- Box / Item / BoxLocation / photo等の各collectionを空配列、各countを0として通常の`.hkmbackup`を生成する。
+- ownerUserId / exportedAt / schema version / checksums等は通常どおり必須。
+- restore先もBusinessが0件なら実質UNCHANGEDとして正常完了する。
+- restore先にBusinessがある場合、空backupを「全削除backup」と解釈せず、active entityを削除しない。
+- つまりbackup/restoreはsnapshot全置換ではなく、既確定のidentity単位merge/競合解決であり、backupに存在しないentityはrestore対象外とする。
 
-根拠: 写真有無でformatを分岐させないことでexport/restore validationとversion migrationを単純化できる。
+根拠: 空backupを形式上invalidにする理由はなく、restoreで「backupにない=削除」と解釈しないことを明確にすれば安全に扱える。また、初期状態でもbackup pipelineを同じ規則でテストできる。
