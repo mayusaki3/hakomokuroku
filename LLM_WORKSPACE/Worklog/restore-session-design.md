@@ -140,41 +140,53 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - export途中のBusiness編集は許可し、対象は開始時snapshotに固定する。
 
 ## 17. backup取得originalのlocal cache policy — 確定
+- backup生成だけを理由としてserverから取得したoriginalを通常local original cacheへ永続追加しない。
+- server取得originalはZIP生成に必要な期間だけbackup専用一時データとして保持する。
+- backup処理は通常cacheのLRU/最終利用時刻を更新しない。
+- 通常cacheへの保存は閲覧/明示download等の通常cache policyに従う。
+- 可能ならserver responseをZIP writerへ逐次渡し、temporary storageが必要なら通常cacheと別namespace/storeにする。
 
-**確定:** backup生成だけを理由としてserverから取得したoriginalを通常local original cacheへ永続追加しない。
+## 18. backup exportの中断・再開 — 確定
 
-- backup export専用の一時データとして扱う。
-- すでに通常local cacheに存在しhash検証済みのoriginalは、そのcache entryをsourceとして利用する。
-- serverからbackup目的で取得したoriginalはZIP生成に必要な期間だけ保持する。
-- backup成功、失敗、利用者キャンセルのいずれでもbackup専用一時データを解放する。
-- backup処理は通常local original cacheのLRU/最終利用時刻等を、単なるbackup source利用を理由に更新しない。
-- backup中に別の通常閲覧処理が同じoriginalをcacheへ保存した場合、その通常cache entryはbackup cleanup対象にしない。
-- 通常cacheへの永続保存は閲覧、明示download等の通常cache policyにのみ従う。
-- backup一時データと通常cache entryを所有権/用途上区別し、cleanupで通常cacheを誤削除しない。
+**確定（v0.8）:** backup exportはpersistentな中断再開jobにせず、1回のforeground operationとして実行する。
 
-### 実装方針
-- 可能ならserver responseをZIP writerへ逐次渡し、全originalをIndexedDBへ一時永続化しない。
-- 使用するZIP実装/APIの制約でstreamingが困難な場合のみ、backup専用temporary storageを利用する。
-- temporary storageを使う場合も通常photo cacheとは別namespace/storeとし、終了時cleanup可能にする。
-- browser/PWAが中断された場合に残ったtemporary backup dataは、次回起動時にactive export処理が存在しないことを確認してcleanupする。
+- export開始から完成backup出力までを1回のforeground operationとする。
+- 利用者による明示キャンセルを許可する。
+- キャンセル時はserver取得中処理、ZIP生成処理等を可能な範囲で中止し、backup専用temporary dataをcleanupする。
+- page終了、PWA終了、browser suspension、process termination等でoperationが失われた場合、そのexportは未完了/失敗として扱う。
+- 次回exportは新しい開始時Business snapshotを取得し、最初から実行する。前回snapshotや取得済みoriginalをresume sourceとして使用しない。
+- 未完成/部分的な`.hkmbackup`を利用者へ完成backupとして保存しない。
+- browser download/save APIへ渡すのは、必要original取得・hash検証・manifest/checksums生成・ZIP完成後とする。
+- 前回中断でbackup専用temporary storageが残存した場合は、次回起動時等にactive foreground exportが存在しないことを確認してcleanupする。
+
+### progress表示
+少なくとも以下の段階が利用者に分かるようにする。
+1. Business snapshot作成
+2. original取得・検証 `X / Y`
+3. backup生成
+4. 完了
+
+失敗時は可能な範囲で原因を区別する。例: offlineでoriginal不足、server取得失敗、hash不一致、local/temporary容量不足、ZIP生成失敗。
 
 ### 根拠
-backupは全originalを扱うため、取得した全blobを通常cacheへ残すとbackupサイズ相当の容量を恒常的に消費し、既存のeviction policyと競合する。またbackupという保全処理が閲覧cacheの利用頻度を人工的に更新すると、本当に最近閲覧した写真が先にevictされる可能性がある。backup sourceと通常cacheを分離することでbackup correctnessとcache policyを独立させる。
+restoreはBusinessを変更するため判断済みresolutionとatomic applyを永続化する価値が高い。一方exportはBusinessに対してread-onlyであり、失敗後に最初から再実行してもBusinessへ部分副作用を残さない。v0.8でpersistent export jobを導入するとsnapshot version、取得済みblob、部分ZIP、quota、cleanup、再開時Business変化の管理が増えるため、完全backup correctnessに対して複雑性が大きい。まずforeground operationに限定し、必要なら実運用で大規模backupの所要時間を確認して将来versionでresumable exportを追加する。
 
-## 18. 次の設計判断候補
+## 19. 次の設計判断候補
 
-backup export処理そのものの**中断・再開を提供するか**を確定する必要がある。
+backup export開始時の**未同期Outboxをbackupへどう反映するか**を確定する必要がある。
 
 背景:
-- 写真が多い場合、serverから多数のoriginalを取得するためexportが長時間になる可能性がある。
-- iOS/PWA/browserではbackground suspensionやpage terminationがあり得る。
-- restoreはpersistent RestoreSessionで中断再開可能と確定済みだが、exportについてはまだ未確定。
+- backup対象はactive local Business snapshotであり、SyncState / Outbox自体はbackup対象外と確定済み。
+- local Businessにはserverへ未Pushの作成・更新・削除が存在し得る。
+- offlineでも、必要originalがすべてlocalにあればbackup可能にしたい。
 
-推奨案（v0.8）:
-- exportは中断再開可能な永続jobにはしない。
-- 1回のforeground operationとして実行する。
-- 利用者キャンセルは許可し、一時データをcleanupする。
-- page終了/browser suspension等で中断された場合はそのexportを失敗扱いとし、次回は開始時から再実行する。
-- 未完成`.hkmbackup`を利用者へ保存しない。
-- progressは`Business snapshot完了 / original X/Y取得・検証 / ZIP生成 / 完了`程度を表示する。
-- 根拠: exportはBusinessを変更しないread-only処理であり、再実行しても業務データ副作用がない。persistent resumable jobを導入するとsnapshot、取得済みblob、ZIP部分生成、quota cleanupの状態管理が大幅に複雑化するため、まずv0.8では完全backup correctnessを優先する。
+推奨案:
+- backupはserver canonical snapshotではなく、export開始時の**local Business view**を正本として作る。
+- 未同期CREATE/UPDATEもlocal Businessへ反映済みならその内容をbackupへ含める。
+- 未同期DELETEでlocal Business上deleted扱いのentityはactive backupから除外する。
+- Outbox / baseRevision / sync metadataそのものは含めない。
+- restore後はbackup Businessを通常local update/createとして扱い、必要なOutboxをrestore側で新規生成する。
+- backup前にsync成功を必須条件にしない。
+- ただしbackup対象写真originalは、snapshotが参照するものをlocal/serverから完全収集できることを引き続き必須とする。
+
+根拠: backupを「その端末で利用者が現在見ている業務データの保全」と定義すれば、未同期編集も失わずbackupできる。syncを必須にするとoffline backupが不必要に制限され、backupとsyncの責務が混ざる。
