@@ -147,46 +147,55 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - 可能ならserver responseをZIP writerへ逐次渡し、temporary storageが必要なら通常cacheと別namespace/storeにする。
 
 ## 18. backup exportの中断・再開 — 確定
+- v0.8ではpersistent resumable jobにせず1回のforeground operationとする。
+- 利用者キャンセルは許可する。
+- page/PWA終了やsuspensionで失われた場合は最初から再実行する。
+- 未完成`.hkmbackup`を完成backupとして保存しない。
+- progressはsnapshot、original X/Y、backup生成、完了を表示する。
 
-**確定（v0.8）:** backup exportはpersistentな中断再開jobにせず、1回のforeground operationとして実行する。
+## 19. 未同期Outboxとbackup snapshot — 確定
 
-- export開始から完成backup出力までを1回のforeground operationとする。
-- 利用者による明示キャンセルを許可する。
-- キャンセル時はserver取得中処理、ZIP生成処理等を可能な範囲で中止し、backup専用temporary dataをcleanupする。
-- page終了、PWA終了、browser suspension、process termination等でoperationが失われた場合、そのexportは未完了/失敗として扱う。
-- 次回exportは新しい開始時Business snapshotを取得し、最初から実行する。前回snapshotや取得済みoriginalをresume sourceとして使用しない。
-- 未完成/部分的な`.hkmbackup`を利用者へ完成backupとして保存しない。
-- browser download/save APIへ渡すのは、必要original取得・hash検証・manifest/checksums生成・ZIP完成後とする。
-- 前回中断でbackup専用temporary storageが残存した場合は、次回起動時等にactive foreground exportが存在しないことを確認してcleanupする。
+**確定:** backupはserver canonicalではなく、export開始時の**local Business view**を正本として作成する。sync成功をbackup開始条件にしない。
 
-### progress表示
-少なくとも以下の段階が利用者に分かるようにする。
-1. Business snapshot作成
-2. original取得・検証 `X / Y`
-3. backup生成
-4. 完了
+- export開始時にlocal Businessの一貫したsnapshotを取得する。
+- 未同期CREATEがlocal Businessに存在する場合、そのentityを通常のactive Businessとしてbackupへ含める。
+- 未同期UPDATEがlocal Businessに反映済みの場合、server側旧内容ではなくlocal Businessの現在内容をbackupへ含める。
+- 未同期DELETEによりlocal Business上deleted扱いのentityはactive backupから除外する。
+- Outbox record、baseRevision、syncSeq、server revision、cursor等のsync protocol stateはbackupへ含めない。
+- backup manifestへ「未同期だった」という状態を持ち越さない。backup内容はBusiness snapshotとして自己完結させる。
+- backup開始前の自動sync成功を必須にしない。onlineでもsync失敗中のlocal Businessをbackup可能とする。
+- offlineでもsnapshotが参照する全originalがlocalに存在しhash検証できればbackup可能とする。
+- originalがlocalに不足する場合のみ、既確定方針どおりserver取得が必要となり、offlineでは完全backupを生成できない。
 
-失敗時は可能な範囲で原因を区別する。例: offlineでoriginal不足、server取得失敗、hash不一致、local/temporary容量不足、ZIP生成失敗。
+### restore後
+- backupから採用されたBusinessはrestore先の現在Businessとの比較・競合解決を経て通常local create/updateとして適用する。
+- restore先のSyncState/Outboxをbackup由来stateで置換しない。
+- serverへ反映が必要なrestore結果については、restore先で新しいOutboxを生成する。
+- backup元で未同期だったか、既同期だったかによってrestore処理を分岐しない。
+
+### snapshot consistency
+- Business snapshotの取得は、Box / Item / BoxLocation等の相互参照が途中編集で不整合にならないよう、同一IndexedDB read transactionまたは同等の一貫性境界で行う。
+- snapshot確定後のBusiness変更は当該backupへ取り込まず、次回backup対象とする。
 
 ### 根拠
-restoreはBusinessを変更するため判断済みresolutionとatomic applyを永続化する価値が高い。一方exportはBusinessに対してread-onlyであり、失敗後に最初から再実行してもBusinessへ部分副作用を残さない。v0.8でpersistent export jobを導入するとsnapshot version、取得済みblob、部分ZIP、quota、cleanup、再開時Business変化の管理が増えるため、完全backup correctnessに対して複雑性が大きい。まずforeground operationに限定し、必要なら実運用で大規模backupの所要時間を確認して将来versionでresumable exportを追加する。
+backupの目的は「利用者がその端末で現在保持している業務データ」を保全することであり、serverへの同期完了状態を保存することではない。sync必須にするとoffline時やserver障害時にbackupできず、保全機能として弱くなる。local Businessを正本としsync protocol stateを除外することで、backupとsyncの責務を分離できる。
 
-## 19. 次の設計判断候補
+## 20. 次の設計判断候補
 
-backup export開始時の**未同期Outboxをbackupへどう反映するか**を確定する必要がある。
+backup/restoreの**User所有権境界**を確定する必要がある。
 
 背景:
-- backup対象はactive local Business snapshotであり、SyncState / Outbox自体はbackup対象外と確定済み。
-- local Businessにはserverへ未Pushの作成・更新・削除が存在し得る。
-- offlineでも、必要originalがすべてlocalにあればbackup可能にしたい。
+- local DBはUser単位で分離する設計。
+- backupにはBusiness identityが含まれるが、User認証情報やdevice namespaceは含めない。
+- 別アカウントへbackupをrestoreできる仕様にすると、Box.id/codeやserver側identity、写真所有権との整合が複雑になる。
 
-推奨案:
-- backupはserver canonical snapshotではなく、export開始時の**local Business view**を正本として作る。
-- 未同期CREATE/UPDATEもlocal Businessへ反映済みならその内容をbackupへ含める。
-- 未同期DELETEでlocal Business上deleted扱いのentityはactive backupから除外する。
-- Outbox / baseRevision / sync metadataそのものは含めない。
-- restore後はbackup Businessを通常local update/createとして扱い、必要なOutboxをrestore側で新規生成する。
-- backup前にsync成功を必須条件にしない。
-- ただしbackup対象写真originalは、snapshotが参照するものをlocal/serverから完全収集できることを引き続き必須とする。
+推奨案（v0.8）:
+- backupは作成したUserに所属するものとし、同一Userへのrestoreだけを許可する。
+- manifestにbackup ownerを照合できる安定した`ownerUserId`を含める。
+- `ownerUserId`は認証用credentialではなくownership validation用identifier。
+- restore時は現在authenticated User.idと完全一致することをPREPARINGで検証する。
+- 不一致ならBusiness/stagingへ適用せず`BACKUP_OWNER_MISMATCH`として拒否する。
+- ownerUserIdを書き換えて別Userへ移植する機能はv0.8では提供しない。
+- account間データ移行が将来必要なら、backup restoreとは別のimport/transfer機能として設計する。
 
-根拠: backupを「その端末で利用者が現在見ている業務データの保全」と定義すれば、未同期編集も失わずbackupできる。syncを必須にするとoffline backupが不必要に制限され、backupとsyncの責務が混ざる。
+根拠: 同じBox.id/codeを別User namespaceへ複製する意味、写真blob ownership、server syncとの関係をbackup restoreへ混ぜないことで、restore identityとsync identityを一貫させられる。
