@@ -154,48 +154,47 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - progressはsnapshot、original X/Y、backup生成、完了を表示する。
 
 ## 19. 未同期Outboxとbackup snapshot — 確定
+- backupはserver canonicalではなく、export開始時のlocal Business viewを正本とする。
+- 未同期CREATE/UPDATEもlocal Businessへ反映済みなら含め、localでdeleted扱いのentityはactive backupから除外する。
+- sync成功をbackup開始条件にしない。
+- Outbox/baseRevision/syncSeq/revision/cursor等は含めない。
+- restore後はbackup由来sync stateを復元せず、採用Businessに必要なOutboxをrestore先で新規生成する。
+- snapshotは同一IndexedDB read transactionまたは同等の一貫性境界で取得する。
 
-**確定:** backupはserver canonicalではなく、export開始時の**local Business view**を正本として作成する。sync成功をbackup開始条件にしない。
+## 20. backup/restore User所有権境界 — 確定
 
-- export開始時にlocal Businessの一貫したsnapshotを取得する。
-- 未同期CREATEがlocal Businessに存在する場合、そのentityを通常のactive Businessとしてbackupへ含める。
-- 未同期UPDATEがlocal Businessに反映済みの場合、server側旧内容ではなくlocal Businessの現在内容をbackupへ含める。
-- 未同期DELETEによりlocal Business上deleted扱いのentityはactive backupから除外する。
-- Outbox record、baseRevision、syncSeq、server revision、cursor等のsync protocol stateはbackupへ含めない。
-- backup manifestへ「未同期だった」という状態を持ち越さない。backup内容はBusiness snapshotとして自己完結させる。
-- backup開始前の自動sync成功を必須にしない。onlineでもsync失敗中のlocal Businessをbackup可能とする。
-- offlineでもsnapshotが参照する全originalがlocalに存在しhash検証できればbackup可能とする。
-- originalがlocalに不足する場合のみ、既確定方針どおりserver取得が必要となり、offlineでは完全backupを生成できない。
+**確定（v0.8）:** backupは作成したUserに所属し、同一Userへのrestoreだけを許可する。
 
-### restore後
-- backupから採用されたBusinessはrestore先の現在Businessとの比較・競合解決を経て通常local create/updateとして適用する。
-- restore先のSyncState/Outboxをbackup由来stateで置換しない。
-- serverへ反映が必要なrestore結果については、restore先で新しいOutboxを生成する。
-- backup元で未同期だったか、既同期だったかによってrestore処理を分岐しない。
+- `manifest.json`に必須field `ownerUserId`を保持する。
+- `ownerUserId`はbackup作成時のauthenticated `User.id`をそのまま記録する安定identifierとする。
+- `ownerUserId`は認証credential、session token、secretではなく、restore時のownership validationにのみ使用する。
+- backupへpassword、session、TOTP secret、API token等の認証秘密情報は含めない。
+- restore `PREPARING`でmanifest/checksum/schema検証後、Business stagingを有効化する前に、現在authenticated `User.id`と`ownerUserId`を完全一致比較する。
+- 不一致なら`BACKUP_OWNER_MISMATCH`としてrestoreを拒否し、Business / SyncState / Outboxへ変更を加えない。
+- owner mismatch backupを別User用に自動変換、ID/code再採番、ownerUserId書換えしてrestoreする処理は提供しない。
+- 同一Userであれば別deviceへのrestoreを許可する。deviceId / DevicePrefix / LocalSequenceはrestore対象外なので、restore先device自身のnamespaceを維持する。
+- account削除後に別Userとして作成されたaccountは、表示名/email等が同じでも`User.id`が異なる限り同一ownerとは扱わない。
 
-### snapshot consistency
-- Business snapshotの取得は、Box / Item / BoxLocation等の相互参照が途中編集で不整合にならないよう、同一IndexedDB read transactionまたは同等の一貫性境界で行う。
-- snapshot確定後のBusiness変更は当該backupへ取り込まず、次回backup対象とする。
+### 将来のaccount間移行
+別UserへBusinessを移す要求が生じた場合は、backup restoreへ例外を追加せず、import/transfer機能として別途設計する。その際に新identity生成、Box.code collision、photo ownership、server authorization、監査等を明示的に扱う。
 
 ### 根拠
-backupの目的は「利用者がその端末で現在保持している業務データ」を保全することであり、serverへの同期完了状態を保存することではない。sync必須にするとoffline時やserver障害時にbackupできず、保全機能として弱くなる。local Businessを正本としsync protocol stateを除外することで、backupとsyncの責務を分離できる。
+backup restoreでBusiness identityを維持する設計と、server/localのUser namespaceを一致させるため。同一User限定にすればBox.id/code、写真blob ownership、sync identityを変更せず復元できる。認証秘密をbackupへ含めずUser.idだけでownershipを検証することで、backup file自体を認証手段にしない。
 
-## 20. 次の設計判断候補
+## 21. 次の設計判断候補
 
-backup/restoreの**User所有権境界**を確定する必要がある。
+`ownerUserId`を含むbackup fileは平文ZIPなので、**backup内容の暗号化をv0.8で提供するか**を確定する必要がある。
 
 背景:
-- local DBはUser単位で分離する設計。
-- backupにはBusiness identityが含まれるが、User認証情報やdevice namespaceは含めない。
-- 別アカウントへbackupをrestoreできる仕様にすると、Box.id/codeやserver側identity、写真所有権との整合が複雑になる。
+- backupにはBox/Item/Location等のBusinessデータとoriginal写真が含まれ、ZIPを展開すれば内容を閲覧できる。
+- `checksums.json`は破損検出用であり、機密性や改ざん真正性を提供しない。
+- browser/PWAでpassword-based encryptionを実装すると、鍵導出parameter、password紛失、streaming ZIPとの組合せ、format versioning等の追加設計が必要になる。
 
 推奨案（v0.8）:
-- backupは作成したUserに所属するものとし、同一Userへのrestoreだけを許可する。
-- manifestにbackup ownerを照合できる安定した`ownerUserId`を含める。
-- `ownerUserId`は認証用credentialではなくownership validation用identifier。
-- restore時は現在authenticated User.idと完全一致することをPREPARINGで検証する。
-- 不一致ならBusiness/stagingへ適用せず`BACKUP_OWNER_MISMATCH`として拒否する。
-- ownerUserIdを書き換えて別Userへ移植する機能はv0.8では提供しない。
-- account間データ移行が将来必要なら、backup restoreとは別のimport/transfer機能として設計する。
+- v0.8ではapplication-level backup暗号化を導入しない。
+- `.hkmbackup`は「写真を含むため機密情報として扱う必要がある」ことを仕様/UIで明示する。
+- OS/device/cloud storage側の暗号化・アクセス制御を利用者の保存先保護として利用する。
+- 将来暗号化を追加する場合は、現在のZIP内部entryを個別に暗号化する場当たり的拡張ではなく、新しいbackup container/schema versionとして設計する。
+- password-based encryptionを採用する場合はKDF、AEAD、salt/nonce、metadata露出範囲、password recovery不可のUXまで一体で仕様化する。
 
-根拠: 同じBox.id/codeを別User namespaceへ複製する意味、写真blob ownership、server syncとの関係をbackup restoreへ混ぜないことで、restore identityとsync identityを一貫させられる。
+根拠: v0.8の目的は完全かつ復元可能なbackupの確立であり、暗号化を同時導入するとformat/streaming/復旧UXの複雑性が大きく増える。暗号化なしであることを明示し、後方互換を意識した新versionで追加できる余地を残す。
