@@ -72,19 +72,8 @@ RestoreConflict
 - COMPLETED / CANCELLEDはactiveに数えずcleanup対象。
 
 ## 8. backupの自己完結性と写真 — 確定
-**確定:** 通常backupは、serverや元端末へ依存せず復元できる自己完結型とし、Businessデータ、thumbnail、保存原画像(original blob)を含める。
-
-backup対象:
-- Box / Item / BoxLocation等のactive Businessデータ
-- 各写真の`photoId / photoHash / thumbnail / array order`
-- 各写真の保存原画像blob
-- restoreに必要なschema/version/manifest情報
-
-backup対象外:
-- `deviceId / DevicePrefix / LocalSequence`
-- SyncState / Outbox / sync cursor / syncSeq / server revision等の同期内部状態
-- RestoreSession / RestoreConflict / restore staging
-- tombstone
+- 通常backupはserverや元端末へ依存せず復元できる自己完結型とし、Businessデータ、thumbnail、保存原画像を含める。
+- device namespace、SyncState、Outbox、restore staging、tombstoneは含めない。
 
 ## 9. RestoreSession stagingの写真保持 — 確定
 - Business stagingとoriginal blob stagingを論理的に分離する。
@@ -104,8 +93,6 @@ backup対象外:
 現行`apps/web/src/lib/backup.ts`は`hakomokuroku-backup@1`のJSONでBox/Item中心、`photoThumbs`を扱い、original blobを含まず、BoxLocationも対象外である。現行mergeは`updatedAt`で勝者を選び、replaceではID再採番を行う。確定仕様・テスト完成後の実装段階で置換対象とする。
 
 ## 12. backup container形式 — 確定
-**確定:** 自己完結backupはZIPをcontainer形式として使用する。JSONへのBase64埋め込みは使用しない。
-
 ```text
 <backup container: ZIP>
 ├─ manifest.json
@@ -115,24 +102,20 @@ backup対象外:
 └─ thumbnails/
    └─ <photoId>.webp
 ```
-
-- root `manifest.json`をbackupの入口/目録とする。
 - container物理形式はZIP、論理schema versionはmanifestで管理する。
-- 保存原画像は`photos/<photoId>.webp`。
-- 現行`hakomokuroku-backup@1` JSONとのlegacy互換は必須にしない。
+- JSONへのBase64埋め込みは使用しない。
+- 現行JSONとのlegacy互換は必須にしない。
 
 ## 13. thumbnail backup entry — 確定
 - path=`thumbnails/<photoId>.webp`。
 - manifestに`thumbnailPath`, `thumbnailHash`, `thumbnailSize`を保持する。
-- `thumbnailHash`はthumbnail bytesのSHA-256でbackup integrity専用、parent Business `contentHash`には含めない。
+- `thumbnailHash`はbackup integrity専用でparent Business `contentHash`には含めない。
 - 欠落・hash不一致・size不一致ならPREPARING失敗。originalから暗黙再生成しない。
 
 ## 14. backup container integrity — 確定
 - v0.8は破損検出を目的とし暗号署名/MACは導入しない。
-- ZIP rootに`checksums.json`を置き、`manifest.json`を含む全論理entryをSHA-256で列挙する。
-- `checksums.json`自身はhash対象外。
-- PREPARINGでZIP path安全性、重複entry、必須entry、checksums schema、全entry hash、manifest schema/business/photo mappingを検証する。
-- v0.8 schemaで許可されない余分なfile entryは拒否する。
+- root `checksums.json`で`manifest.json`を含む全論理entryをSHA-256検証する。
+- PREPARINGでpath安全性、重複、必須entry、schema、hash、manifest mappingを検証する。
 - 意図的改ざんの真正性保証はv0.8対象外。
 
 ## 15. backup file identity — 確定
@@ -145,42 +128,53 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - 正本時刻は`manifest.json.exportedAt` UTC RFC3339 milliseconds。
 - extension/MIMEだけを信用せず内容を検証する。
 - valid contentならMIMEが空/`application/zip`、または別extensionでもrestore可能。
-- `application/vnd.hakomokuroku.backup+zip`は箱目録が使用するvendor-tree形式のMedia Type名であり、v0.8時点でIANA正式登録済みであることを意味しない。正式登録の有無はIANA registry上の登録状態で決まる。
-
-### 根拠
-固有拡張子により利用者がbackupを識別しやすくしつつ、restore correctnessをOS/browserのMIME判定やfilenameへ依存させない。`vnd.`はvendor treeを示す名称要素であり、文字列自体はIANA登録済みの証明ではない。
+- `application/vnd.hakomokuroku.backup+zip`は箱目録が使用するvendor-tree形式のMedia Type名であり、v0.8時点でIANA正式登録済みであることを意味しない。
 
 ## 16. backup export時のoriginal収集 — 確定
-
-**確定:** 自己完結backupを作成するため、export開始時snapshotが参照する全original写真を収集・検証できた場合のみbackupを完成させる。
-
 - export開始時にactive Business snapshotを固定する。
 - snapshotから必要な全`photoId / photoHash`を列挙する。
-- local original cacheに対象blobがある場合も、実bytesのSHA-256を計算し`photoHash`と一致したものだけ使用する。
-- localに無い、またはlocal blobがhash不一致の場合は、認証済みserver original APIから同じ`photoId / photoHash`のoriginalを取得する。
-- server取得blobも実bytesのSHA-256を計算し`photoHash`と一致した場合のみ採用する。
-- 全originalが揃い、hash検証が完了するまでZIPを完成backupとして利用者へ出力しない。
-- offlineかつlocalに不足originalがある場合はexportを停止し、不足写真件数を利用者へ表示する。
-- server側でもoriginalが存在しない、取得不能、またはhash不一致の場合はexport失敗とし、不完全backupを生成しない。
-- export途中に通常Business編集が発生しても、当該exportの対象は開始時snapshotに固定し、途中で対象entity/photo集合を変更しない。
-- export開始後に追加されたBusiness/写真は次回backup対象となる。
-- export開始後に削除・変更された写真でも、snapshotが参照するoriginalをlocal/serverから取得できる限り当該backupへ含める。
+- local original cacheのblobは実bytes hash一致時のみ利用する。
+- localに無い/不正なら認証済みserver original APIから取得しhash検証する。
+- 全originalが揃うまで完成backupを出力しない。
+- offline不足、server取得不能/hash不一致はexport失敗。不完全backupを生成しない。
+- export途中のBusiness編集は許可し、対象は開始時snapshotに固定する。
 
-### snapshot consistency
-- Business snapshot取得時点の各entity business contentとphoto reference/orderをbackup正本とする。
-- original取得はsnapshotに記録された`photoId / photoHash`に対して行い、取得時点の最新Businessを再読込して差し替えない。
-- これにより長時間export中の通常操作を禁止せず、一貫した時点のbackupを作成する。
+## 17. backup取得originalのlocal cache policy — 確定
+
+**確定:** backup生成だけを理由としてserverから取得したoriginalを通常local original cacheへ永続追加しない。
+
+- backup export専用の一時データとして扱う。
+- すでに通常local cacheに存在しhash検証済みのoriginalは、そのcache entryをsourceとして利用する。
+- serverからbackup目的で取得したoriginalはZIP生成に必要な期間だけ保持する。
+- backup成功、失敗、利用者キャンセルのいずれでもbackup専用一時データを解放する。
+- backup処理は通常local original cacheのLRU/最終利用時刻等を、単なるbackup source利用を理由に更新しない。
+- backup中に別の通常閲覧処理が同じoriginalをcacheへ保存した場合、その通常cache entryはbackup cleanup対象にしない。
+- 通常cacheへの永続保存は閲覧、明示download等の通常cache policyにのみ従う。
+- backup一時データと通常cache entryを所有権/用途上区別し、cleanupで通常cacheを誤削除しない。
+
+### 実装方針
+- 可能ならserver responseをZIP writerへ逐次渡し、全originalをIndexedDBへ一時永続化しない。
+- 使用するZIP実装/APIの制約でstreamingが困難な場合のみ、backup専用temporary storageを利用する。
+- temporary storageを使う場合も通常photo cacheとは別namespace/storeとし、終了時cleanup可能にする。
+- browser/PWAが中断された場合に残ったtemporary backup dataは、次回起動時にactive export処理が存在しないことを確認してcleanupする。
 
 ### 根拠
-local original cacheは容量管理によりevict可能なので、local cacheだけをbackup sourceにすると自己完結backupを保証できない。serverを補完sourceとして利用し、開始時Business snapshotとphotoHashを固定することで、export中の編集と写真取得を分離しつつ一貫したbackupを作れる。不足写真を黙って省略するとbackupの完全性要件を破るため、不完全backupは生成しない。
+backupは全originalを扱うため、取得した全blobを通常cacheへ残すとbackupサイズ相当の容量を恒常的に消費し、既存のeviction policyと競合する。またbackupという保全処理が閲覧cacheの利用頻度を人工的に更新すると、本当に最近閲覧した写真が先にevictされる可能性がある。backup sourceと通常cacheを分離することでbackup correctnessとcache policyを独立させる。
 
-## 17. 次の設計判断候補
+## 18. 次の設計判断候補
 
-backup生成のためserverから取得したoriginalを**通常local original cacheへ残すか**を確定する必要がある。
+backup export処理そのものの**中断・再開を提供するか**を確定する必要がある。
 
-推奨案:
-- backup export専用の一時領域/streamとして扱い、backup成功だけを理由に通常local cacheへ永続追加しない。
-- すでに通常cacheに存在するoriginalはそのまま利用する。
-- serverからbackup目的で取得したoriginalはZIP生成完了まで保持し、成功/失敗/キャンセル後に一時領域を解放する。
-- 通常cacheへの保存は既存の閲覧/明示download等のcache policyに従い、backup処理から副作用として変更しない。
-- 根拠: 大規模backup直後に全originalをcacheへ残すとquotaを圧迫し、既存のeviction policyを逆行させるため。
+背景:
+- 写真が多い場合、serverから多数のoriginalを取得するためexportが長時間になる可能性がある。
+- iOS/PWA/browserではbackground suspensionやpage terminationがあり得る。
+- restoreはpersistent RestoreSessionで中断再開可能と確定済みだが、exportについてはまだ未確定。
+
+推奨案（v0.8）:
+- exportは中断再開可能な永続jobにはしない。
+- 1回のforeground operationとして実行する。
+- 利用者キャンセルは許可し、一時データをcleanupする。
+- page終了/browser suspension等で中断された場合はそのexportを失敗扱いとし、次回は開始時から再実行する。
+- 未完成`.hkmbackup`を利用者へ保存しない。
+- progressは`Business snapshot完了 / original X/Y取得・検証 / ZIP生成 / 完了`程度を表示する。
+- 根拠: exportはBusinessを変更しないread-only処理であり、再実行しても業務データ副作用がない。persistent resumable jobを導入するとsnapshot、取得済みblob、ZIP部分生成、quota cleanupの状態管理が大幅に複雑化するため、まずv0.8では完全backup correctnessを優先する。
