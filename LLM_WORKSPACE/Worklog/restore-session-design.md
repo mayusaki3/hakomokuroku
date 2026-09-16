@@ -162,39 +162,48 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - snapshotは同一IndexedDB read transactionまたは同等の一貫性境界で取得する。
 
 ## 20. backup/restore User所有権境界 — 確定
+- backupは作成したUserに所属し、同一Userへのrestoreだけを許可する。
+- manifest必須field `ownerUserId`にbackup作成時のauthenticated `User.id`を保持する。
+- restore PREPARINGでcurrent User.idと完全一致比較し、不一致は`BACKUP_OWNER_MISMATCH`として適用前に拒否する。
+- 認証credential/secretはbackupへ含めない。
+- 同一Userなら別deviceへrestore可能。device namespaceはrestoreしない。
+- account間移行は将来別のimport/transfer機能として設計する。
 
-**確定（v0.8）:** backupは作成したUserに所属し、同一Userへのrestoreだけを許可する。
+## 21. backup暗号化 — 確定
 
-- `manifest.json`に必須field `ownerUserId`を保持する。
-- `ownerUserId`はbackup作成時のauthenticated `User.id`をそのまま記録する安定identifierとする。
-- `ownerUserId`は認証credential、session token、secretではなく、restore時のownership validationにのみ使用する。
-- backupへpassword、session、TOTP secret、API token等の認証秘密情報は含めない。
-- restore `PREPARING`でmanifest/checksum/schema検証後、Business stagingを有効化する前に、現在authenticated `User.id`と`ownerUserId`を完全一致比較する。
-- 不一致なら`BACKUP_OWNER_MISMATCH`としてrestoreを拒否し、Business / SyncState / Outboxへ変更を加えない。
-- owner mismatch backupを別User用に自動変換、ID/code再採番、ownerUserId書換えしてrestoreする処理は提供しない。
-- 同一Userであれば別deviceへのrestoreを許可する。deviceId / DevicePrefix / LocalSequenceはrestore対象外なので、restore先device自身のnamespaceを維持する。
-- account削除後に別Userとして作成されたaccountは、表示名/email等が同じでも`User.id`が異なる限り同一ownerとは扱わない。
+**確定（v0.8）:** application-level backup暗号化は導入しない。`.hkmbackup`は暗号化されていないZIP containerであり、保存先のアクセス権を持つ者は内容を展開・閲覧できる前提とする。
 
-### 将来のaccount間移行
-別UserへBusinessを移す要求が生じた場合は、backup restoreへ例外を追加せず、import/transfer機能として別途設計する。その際に新identity生成、Box.code collision、photo ownership、server authorization、監査等を明示的に扱う。
+- Box / Item / BoxLocation等のBusinessデータ、manifest metadata、thumbnail、original写真はapplication-levelでは暗号化しない。
+- `checksums.json`のSHA-256は破損検出用であり、暗号化、秘密保持、送信者真正性、改ざん防止を保証するものではない。
+- export UIでは少なくとも「backupには写真や箱の内容等が含まれ、暗号化されていない」ことを保存実行前または保存導線上で利用者が確認できるようにする。
+- restore UIでも外部から入手したbackup fileを扱う場合があるため、owner/schema/integrity validationを実施するが、それをfile真正性保証とは表現しない。
+- 保存先保護はOS/device/cloud storage等の暗号化、アクセス制御、共有設定に委ねる。
+- 箱目録は保存先が安全であることを仮定してbackup correctnessを判定しない。保存先保護の有無にかかわらず生成formatは同じとする。
+
+### 将来の暗号化
+- 現v0.8 ZIP内部entryへ個別暗号化を後付けして同一schemaとして扱わない。
+- 暗号化backupを導入する場合は新しいbackup container/schema versionとして明示する。
+- password-based方式なら少なくともKDF、salt、work factor、AEAD、nonce、authentication tag、metadata露出範囲、password誤り判定、password recovery不可のUXを一体で仕様化する。
+- 新format導入時には旧v0.8平文backupをread-only compatibility対象として扱うかをそのversionで決定する。
 
 ### 根拠
-backup restoreでBusiness identityを維持する設計と、server/localのUser namespaceを一致させるため。同一User限定にすればBox.id/code、写真blob ownership、sync identityを変更せず復元できる。認証秘密をbackupへ含めずUser.idだけでownershipを検証することで、backup file自体を認証手段にしない。
+v0.8では、自己完結した完全backupと安全なrestore transactionをまず成立させる。暗号化を同時に導入するとbrowser/PWAでのstreaming、password管理、鍵導出、format migration、復旧不能時UXまで設計対象が拡大する。一方、暗号化なしであることを明示すれば機密性の性質を誤認させず、将来versionで暗号方式を独立して設計できる。
 
-## 21. 次の設計判断候補
+## 22. 次の設計判断候補
 
-`ownerUserId`を含むbackup fileは平文ZIPなので、**backup内容の暗号化をv0.8で提供するか**を確定する必要がある。
+backupの**保持世代・自動backup機能をv0.8で持つか**を確定する必要がある。
 
 背景:
-- backupにはBox/Item/Location等のBusinessデータとoriginal写真が含まれ、ZIPを展開すれば内容を閲覧できる。
-- `checksums.json`は破損検出用であり、機密性や改ざん真正性を提供しない。
-- browser/PWAでpassword-based encryptionを実装すると、鍵導出parameter、password紛失、streaming ZIPとの組合せ、format versioning等の追加設計が必要になる。
+- 現仕様のexportは利用者が`.hkmbackup`を保存するforeground operationで、保存先はbrowser/OS側が管理する。
+- 箱目録自身が世代管理するには保存先への継続アクセス、容量管理、削除policy、iOS/PWA互換性等が必要になる。
+- v0.8のbackup correctness自体には自動backupは必須ではない。
 
 推奨案（v0.8）:
-- v0.8ではapplication-level backup暗号化を導入しない。
-- `.hkmbackup`は「写真を含むため機密情報として扱う必要がある」ことを仕様/UIで明示する。
-- OS/device/cloud storage側の暗号化・アクセス制御を利用者の保存先保護として利用する。
-- 将来暗号化を追加する場合は、現在のZIP内部entryを個別に暗号化する場当たり的拡張ではなく、新しいbackup container/schema versionとして設計する。
-- password-based encryptionを採用する場合はKDF、AEAD、salt/nonce、metadata露出範囲、password recovery不可のUXまで一体で仕様化する。
+- 箱目録内部の自動backup・世代管理は導入しない。
+- 利用者が明示的に「backupを作成」して`.hkmbackup`を保存するmanual exportのみとする。
+- 箱目録は保存済みbackup一覧や世代数をcanonical stateとして管理しない。
+- 同名fileの上書き/rename/保存先はbrowser/OSに委ねる。
+- UIには最終backup作成日時をlocal preferenceとして表示してもよいが、backup fileの存在保証には使用しない。
+- 将来自動backupを追加する場合は、保存先provider、retention、quota、background execution、失敗通知を別機能として設計する。
 
-根拠: v0.8の目的は完全かつ復元可能なbackupの確立であり、暗号化を同時導入するとformat/streaming/復旧UXの複雑性が大きく増える。暗号化なしであることを明示し、後方互換を意識した新versionで追加できる余地を残す。
+根拠: PWAから任意の保存先へ安定してbackground自動保存することはplatform依存が大きく、v0.8のmanual self-contained backupを完成させる方が確実である。
