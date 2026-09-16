@@ -170,40 +170,46 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - account間移行は将来別のimport/transfer機能として設計する。
 
 ## 21. backup暗号化 — 確定
+- v0.8ではapplication-level backup暗号化を導入しない。
+- `.hkmbackup`は写真やBusiness内容を含む暗号化されていないZIP containerであることをUI/仕様で明示する。
+- checksumsは破損検出用で機密性/真正性を保証しない。
+- 保存先保護はOS/device/cloud storage側へ委ねる。
+- 将来暗号化する場合は新backup container/schema versionとしてKDF/AEAD/UXを含めて設計する。
 
-**確定（v0.8）:** application-level backup暗号化は導入しない。`.hkmbackup`は暗号化されていないZIP containerであり、保存先のアクセス権を持つ者は内容を展開・閲覧できる前提とする。
+## 22. backup保持世代・自動backup — 確定
 
-- Box / Item / BoxLocation等のBusinessデータ、manifest metadata、thumbnail、original写真はapplication-levelでは暗号化しない。
-- `checksums.json`のSHA-256は破損検出用であり、暗号化、秘密保持、送信者真正性、改ざん防止を保証するものではない。
-- export UIでは少なくとも「backupには写真や箱の内容等が含まれ、暗号化されていない」ことを保存実行前または保存導線上で利用者が確認できるようにする。
-- restore UIでも外部から入手したbackup fileを扱う場合があるため、owner/schema/integrity validationを実施するが、それをfile真正性保証とは表現しない。
-- 保存先保護はOS/device/cloud storage等の暗号化、アクセス制御、共有設定に委ねる。
-- 箱目録は保存先が安全であることを仮定してbackup correctnessを判定しない。保存先保護の有無にかかわらず生成formatは同じとする。
+**確定（v0.8）:** 箱目録内部の自動backupおよびbackup fileの世代管理は導入せず、利用者によるmanual exportのみを提供する。
 
-### 将来の暗号化
-- 現v0.8 ZIP内部entryへ個別暗号化を後付けして同一schemaとして扱わない。
-- 暗号化backupを導入する場合は新しいbackup container/schema versionとして明示する。
-- password-based方式なら少なくともKDF、salt、work factor、AEAD、nonce、authentication tag、metadata露出範囲、password誤り判定、password recovery不可のUXを一体で仕様化する。
-- 新format導入時には旧v0.8平文backupをread-only compatibility対象として扱うかをそのversionで決定する。
+- 利用者が明示的に「backupを作成」を実行し、完成した`.hkmbackup`をbrowser/OSの保存機能へ渡す。
+- 定期実行、アプリ終了時自動実行、変更件数をtriggerとした自動backup等はv0.8では行わない。
+- 箱目録は保存済み`.hkmbackup`の一覧、保存path、保持世代数、削除policyをcanonical Business/System stateとして管理しない。
+- fileの保存先、同名fileの扱い、rename、copy、削除はbrowser/OS/storage providerへ委ねる。
+- 箱目録から保存済みbackup fileを後から自動削除・rotateしない。
+- restoreは利用者が選択したfileを入力とする。
+
+### 最終backup作成日時
+- exportが完全成功し、完成backupをbrowser/OSの保存導線へ渡せた時点で、local preferenceとして`lastBackupExportAt`を記録してよい。
+- `lastBackupExportAt`は参考表示専用であり、Business data、sync state、backup manifestへ含めない。
+- この値は「その時刻にbackup生成処理が成功した」ことだけを示し、そのfileが現在も保存先に存在する、読み取り可能である、最新であることを保証しない。
+- export失敗/キャンセル/未完成では更新しない。
+- platform上、保存完了をアプリが厳密に確認できない場合は「最終バックアップ作成」等の断定表示を避け、「最終バックアップ生成」等、確認できる事実に合わせた表現とする。
+
+### 将来の自動backup
+自動backupを追加する場合は、保存先provider、継続アクセス権、retention、quota、background execution、失敗通知、platform差を独立した機能として設計する。
 
 ### 根拠
-v0.8では、自己完結した完全backupと安全なrestore transactionをまず成立させる。暗号化を同時に導入するとbrowser/PWAでのstreaming、password管理、鍵導出、format migration、復旧不能時UXまで設計対象が拡大する。一方、暗号化なしであることを明示すれば機密性の性質を誤認させず、将来versionで暗号方式を独立して設計できる。
+v0.8ではself-contained backupの完全性とrestore correctnessを優先する。PWA/browserから任意の外部保存先へ継続的にbackground保存し世代管理する機能はplatform依存が大きく、manual exportと分離した方が仕様・障害境界が明確になる。
 
-## 22. 次の設計判断候補
+## 23. 次の設計判断候補
 
-backupの**保持世代・自動backup機能をv0.8で持つか**を確定する必要がある。
+manual backup export時に、**写真が1枚もないbackupも同じcontainer構造・検証規則にするか**を確定する必要がある。
 
-背景:
-- 現仕様のexportは利用者が`.hkmbackup`を保存するforeground operationで、保存先はbrowser/OS側が管理する。
-- 箱目録自身が世代管理するには保存先への継続アクセス、容量管理、削除policy、iOS/PWA互換性等が必要になる。
-- v0.8のbackup correctness自体には自動backupは必須ではない。
+推奨案:
+- 写真0枚でも同じ`.hkmbackup` ZIP formatを使用する。
+- `manifest.json`のphoto countを0、photo metadata配列を空配列とする。
+- `photos/` / `thumbnails/` directory entry自体はZIP内に存在してもしなくてもよい。directory entryは論理fileとして扱わない。
+- `checksums.json`には`manifest.json`のみ（および将来追加される必須論理file）が列挙され、存在しないphoto binaryを要求しない。
+- restore PREPARINGはphoto count 0を正常なbackupとして受理する。
+- 写真有無によって別schemaやJSON-only backupへ切り替えない。
 
-推奨案（v0.8）:
-- 箱目録内部の自動backup・世代管理は導入しない。
-- 利用者が明示的に「backupを作成」して`.hkmbackup`を保存するmanual exportのみとする。
-- 箱目録は保存済みbackup一覧や世代数をcanonical stateとして管理しない。
-- 同名fileの上書き/rename/保存先はbrowser/OSに委ねる。
-- UIには最終backup作成日時をlocal preferenceとして表示してもよいが、backup fileの存在保証には使用しない。
-- 将来自動backupを追加する場合は、保存先provider、retention、quota、background execution、失敗通知を別機能として設計する。
-
-根拠: PWAから任意の保存先へ安定してbackground自動保存することはplatform依存が大きく、v0.8のmanual self-contained backupを完成させる方が確実である。
+根拠: 写真有無でformatを分岐させないことでexport/restore validationとversion migrationを単純化できる。
