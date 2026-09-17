@@ -308,23 +308,43 @@ file名は利用者やOSが変更でき、backup content identityとして信頼
 ### 根拠
 backupの有効性をwall-clockへ依存させると、端末時計の誤設定だけで正常なrecovery dataを利用不能にする危険がある。既確定のsync/business timestamp方針と同様に時刻を競合correctnessから切り離し、明らかな未来時刻だけ利用者への注意情報として扱う。
 
-## 32. 次の設計判断候補
+## 32. backup総容量とresource safety — 確定
 
-**restore PREPARINGでbackup全体の最大サイズ・写真総容量にアプリ独自の上限を設けるか**を確定する必要がある。
+**確定:** v0.8ではbackup container全体または写真総容量に固定のアプリ独自hard limitを設けず、entry単位の制約・manifest先行検証・実storage quotaを組み合わせてrestore可否を判定する。
+
+- backup全体のbyte数だけを理由とする固定上限は設けない。
+- PREPARING前半でhash検証済みmanifestのcount/size情報から、Business staging、thumbnail、original blob等の必要容量を見積もる。
+- `navigator.storage.estimate()`等が利用可能ならquota/usageを参考にし、明らかに不足する場合は大容量展開前に中止できる。
+- storage estimateはadvisoryであり、restore可否の正本ではない。最終判定は実際のIndexedDB staging write成功とする。
+- quota/write failureならBusiness / SyncState / Outboxへ触れずPREPARING失敗とし、partial stagingをcleanupする。
+- ZIP内はmanifest/checksumsで宣言・許可されたlogical file entryだけを処理し、unknown extra logical file entryは既確定どおり拒否する。
+- original photoは保存原画像仕様の最大5MiB、thumbnailは最大256KiBをentry単位で検証する。
+- manifest宣言count、path mapping、declared size、実entry size、checksum/hashの整合を検証する。
+- ZIP directory entryはlogical dataとして展開対象に数えない。
+- ZIP parserへ「全entryを無条件に一括展開」させず、central directory等からentry metadataを確認してから許可entryを順次検証/stagingする実装を優先する。
+- 圧縮後sizeが小さくても、展開後sizeがentry制約を超えるものは拒否する。
+- manifest/checksums等のcontrol JSONには、写真総容量とは別のresource safety上限を仕様化してから実装する。
+- 実運用で巨大backup自体が問題になることが確認された場合は、将来schema/container versionで総容量上限、分割backup、streaming restore等を再検討する。
+
+### 根拠
+利用可能storageは端末・browserごとの差が大きく、固定総容量上限は十分なstorageを持つ端末の正当なrestoreまで妨げる。一方、entry単位の展開後size制約、manifest/checksum整合、許可entry限定、実quota判定を組み合わせれば、固定総量制限なしでも破損ZIPや典型的なZIP bombによる無制限展開を抑制できる。
+
+## 33. 次の設計判断候補
+
+**manifest.json / checksums.json のresource safety上限を具体的にいくつにするか**を確定する必要がある。
 
 背景:
-- backupはoriginal写真を含む自己完結ZIPであり、利用者のデータ量に応じて大きくなる。
-- stagingはIndexedDBへ展開するため、実際のbrowser/device quotaが最終制約になる。
-- 固定上限を設けると低性能端末の保護にはなるが、大容量storageを持つ端末でも正当なbackupを復元できなくなる。
-- 個々の保存原画像は既確定で最大5MiB、親entityあたり写真0–10枚という制約がある。
+- 写真binaryにはentry単位上限があるが、control JSONを無制限にparseすると巨大JSONによるmemory/CPU消費を許してしまう。
+- manifestはBusiness snapshotと全photo metadataを含むため、利用者データ件数に応じて成長する。
+- 固定backup総容量上限を設けない方針でも、control structureには実装安全上の現実的な上限が必要になる。
 
 推奨案:
-- v0.8ではbackup container全体や写真総容量に**固定のアプリ独自hard limitを設けない**。
-- manifest count/sizeを使ってPREPARING前半で必要staging容量を見積もり、`navigator.storage.estimate()`等の利用可能情報から明らかに不足する場合は早期警告/中止する。
-- 最終的な可否は既確定どおり実際のIndexedDB staging write成功を正本とする。
-- ZIP bomb対策は「総backup上限」とは別に、manifestに宣言されたentryだけを許可し、各photoは5MiB制約、thumbnailは256KiB制約、entry count/count整合、宣言sizeと実size、checksumを検証し、無制限展開を行わない。
-- manifest/checksums等のcontrol JSONには実装上合理的なparser/resource safety limitを別途定義する。
-- quota不足ならBusinessへ触れずPREPARING失敗としてcleanupする。
-- 実運用で巨大backupによる問題が確認された場合、将来versionで明示的な上限/分割backupを検討する。
+- v0.8では`manifest.json`を**64MiB以下**、`checksums.json`を**16MiB以下**とする。
+- 上限はZIP上の圧縮sizeではなく、展開後raw UTF-8 bytesに適用する。
+- 上限超過はPREPARINGで`BACKUP_RESOURCE_LIMIT_EXCEEDED`相当として拒否する。
+- JSON parse前にentry metadata/streaming byte countで上限を確認し、巨大entryを丸ごとmemoryへ展開してから判定しない。
+- UTF-8 decode/JSON parse後もschemaで配列件数・文字列長・path形式等を検証する。
+- この上限はBusiness件数そのもののproduct limitではなく、v0.8 backup parserのresource safety limitと位置付ける。
+- 将来、実データ規模で不足する場合はbackup schema versionを変えず実装上限を引き上げられるが、readerが対応上限を超えるbackupは明示的に拒否する。
 
-根拠: 利用可能storageはbrowser/deviceごとの差が大きく、固定総容量上限は不要にrestore能力を狭める。一方、entry単位制約とmanifest先行検証で悪意・破損による無制限展開を防ぎ、実quotaを最終判定にすれば端末能力に応じて安全に扱える。
+根拠: 64MiBのmanifestは通常の箱管理データとして十分大きな余裕を持ちつつ、異常なcontrol JSONを早期拒否できる。checksumsはpath+SHA-256中心なのでmanifestより小さく16MiBで十分な余裕がある。
