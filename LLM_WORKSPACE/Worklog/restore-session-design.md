@@ -201,45 +201,48 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - identity/code/photo等の不整合は既定の利用者判断またはrejectへ回す。
 
 ## 26. restore適用前の最終summary確認 — 確定
+- RESOLVING完了後、APPLYING直前の利用者summary確認を必須にする。
+- 新規追加/backup採用更新/現在値維持/UNCHANGED/stale等をentity type別に表示する。
+- stale/未解決conflictがあれば実行不可。
+- 利用者の明示的な「復元を実行」操作だけでAPPLYINGへ進む。
+- summary後のBusiness変更に備え、実行時にもstale再検証する。
 
-**確定:** RESOLVING完了後、APPLYINGへ遷移する直前に、利用者による最終summary確認を必須とする。
+## 27. restore完了とserver syncの境界 — 確定
 
-- summaryはRestoreSessionのstaging/resolutionと、直前のstale再検証結果から算出する。
-- 少なくとも次の件数を表示する。
-  - 新規追加
-  - backup採用による更新
-  - 現在値維持
-  - UNCHANGED
-  - 競合再確認待ち/stale
-- Box / Item / BoxLocation等、v0.8の主要Business entity type別件数を表示する。
-- 写真は可能な範囲で、追加されるoriginal/thumbnail、既存canonical blobを再利用する件数、適用に必要な追加local storage見積もりを表示する。
-- `stale`または未解決conflictが1件でも存在する場合、「復元を実行」を有効化しない。利用者を該当競合の再確認へ戻す。
-- summary画面から競合判断画面へ戻り、選択を変更できる。
-- APPLYING前であればsummary画面からrestore全体をキャンセルできる。
-- 利用者が明示的に「復元を実行」を操作した場合のみAPPLYINGへ遷移する。画面表示や自動timeoutだけでは開始しない。
-- Business変更0件でもsummaryを省略しない。「変更なし」または各件数0を示し、利用者確認後に正常完了へ進める。
-- summary表示後から実行操作までの間にも通常Business編集を許可するため、実行時には既確定どおりstale再検証を行う。summary生成時点の結果をそのままcommit条件として信用しない。
-- 実行時stale再検証で変化が見つかった場合はAPPLYINGへ入らずRESOLVING/summaryへ戻し、該当conflictだけ再判断させる。
+**確定:** restoreの成功・`COMPLETED`成立条件はlocal atomic commitの成功とし、server sync成功をrestore完了条件に含めない。restore機能から専用の即時syncをtriggerしない。
+
+- APPLYING transactionがcommitし`appliedAt`が成立した時点で、restoreのBusiness適用は成功したとみなす。
+- `COMPLETED`への収束およびstaging cleanupは、server接続やPush/Pull成功を待たない。
+- restoreで生成されたOutbox CREATE/UPDATEは通常Outboxと完全に同じ扱いとし、通常sync schedulerの次回cycleで処理する。
+- restore専用のPush API、restore専用sync queue、restore直後だけの強制Push/Pull pathは作らない。
+- offline中でもrestoreを完了できる。Outboxは接続回復まで保持する。
+- onlineの場合、通常sync schedulerの既存条件によってrestore直後に自然にsync cycleが始まることは許容する。restore機能自身が特別にtriggerしたものとは扱わない。
+- 利用者が通常機能として「今すぐ同期」を明示実行することは許可する。
+- UIでは少なくとも「復元完了」とsync状態を別に扱う。未送信Outboxがあれば「サーバー同期待ち」等、local restoreは完了しているがserver未反映であることを判別できる表示にする。
+- sync失敗/競合が後で発生しても、過去のRestoreSessionをFAILEDへ戻さない。その問題は通常sync state/conflictとして扱う。
+- restore完了後に通常syncがserver側の別変更との競合を検出した場合も、restore conflictではなく通常sync conflictとして解決する。
 
 ### 根拠
-競合のない新規entityを自動追加する代わりに、atomic APPLYING直前でrestore全体の影響を利用者が確認できる境界を置く。これにより1件ずつの不要な確認操作を増やさず、誤ったbackup選択や意図しない大量変更を発見しやすくする。またsummary後にもBusiness編集を許可する既存方針と整合させるため、実行時stale再検証を最終commit gateとする。
+restoreはlocal Businessをbackupから安全に回復する操作、syncはlocal/server間の状態を収束させる操作であり、成功条件を分離した方がoffline利用・障害切り分け・再試行性が明確になる。Outboxを共通経路へ統一することで、restore専用network state machineを追加せず既存syncの競合規則をそのまま利用できる。
 
-## 27. 次の設計判断候補
+## 28. 次の設計判断候補
 
-restore完了後に、**自動syncを即時開始するか**を確定する必要がある。
+restore完了後の**RestoreSession履歴を保持するか**を確定する必要がある。
 
 背景:
-- restoreで新規追加/USE_BACKUPしたBusinessは通常local CREATE/UPDATEとしてOutboxを生成する。
-- restore自体はlocal atomic transactionで完了するため、server syncはrestore transactionとは別責務である。
-- 完了直後にonlineなら自動syncするとserver反映は速いが、利用者が復元結果を確認する前にserverへ送信される。
+- COMPLETED/CANCELLED sessionはactiveではなく、既確定ではcleanup対象としている。
+- 一方、直近のrestore結果を確認できると「いつ・何件復元したか」の利用者確認や障害調査には有用。
+- backup fileそのものやBusiness snapshotを長期保持するとstorage消費・写真データ残留が大きい。
 
 推奨案:
-- restore完了そのものはlocal commit成功で成立させ、server sync成功をCOMPLETED条件にしない。
-- restore直後に専用の強制syncは開始しない。
-- 生成されたOutboxは通常sync schedulerの次回cycleで処理する。
-- UIは「復元完了」と「サーバー同期待ち/同期済み」を分離して表示する。
-- offlineならそのままOutboxを保持する。
-- 利用者が通常の「今すぐ同期」を実行することは許可する。
-- 通常sync schedulerが直後に自然発火する可能性は許容するが、restore機能が特別にsyncをtriggerしない。
+- v0.8ではRestoreSessionの**詳細staging/blob/conflict snapshotは完了後cleanup**する。
+- ただし軽量な`RestoreHistory` summaryをlocal-onlyで保持する。
+- summaryは例えば `id / startedAt / completedAt / backupExportedAt / result / addedCount / updatedCount / keptCount / unchangedCount / conflictCount` 程度とする。
+- backup Business内容、写真blob、thumbnail、existing/backup snapshot、Outbox/sync metadataは履歴へ保持しない。
+- `ownerUserId`はUser別local DBで分離済みなら重複保持不要。
+- CANCELLED/failed-before-applyも必要最小限のresult/error categoryだけ記録可能とする。
+- 履歴は診断/UX用でcanonical Businessでもsync対象でもbackup対象でもない。
+- v0.8では件数上限を設け、推奨は直近20件。古いものから削除する。
+- 利用者が履歴を消去できるようにしてよい。
 
-根拠: restoreの成功条件をserver/networkから切り離すことでoffline restoreとatomic local recoveryを維持できる。復元結果のserver反映は既存sync機構に一本化し、restore専用sync pathを増やさない。
+根拠: 再開に必要な重いRestoreSession dataを完了後まで保持する必要はないが、軽量summaryだけ残せばstorage負荷をほぼ増やさず復元操作の確認性を上げられる。
