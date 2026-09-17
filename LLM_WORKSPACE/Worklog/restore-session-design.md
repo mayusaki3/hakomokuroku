@@ -253,20 +253,42 @@ RestoreHistory
 ### 根拠
 再開に必要なRestoreSession dataはactive中だけ保持すればよく、完了後まで写真blobやBusiness snapshotを残すとlocal storageを不必要に消費する。一方、軽量summaryを直近20件残せば「いつ復元したか」「何件変更されたか」「失敗/取消だったか」を利用者と開発者が確認でき、storage負荷とprivacy残留を小さく保てる。
 
-## 29. 次の設計判断候補
+## 29. RestoreHistoryのbackup識別表示 — 確定
 
-**RestoreHistoryにbackup file名を保存・表示するか**を確定する必要がある。
+**確定:** `RestoreHistory`には利用者が選択したbackup file名を永続保存しない。履歴上のbackup識別には`backupExportedAt`と短いcontent fingerprintを使用する。
+
+- restore開始/summary等、そのrestore操作中のUIでは選択したfile名を一時表示してよい。
+- file名はRestoreHistory、Business、SyncState、Outbox等へ永続化しない。
+- `RestoreHistory`に`backupFingerprint`を追加する。
+- `backupFingerprint`はrestore開始時に算出するbackup container全bytesのSHA-256 `backupHash`から、表示用として先頭12 hexadecimal charactersを小文字で派生する。
+- fingerprint算出元の完全`backupHash`はRestoreSessionの同一backup判定・再開整合性確認等に必要な間だけ保持し、完了後のRestoreHistoryには完全hashを残さない。
+- `backupExportedAt`はhash検証済みmanifestの`exportedAt`を使用する。
+- UIでは例えば「2026-09-18T...Z / 1a2b3c4d5e6f」のように、生成時刻とfingerprintを組み合わせて識別できるようにする。表示形式自体はUI仕様で決める。
+- fingerprintはbackup真正性・署名・所有権を証明する値として扱わない。同じcontainer bytesを識別するための目印に限定する。
+- 12 hexの表示fingerprintが履歴内で偶然重複しても、履歴recordをmerge/deleteしない。RestoreHistory identityは独立した`id`である。
+- file名に含まれ得る個人情報・任意文字列を診断履歴へ残さない。
+
+### 根拠
+file名は利用者やOSが変更でき、backup content identityとして信頼できない。また任意の個人情報を含み得る。hash検証済みmanifestの生成時刻とcontainer content由来fingerprintなら、保存情報を限定しつつ複数backupを実用上判別しやすい。短縮fingerprintは表示用なので衝突をidentity判定へ利用しないことで安全性も維持する。
+
+## 30. 次の設計判断候補
+
+**同じbackupを複数回restoreすることを許可するか**を確定する必要がある。
 
 背景:
-- 利用者が複数の`.hkmbackup`を持っている場合、「どのbackupを復元したか」を履歴から判別できると有用。
-- 一方、file名は利用者が自由に変更でき、backup identityでも真正性情報でもない。
-- file名に利用者自身が個人情報や任意文字列を含める可能性があるため、診断履歴への長期保存は必要最小限にしたい。
+- `backupHash`により同一container bytesを検出できる。
+- 一度restoreしたbackupを再度選択した場合、多くのentityはUNCHANGEDになる可能性が高い。
+- ただし前回restore後に利用者がBusinessを変更していれば、同じbackupでも新しいcontent conflictが発生し、再restoreに意味がある。
+- fingerprint/RestoreHistoryを理由に自動拒否すると、意図的な再復元を妨げる。
 
 推奨案:
-- `RestoreHistory`には**選択時のbackup file名を保存しない**。
-- 履歴の識別には`backupExportedAt`と、必要なら`backupHash`の短い表示用fingerprintを使用する。
-- fingerprintはbackup container bytesのSHA-256から先頭12 hex程度を表示用に派生し、完全hashはRestoreSession内部の検証/対応用として必要な期間だけ保持する。
-- fingerprintは真正性保証ではなく「同じbackup fileかを見分ける目印」と明示する。
-- restore開始/summary画面では現在選択したfile名を一時表示してよいが、履歴には残さない。
+- **同じbackupの再restoreを許可する。**
+- 過去RestoreHistoryに同じ`backupFingerprint`があっても開始を禁止しない。
+- 完全`backupHash`を利用できるrestore開始時には、直近履歴等から同一backupと判断できる場合「このバックアップは以前復元されています」と警告表示してよい。
+- 警告は確認情報であり、利用者が続行を選べる。
+- 毎回現在のBusinessに対してPREPARING/RESOLVINGをやり直し、前回のresolutionを再利用しない。
+- 同一内容ならUNCHANGEDとして処理し、不要なBusiness/Outbox writeを生成しない。
+- 前回後にBusinessが変わっていれば通常のrestore conflict規則で判断する。
+- RestoreHistoryには再restoreごとに独立した履歴recordを残す。
 
-根拠: file名は可変でidentityとして弱く、任意の個人情報を含み得る。backup生成時刻とcontent由来fingerprintの方が履歴識別として安定し、保存情報も限定できる。
+根拠: backupは特定時点のBusiness状態を再適用する手段であり、同じfileを再利用する正当な用途がある。重複検出は誤操作警告には有用だが、復元禁止条件にするとrecovery機能を不必要に制限する。
