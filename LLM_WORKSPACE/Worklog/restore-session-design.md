@@ -194,40 +194,52 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - 空backup restoreはBusiness変更なしで正常完了可能。
 
 ## 25. backupにだけ存在するBusiness entity — 確定
+- backupに存在しrestore先に同一identityがないBusiness entityは、整合性validation通過後に個別確認なしで自動追加する。
+- 単なるidentity不存在はRestoreConflictにしない。
+- 自動追加対象はstagingに保持し、APPLYING transactionで他のrestore変更とまとめて反映する。
+- 通常local CREATEとしてcontentHashとOutbox CREATEをrestore先で生成する。
+- identity/code/photo等の不整合は既定の利用者判断またはrejectへ回す。
 
-**確定:** backupに存在しrestore先に同一identityが存在しないBusiness entityは、安全性・整合性validationを通過した場合、利用者への1件ごとの確認なしで自動追加する。
+## 26. restore適用前の最終summary確認 — 確定
 
-- 単にrestore先にidentityが存在しないこと自体は`RestoreConflict`を生成する理由にしない。
-- PREPARING/RESOLVINGで少なくともowner、schema、entity形式、必須参照、Box.code unique、photoId/photoHash、写真binary整合性を検証する。
-- backup内のentity間参照は、restore適用後の結果として整合することを検証する。親子を同一restoreで新規追加することは許可する。
-- 既存Businessとのidentity/code/photo collision等、既確定の不整合条件がある場合は自動追加対象から外し、その不整合に定義された利用者判断またはrejectへ回す。
-- 自動追加対象はRestoreSession stagingに適用予定として保持し、RESOLVING中はまだBusinessへ書き込まない。
-- 全競合解決・stale再検証後、APPLYING transactionで`USE_BACKUP`対象と自動追加対象をまとめて反映する。
-- 自動追加entityは通常のlocal CREATEとして扱い、必要なcontentHashとOutbox CREATEをrestore先で新規生成する。backup側revision/baseRevision/syncSeq等は導入しない。
-- 同一transaction内の依存順序または参照検証可能な一括writeにより、BoxLocation→Box→Item等の必須参照を破壊しない。
-- UIは適用前summaryで少なくとも「新規追加 N件」を示す。可能ならentity type別件数も表示する。
-- 利用者はrestore全体をAPPLYING前にキャンセルできるが、競合のない新規entityを1件ずつKEEP/ADD選択するUIはv0.8では提供しない。
+**確定:** RESOLVING完了後、APPLYINGへ遷移する直前に、利用者による最終summary確認を必須とする。
+
+- summaryはRestoreSessionのstaging/resolutionと、直前のstale再検証結果から算出する。
+- 少なくとも次の件数を表示する。
+  - 新規追加
+  - backup採用による更新
+  - 現在値維持
+  - UNCHANGED
+  - 競合再確認待ち/stale
+- Box / Item / BoxLocation等、v0.8の主要Business entity type別件数を表示する。
+- 写真は可能な範囲で、追加されるoriginal/thumbnail、既存canonical blobを再利用する件数、適用に必要な追加local storage見積もりを表示する。
+- `stale`または未解決conflictが1件でも存在する場合、「復元を実行」を有効化しない。利用者を該当競合の再確認へ戻す。
+- summary画面から競合判断画面へ戻り、選択を変更できる。
+- APPLYING前であればsummary画面からrestore全体をキャンセルできる。
+- 利用者が明示的に「復元を実行」を操作した場合のみAPPLYINGへ遷移する。画面表示や自動timeoutだけでは開始しない。
+- Business変更0件でもsummaryを省略しない。「変更なし」または各件数0を示し、利用者確認後に正常完了へ進める。
+- summary表示後から実行操作までの間にも通常Business編集を許可するため、実行時には既確定どおりstale再検証を行う。summary生成時点の結果をそのままcommit条件として信用しない。
+- 実行時stale再検証で変化が見つかった場合はAPPLYINGへ入らずRESOLVING/summaryへ戻し、該当conflictだけ再判断させる。
 
 ### 根拠
-restore先にexisting contentがない新規entityは、既存データを上書きするcontent conflictではない。identity/reference/photo等の整合性を先に保証した上で自動追加すれば、backup件数に比例した不要な確認操作を避けつつ、APPLYINGのatomicityとrestore前キャンセルによる安全性を維持できる。
+競合のない新規entityを自動追加する代わりに、atomic APPLYING直前でrestore全体の影響を利用者が確認できる境界を置く。これにより1件ずつの不要な確認操作を増やさず、誤ったbackup選択や意図しない大量変更を発見しやすくする。またsummary後にもBusiness編集を許可する既存方針と整合させるため、実行時stale再検証を最終commit gateとする。
 
-## 26. 次の設計判断候補
+## 27. 次の設計判断候補
 
-restore適用前の**最終summary確認画面を必須にするか**を確定する必要がある。
+restore完了後に、**自動syncを即時開始するか**を確定する必要がある。
 
 背景:
-- 新規entityは競合がなければ自動追加する方針になった。
-- 同一identityの競合は個別に解決するが、利用者が全体として何件変更されるかを確認する機会があると誤操作を減らせる。
-- APPLYING開始後は手動キャンセルできない。
+- restoreで新規追加/USE_BACKUPしたBusinessは通常local CREATE/UPDATEとしてOutboxを生成する。
+- restore自体はlocal atomic transactionで完了するため、server syncはrestore transactionとは別責務である。
+- 完了直後にonlineなら自動syncするとserver反映は速いが、利用者が復元結果を確認する前にserverへ送信される。
 
 推奨案:
-- RESOLVING完了後、APPLYINGへ入る直前に**最終summary確認を必須**にする。
-- summaryには少なくとも `新規追加 / backup採用による更新 / 現在値維持 / UNCHANGED / 競合再確認待ち` の件数を表示する。
-- Box / Item / BoxLocation等、主要entity type別件数も表示する。
-- 写真については「追加/再利用されるoriginal・thumbnail件数」と必要容量見積もりを表示できる範囲で表示する。
-- staleが1件でも残る場合は実行buttonを有効にしない。
-- 利用者が「復元を実行」を明示操作した場合だけAPPLYINGへ遷移する。
-- summary画面から戻って競合判断を見直せる。APPLYING前ならrestore全体のキャンセルも可能。
-- Business変更0件でもsummaryを表示し、「変更なし」を確認して正常完了できるようにする。
+- restore完了そのものはlocal commit成功で成立させ、server sync成功をCOMPLETED条件にしない。
+- restore直後に専用の強制syncは開始しない。
+- 生成されたOutboxは通常sync schedulerの次回cycleで処理する。
+- UIは「復元完了」と「サーバー同期待ち/同期済み」を分離して表示する。
+- offlineならそのままOutboxを保持する。
+- 利用者が通常の「今すぐ同期」を実行することは許可する。
+- 通常sync schedulerが直後に自然発火する可能性は許容するが、restore機能が特別にsyncをtriggerしない。
 
-根拠: 自動追加を採用する代わりに、atomic APPLYINGの直前で全体影響を確認する境界を設けると、個別確認の操作量を増やさず誤restoreを防ぎやすい。
+根拠: restoreの成功条件をserver/networkから切り離すことでoffline restoreとatomic local recoveryを維持できる。復元結果のserver反映は既存sync機構に一本化し、restore専用sync pathを増やさない。
