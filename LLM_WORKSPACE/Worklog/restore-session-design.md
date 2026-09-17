@@ -188,47 +188,46 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - 写真0枚なのにphoto binary logical entryがある場合はinvalid。
 
 ## 24. Business 0件の完全空backup — 確定
+- authenticated Userのactive Businessが0件でも正常なmanual backupを生成する。
+- 各Business collection=[]、count=0。非Business必須metadataは通常どおり保持する。
+- restoreはidentity単位mergeであり、backupに存在しないexisting entityを削除・変更しない。
+- 空backup restoreはBusiness変更なしで正常完了可能。
 
-**確定:** authenticated Userのactive Business entityが0件でも、正常なmanual backupとして`.hkmbackup`を生成できる。
+## 25. backupにだけ存在するBusiness entity — 確定
 
-- Box / Item / BoxLocation / photo等、v0.8 manifestで定義する各Business collectionを空配列`[]`とする。
-- 各対応countは`0`とする。collection fieldやcount fieldを省略して空を表現しない。
-- `ownerUserId`、`exportedAt`、backup schema identifier/version、`checksums.json`等の非Business必須情報は通常backupと同じく保持・検証する。
-- 写真0枚規則も通常どおり適用する。
-- export UIはBusiness 0件をerrorとして拒否しない。必要なら「保存対象データ0件」を情報表示してよいが、生成自体は可能とする。
+**確定:** backupに存在しrestore先に同一identityが存在しないBusiness entityは、安全性・整合性validationを通過した場合、利用者への1件ごとの確認なしで自動追加する。
 
-### restore semantics
-- restoreはsnapshot全置換ではなく、backupに存在するidentityを対象としたmerge/競合解決である。
-- **backupに存在しないentityは、restore先で削除・変更しない。**
-- よって完全空backupをBusinessあり環境へrestoreしても、既存Businessを全削除しない。
-- backup 0件 + restore先0件ならBusiness変更なしで正常完了する。
-- backup 0件 + restore先BusinessありでもBusiness変更なしで正常完了する。
-- backupに存在しないことをDELETE指示として解釈しない。
-- backupはactive dataのみでtombstoneを含めないため、backup単独から過去の削除を再現しない。
-
-### restore result
-- 実適用対象が0件で競合もない場合もRestoreSessionは正常に完了できる。
-- Business / Outboxに不要なwriteを発生させない。
-- restoreの実行記録/UIは「0件復元」等、何も変更しなかったことが判別できる表示をしてよい。
+- 単にrestore先にidentityが存在しないこと自体は`RestoreConflict`を生成する理由にしない。
+- PREPARING/RESOLVINGで少なくともowner、schema、entity形式、必須参照、Box.code unique、photoId/photoHash、写真binary整合性を検証する。
+- backup内のentity間参照は、restore適用後の結果として整合することを検証する。親子を同一restoreで新規追加することは許可する。
+- 既存Businessとのidentity/code/photo collision等、既確定の不整合条件がある場合は自動追加対象から外し、その不整合に定義された利用者判断またはrejectへ回す。
+- 自動追加対象はRestoreSession stagingに適用予定として保持し、RESOLVING中はまだBusinessへ書き込まない。
+- 全競合解決・stale再検証後、APPLYING transactionで`USE_BACKUP`対象と自動追加対象をまとめて反映する。
+- 自動追加entityは通常のlocal CREATEとして扱い、必要なcontentHashとOutbox CREATEをrestore先で新規生成する。backup側revision/baseRevision/syncSeq等は導入しない。
+- 同一transaction内の依存順序または参照検証可能な一括writeにより、BoxLocation→Box→Item等の必須参照を破壊しない。
+- UIは適用前summaryで少なくとも「新規追加 N件」を示す。可能ならentity type別件数も表示する。
+- 利用者はrestore全体をAPPLYING前にキャンセルできるが、競合のない新規entityを1件ずつKEEP/ADD選択するUIはv0.8では提供しない。
 
 ### 根拠
-backupの欠落entityをDELETEと解釈すると、active-only backupとtombstone除外方針に反し、古いbackupをrestoreしただけで現在の追加データを失う危険がある。identity単位mergeに統一することで、空backupを含め安全な加算/更新型restoreとして扱える。
+restore先にexisting contentがない新規entityは、既存データを上書きするcontent conflictではない。identity/reference/photo等の整合性を先に保証した上で自動追加すれば、backup件数に比例した不要な確認操作を避けつつ、APPLYINGのatomicityとrestore前キャンセルによる安全性を維持できる。
 
-## 25. 次の設計判断候補
+## 26. 次の設計判断候補
 
-restoreで**backupにだけ存在するBusiness entityを利用者確認なしで追加するか**を確定する必要がある。
+restore適用前の**最終summary確認画面を必須にするか**を確定する必要がある。
 
 背景:
-- 同一identityの内容差異は`KEEP_EXISTING / USE_BACKUP`で利用者判断する方針が確定済み。
-- 一方、backupにだけ存在しrestore先に同一identityがないentityは内容競合ではない。
-- 全新規entityまで1件ずつ確認すると、大規模backupのrestore操作量が非常に増える。
+- 新規entityは競合がなければ自動追加する方針になった。
+- 同一identityの競合は個別に解決するが、利用者が全体として何件変更されるかを確認する機会があると誤操作を減らせる。
+- APPLYING開始後は手動キャンセルできない。
 
 推奨案:
-- backupにだけ存在し、identity/参照/Box.code/photo等のvalidation conflictがないBusiness entityは**自動追加**する。
-- 単なる「restore先に存在しない」はRestoreConflictを作らない。
-- 追加前にowner、schema、参照整合、Box.code unique、photo identity/hash等をPREPARING/RESOLVINGで検証する。
-- identity/code/photo collision等、既確定の不整合条件がある場合のみ利用者判断またはreject対象とする。
-- APPLYINGで自動追加entityも他のUSE_BACKUP適用と同じtransactionに含め、必要なOutboxを生成する。
-- UIでは適用前summaryに「新規追加 N件」を表示し、個別競合判断とは分離する。
+- RESOLVING完了後、APPLYINGへ入る直前に**最終summary確認を必須**にする。
+- summaryには少なくとも `新規追加 / backup採用による更新 / 現在値維持 / UNCHANGED / 競合再確認待ち` の件数を表示する。
+- Box / Item / BoxLocation等、主要entity type別件数も表示する。
+- 写真については「追加/再利用されるoriginal・thumbnail件数」と必要容量見積もりを表示できる範囲で表示する。
+- staleが1件でも残る場合は実行buttonを有効にしない。
+- 利用者が「復元を実行」を明示操作した場合だけAPPLYINGへ遷移する。
+- summary画面から戻って競合判断を見直せる。APPLYING前ならrestore全体のキャンセルも可能。
+- Business変更0件でもsummaryを表示し、「変更なし」を確認して正常完了できるようにする。
 
-根拠: 新規entityはexisting contentを上書きしないため通常のcontent conflictではない。安全性に関わるidentity/reference validationを先に行い、競合のない追加は自動化する方がrestore UXと大規模backup処理の両方を単純化できる。
+根拠: 自動追加を採用する代わりに、atomic APPLYINGの直前で全体影響を確認する境界を設けると、個別確認の操作量を増やさず誤restoreを防ぎやすい。
