@@ -1,6 +1,6 @@
 # RestoreSession 設計判断記録
 
-更新: 2026-09-16
+更新: 2026-09-17
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 状態: 設計確定事項
@@ -182,34 +182,53 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - `lastBackupExportAt`はlocal preferenceの参考表示としてのみ保持可能で、file存在保証には使わない。
 
 ## 23. 写真0枚backupのcontainer構造 — 確定
+- 写真0枚でも同じ`.hkmbackup` ZIP、manifest schema、validation pipelineを使用する。
+- photo count=0、photo metadata=`[]`。
+- directory entryは任意でchecksums対象外。
+- 写真0枚なのにphoto binary logical entryがある場合はinvalid。
 
-**確定:** 写真が1枚も存在しない場合も、写真ありbackupと同じ`.hkmbackup` ZIP container、同じmanifest schema、同じrestore validation pipelineを使用する。
+## 24. Business 0件の完全空backup — 確定
 
-- `manifest.json`のphoto countは`0`とする。
-- photo metadata collectionは空配列`[]`とする。field自体を省略して写真なしを表現しない。
-- Business snapshotは通常どおりBox / Item / BoxLocation等を保持する。Business entity自体が0件の場合も同じschemaを使用する。
-- `photos/`および`thumbnails/`のZIP directory entryは存在しても存在しなくてもよい。
-- directory entryは論理fileではなく、`checksums.json`の対象にしない。
-- 写真0枚の場合、`photos/<photoId>.webp` / `thumbnails/<photoId>.webp` entryは存在してはならない。
-- `checksums.json`は`manifest.json`等、そのschema versionで存在する論理fileだけを列挙する。
-- restore PREPARINGはphoto count=0 + empty photo metadataを正常な自己完結backupとして受理する。
-- photo countとmetadata件数が不一致ならinvalid backupとして拒否する。
-- photo count=0なのにphoto binary logical entryが存在する場合もmanifestとの不整合として拒否する。
-- 写真の有無によってJSON-only形式、別extension、別MIME、別schemaへ切り替えない。
+**確定:** authenticated Userのactive Business entityが0件でも、正常なmanual backupとして`.hkmbackup`を生成できる。
+
+- Box / Item / BoxLocation / photo等、v0.8 manifestで定義する各Business collectionを空配列`[]`とする。
+- 各対応countは`0`とする。collection fieldやcount fieldを省略して空を表現しない。
+- `ownerUserId`、`exportedAt`、backup schema identifier/version、`checksums.json`等の非Business必須情報は通常backupと同じく保持・検証する。
+- 写真0枚規則も通常どおり適用する。
+- export UIはBusiness 0件をerrorとして拒否しない。必要なら「保存対象データ0件」を情報表示してよいが、生成自体は可能とする。
+
+### restore semantics
+- restoreはsnapshot全置換ではなく、backupに存在するidentityを対象としたmerge/競合解決である。
+- **backupに存在しないentityは、restore先で削除・変更しない。**
+- よって完全空backupをBusinessあり環境へrestoreしても、既存Businessを全削除しない。
+- backup 0件 + restore先0件ならBusiness変更なしで正常完了する。
+- backup 0件 + restore先BusinessありでもBusiness変更なしで正常完了する。
+- backupに存在しないことをDELETE指示として解釈しない。
+- backupはactive dataのみでtombstoneを含めないため、backup単独から過去の削除を再現しない。
+
+### restore result
+- 実適用対象が0件で競合もない場合もRestoreSessionは正常に完了できる。
+- Business / Outboxに不要なwriteを発生させない。
+- restoreの実行記録/UIは「0件復元」等、何も変更しなかったことが判別できる表示をしてよい。
 
 ### 根拠
-写真の有無はBusiness dataの状態であってbackup formatの種類ではない。container/schema/validationを一本化することで、export/restore/test/version migrationの分岐を減らし、写真なしbackupだけ検証規則が弱くなることも防止できる。
+backupの欠落entityをDELETEと解釈すると、active-only backupとtombstone除外方針に反し、古いbackupをrestoreしただけで現在の追加データを失う危険がある。identity単位mergeに統一することで、空backupを含め安全な加算/更新型restoreとして扱える。
 
-## 24. 次の設計判断候補
+## 25. 次の設計判断候補
 
-**Business entityが0件の完全空backupを許可するか**を確定する必要がある。
+restoreで**backupにだけ存在するBusiness entityを利用者確認なしで追加するか**を確定する必要がある。
+
+背景:
+- 同一identityの内容差異は`KEEP_EXISTING / USE_BACKUP`で利用者判断する方針が確定済み。
+- 一方、backupにだけ存在しrestore先に同一identityがないentityは内容競合ではない。
+- 全新規entityまで1件ずつ確認すると、大規模backupのrestore操作量が非常に増える。
 
 推奨案:
-- authenticated Userのlocal Businessが0件でもmanual backup生成を許可する。
-- Box / Item / BoxLocation / photo等の各collectionを空配列、各countを0として通常の`.hkmbackup`を生成する。
-- ownerUserId / exportedAt / schema version / checksums等は通常どおり必須。
-- restore先もBusinessが0件なら実質UNCHANGEDとして正常完了する。
-- restore先にBusinessがある場合、空backupを「全削除backup」と解釈せず、active entityを削除しない。
-- つまりbackup/restoreはsnapshot全置換ではなく、既確定のidentity単位merge/競合解決であり、backupに存在しないentityはrestore対象外とする。
+- backupにだけ存在し、identity/参照/Box.code/photo等のvalidation conflictがないBusiness entityは**自動追加**する。
+- 単なる「restore先に存在しない」はRestoreConflictを作らない。
+- 追加前にowner、schema、参照整合、Box.code unique、photo identity/hash等をPREPARING/RESOLVINGで検証する。
+- identity/code/photo collision等、既確定の不整合条件がある場合のみ利用者判断またはreject対象とする。
+- APPLYINGで自動追加entityも他のUSE_BACKUP適用と同じtransactionに含め、必要なOutboxを生成する。
+- UIでは適用前summaryに「新規追加 N件」を表示し、個別競合判断とは分離する。
 
-根拠: 空backupを形式上invalidにする理由はなく、restoreで「backupにない=削除」と解釈しないことを明確にすれば安全に扱える。また、初期状態でもbackup pipelineを同じ規則でテストできる。
+根拠: 新規entityはexisting contentを上書きしないため通常のcontent conflictではない。安全性に関わるidentity/reference validationを先に行い、競合のない追加は自動化する方がrestore UXと大規模backup処理の両方を単純化できる。
