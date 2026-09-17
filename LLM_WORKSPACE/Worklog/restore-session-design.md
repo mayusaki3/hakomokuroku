@@ -271,24 +271,40 @@ RestoreHistory
 ### 根拠
 file名は利用者やOSが変更でき、backup content identityとして信頼できない。また任意の個人情報を含み得る。hash検証済みmanifestの生成時刻とcontainer content由来fingerprintなら、保存情報を限定しつつ複数backupを実用上判別しやすい。短縮fingerprintは表示用なので衝突をidentity判定へ利用しないことで安全性も維持する。
 
-## 30. 次の設計判断候補
+## 30. 同一backupの再restore — 確定
 
-**同じbackupを複数回restoreすることを許可するか**を確定する必要がある。
+**確定:** 同じbackup containerを複数回restoreすることを許可する。過去のrestore実績は警告情報として利用できるが、restore開始禁止条件にはしない。
+
+- 過去RestoreHistoryに同じ`backupFingerprint`が存在してもrestoreを開始できる。
+- restore開始時に算出した完全`backupHash`と、active RestoreSession等で保持している完全hashを比較できる場合は完全hashを優先する。
+- RestoreHistoryは短縮fingerprintだけを保持するため、fingerprint一致だけで「完全に同じbackup」と断定しない。UIでは「以前復元したbackupと同じ可能性があります」等、表示用fingerprintの性質に合う表現を使用する。
+- 同一backupであることを十分確認できる場合も警告はinformationalとし、利用者が続行できる。
+- 再restoreのたびに現在のBusinessを基準としてPREPARING / RESOLVINGを最初から実行する。
+- 前回RestoreSessionのresolution、staging、conflict snapshotを再利用しない。
+- 現在Businessとbackup Businessが同一ならUNCHANGEDとして扱い、不要なBusiness write / Outboxを生成しない。
+- 現在Businessが前回restore後に変更されていれば、通常のcontent conflict規則に従って`KEEP_EXISTING / USE_BACKUP`を再判断する。
+- backupにのみ存在するentityは通常どおりvalidation後に自動追加する。
+- 再restoreごとに独立したRestoreSessionを作成し、完了/取消/失敗時は独立したRestoreHistory recordを残す。
+- active RestoreSessionが既に存在する場合は、既確定の「User local DBごとにactive最大1件」規則を優先し、新しい再restoreを並行開始しない。
+
+### 根拠
+同じbackupは、前回restore後の誤編集を戻すなど再利用する正当な用途がある。重複検出を禁止条件にするとrecovery能力を不必要に制限する。一方で毎回現在Businessとの比較をやり直せば、古いresolutionを誤適用せず、UNCHANGED最適化と現在状態に対する競合判断を両立できる。
+
+## 31. 次の設計判断候補
+
+**backupの`exportedAt`が現在時刻より未来、または非常に古い場合にrestoreを制限するか**を確定する必要がある。
 
 背景:
-- `backupHash`により同一container bytesを検出できる。
-- 一度restoreしたbackupを再度選択した場合、多くのentityはUNCHANGEDになる可能性が高い。
-- ただし前回restore後に利用者がBusinessを変更していれば、同じbackupでも新しいcontent conflictが発生し、再restoreに意味がある。
-- fingerprint/RestoreHistoryを理由に自動拒否すると、意図的な再復元を妨げる。
+- `exportedAt`はbackup生成時刻の正本だが、端末時計の誤設定等で現実の時刻から大きくずれる可能性がある。
+- restore correctnessはidentity/contentHash/参照整合性等で決まり、時刻順では決めない方針が既にある。
+- 一方、極端な日時は利用者がbackupを取り違えていることに気づく材料になる。
 
 推奨案:
-- **同じbackupの再restoreを許可する。**
-- 過去RestoreHistoryに同じ`backupFingerprint`があっても開始を禁止しない。
-- 完全`backupHash`を利用できるrestore開始時には、直近履歴等から同一backupと判断できる場合「このバックアップは以前復元されています」と警告表示してよい。
-- 警告は確認情報であり、利用者が続行を選べる。
-- 毎回現在のBusinessに対してPREPARING/RESOLVINGをやり直し、前回のresolutionを再利用しない。
-- 同一内容ならUNCHANGEDとして処理し、不要なBusiness/Outbox writeを生成しない。
-- 前回後にBusinessが変わっていれば通常のrestore conflict規則で判断する。
-- RestoreHistoryには再restoreごとに独立した履歴recordを残す。
+- RFC3339 millisecondsとして形式が正しい`exportedAt`は、未来/過去の大きさだけを理由にrestore拒否しない。
+- `exportedAt`を競合の勝者判定、Business上書き可否、restore順序判定には使用しない。
+- 現在時刻より大幅に未来、またはUI上注意が有用なほど古い場合はsummaryで警告表示してよい。
+- 警告閾値はrestore correctnessに影響しないUX値とする。v0.8では例えば未来24時間超を明確な時計ずれ警告とし、古いbackupは期間を表示して利用者判断に委ねる。
+- invalid/offset-less/non-millisecond等、manifest schemaで要求する時刻表現に違反する場合はPREPARINGで拒否する。
+- backup fingerprint/hash、owner、schema、checksums等のvalidationは時刻警告とは独立して必須。
 
-根拠: backupは特定時点のBusiness状態を再適用する手段であり、同じfileを再利用する正当な用途がある。重複検出は誤操作警告には有用だが、復元禁止条件にするとrecovery機能を不必要に制限する。
+根拠: 端末時計の誤差で有効なbackupを失効させるべきではなく、restore内容の正しさをwall-clockへ依存させない既存設計と整合する。一方、異常時刻を情報表示すればbackup取り違えや時計設定異常には気づきやすい。
