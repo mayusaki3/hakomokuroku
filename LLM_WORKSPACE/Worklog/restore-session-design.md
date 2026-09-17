@@ -1,6 +1,6 @@
 # RestoreSession 設計判断記録
 
-更新: 2026-09-17
+更新: 2026-09-18
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 状態: 設計確定事項
@@ -208,41 +208,65 @@ file name : hakomokuroku-backup-YYYYMMDD-HHmmss.hkmbackup
 - summary後のBusiness変更に備え、実行時にもstale再検証する。
 
 ## 27. restore完了とserver syncの境界 — 確定
+- restoreの成功・`COMPLETED`成立条件はlocal atomic commitの成功とし、server sync成功をrestore完了条件に含めない。
+- restore機能から専用の即時syncをtriggerしない。
+- restoreで生成されたOutboxは通常sync schedulerへ渡す。
+- offline中でもrestoreを完了できる。
+- UIでは「復元完了」とsync状態を分離する。
+- 後発sync conflictは通常sync conflictとして扱い、過去RestoreSessionをFAILEDへ戻さない。
 
-**確定:** restoreの成功・`COMPLETED`成立条件はlocal atomic commitの成功とし、server sync成功をrestore完了条件に含めない。restore機能から専用の即時syncをtriggerしない。
+## 28. restore完了後の履歴 — 確定
 
-- APPLYING transactionがcommitし`appliedAt`が成立した時点で、restoreのBusiness適用は成功したとみなす。
-- `COMPLETED`への収束およびstaging cleanupは、server接続やPush/Pull成功を待たない。
-- restoreで生成されたOutbox CREATE/UPDATEは通常Outboxと完全に同じ扱いとし、通常sync schedulerの次回cycleで処理する。
-- restore専用のPush API、restore専用sync queue、restore直後だけの強制Push/Pull pathは作らない。
-- offline中でもrestoreを完了できる。Outboxは接続回復まで保持する。
-- onlineの場合、通常sync schedulerの既存条件によってrestore直後に自然にsync cycleが始まることは許容する。restore機能自身が特別にtriggerしたものとは扱わない。
-- 利用者が通常機能として「今すぐ同期」を明示実行することは許可する。
-- UIでは少なくとも「復元完了」とsync状態を別に扱う。未送信Outboxがあれば「サーバー同期待ち」等、local restoreは完了しているがserver未反映であることを判別できる表示にする。
-- sync失敗/競合が後で発生しても、過去のRestoreSessionをFAILEDへ戻さない。その問題は通常sync state/conflictとして扱う。
-- restore完了後に通常syncがserver側の別変更との競合を検出した場合も、restore conflictではなく通常sync conflictとして解決する。
+**確定:** v0.8では、完了・キャンセル・終了可能な失敗sessionの重いRestoreSession dataをcleanupし、代わりに軽量なlocal-only `RestoreHistory` summaryを直近20件まで保持する。
+
+```text
+RestoreHistory
+- id
+- restoreSessionId
+- startedAt
+- finishedAt
+- backupExportedAt?
+- result
+- addedCount
+- updatedCount
+- keptCount
+- unchangedCount
+- conflictCount
+- errorCategory?
+```
+
+- `RestoreHistory.id`はlocal history record identity、`restoreSessionId`は元sessionとの診断上の対応用とする。
+- `result`は少なくとも`COMPLETED / CANCELLED / FAILED`を区別する。
+- `finishedAt`はCOMPLETEDなら完了時、CANCELLEDなら取消時、FAILEDなら終了確定時を保持する。
+- COMPLETEDでは最終summary/適用結果から件数を確定して履歴へ保存する。
+- CANCELLED/FAILEDでは未適用のstaging内容を「復元済み件数」として記録しない。必要な診断件数がある場合もresultと区別可能な情報として扱う。
+- `errorCategory`はFAILED時の必要最小限の分類のみとし、backup内容・例外stack・credential等の詳細を保存しない。
+- backup Business snapshot、existing/backup conflict snapshot、original photo blob、thumbnail blob、RestoreConflict詳細、Outbox、SyncState、server revision等はRestoreHistoryへ保持しない。
+- 履歴はcanonical Businessではなく、sync対象でもbackup対象でもない。
+- User別local DB内に保持するため`ownerUserId`は重複保持しない。
+- 最大20件。21件目を追加するときは`finishedAt`が古い履歴から削除する。同時刻の場合は安定したidentity順で削除対象を決める。
+- 利用者による履歴全消去を許可する。履歴消去はBusiness、Outbox、SyncState、backup fileへ影響しない。
+- active/retryable RestoreSessionは履歴化して削除しない。再開に必要なsession/staging/conflictを保持する。
+- COMPLETED後はRestoreHistory作成を先に行い、その後に重いstaging/blob/conflictをidempotent cleanupする。cleanup失敗はrestore失敗へ戻さず、次回startup等で再試行する。
+- CANCELLEDおよびnon-retryable FAILEDも、Businessが適用されていないことを確認してから履歴化し、重いsession dataをcleanupする。
 
 ### 根拠
-restoreはlocal Businessをbackupから安全に回復する操作、syncはlocal/server間の状態を収束させる操作であり、成功条件を分離した方がoffline利用・障害切り分け・再試行性が明確になる。Outboxを共通経路へ統一することで、restore専用network state machineを追加せず既存syncの競合規則をそのまま利用できる。
+再開に必要なRestoreSession dataはactive中だけ保持すればよく、完了後まで写真blobやBusiness snapshotを残すとlocal storageを不必要に消費する。一方、軽量summaryを直近20件残せば「いつ復元したか」「何件変更されたか」「失敗/取消だったか」を利用者と開発者が確認でき、storage負荷とprivacy残留を小さく保てる。
 
-## 28. 次の設計判断候補
+## 29. 次の設計判断候補
 
-restore完了後の**RestoreSession履歴を保持するか**を確定する必要がある。
+**RestoreHistoryにbackup file名を保存・表示するか**を確定する必要がある。
 
 背景:
-- COMPLETED/CANCELLED sessionはactiveではなく、既確定ではcleanup対象としている。
-- 一方、直近のrestore結果を確認できると「いつ・何件復元したか」の利用者確認や障害調査には有用。
-- backup fileそのものやBusiness snapshotを長期保持するとstorage消費・写真データ残留が大きい。
+- 利用者が複数の`.hkmbackup`を持っている場合、「どのbackupを復元したか」を履歴から判別できると有用。
+- 一方、file名は利用者が自由に変更でき、backup identityでも真正性情報でもない。
+- file名に利用者自身が個人情報や任意文字列を含める可能性があるため、診断履歴への長期保存は必要最小限にしたい。
 
 推奨案:
-- v0.8ではRestoreSessionの**詳細staging/blob/conflict snapshotは完了後cleanup**する。
-- ただし軽量な`RestoreHistory` summaryをlocal-onlyで保持する。
-- summaryは例えば `id / startedAt / completedAt / backupExportedAt / result / addedCount / updatedCount / keptCount / unchangedCount / conflictCount` 程度とする。
-- backup Business内容、写真blob、thumbnail、existing/backup snapshot、Outbox/sync metadataは履歴へ保持しない。
-- `ownerUserId`はUser別local DBで分離済みなら重複保持不要。
-- CANCELLED/failed-before-applyも必要最小限のresult/error categoryだけ記録可能とする。
-- 履歴は診断/UX用でcanonical Businessでもsync対象でもbackup対象でもない。
-- v0.8では件数上限を設け、推奨は直近20件。古いものから削除する。
-- 利用者が履歴を消去できるようにしてよい。
+- `RestoreHistory`には**選択時のbackup file名を保存しない**。
+- 履歴の識別には`backupExportedAt`と、必要なら`backupHash`の短い表示用fingerprintを使用する。
+- fingerprintはbackup container bytesのSHA-256から先頭12 hex程度を表示用に派生し、完全hashはRestoreSession内部の検証/対応用として必要な期間だけ保持する。
+- fingerprintは真正性保証ではなく「同じbackup fileかを見分ける目印」と明示する。
+- restore開始/summary画面では現在選択したfile名を一時表示してよいが、履歴には残さない。
 
-根拠: 再開に必要な重いRestoreSession dataを完了後まで保持する必要はないが、軽量summaryだけ残せばstorage負荷をほぼ増やさず復元操作の確認性を上げられる。
+根拠: file名は可変でidentityとして弱く、任意の個人情報を含み得る。backup生成時刻とcontent由来fingerprintの方が履歴識別として安定し、保存情報も限定できる。
