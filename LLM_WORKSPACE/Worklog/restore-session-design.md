@@ -290,21 +290,41 @@ file名は利用者やOSが変更でき、backup content identityとして信頼
 ### 根拠
 同じbackupは、前回restore後の誤編集を戻すなど再利用する正当な用途がある。重複検出を禁止条件にするとrecovery能力を不必要に制限する。一方で毎回現在Businessとの比較をやり直せば、古いresolutionを誤適用せず、UNCHANGED最適化と現在状態に対する競合判断を両立できる。
 
-## 31. 次の設計判断候補
+## 31. backup exportedAtの異常時刻 — 確定
 
-**backupの`exportedAt`が現在時刻より未来、または非常に古い場合にrestoreを制限するか**を確定する必要がある。
+**確定:** manifestの`exportedAt`が要求形式としてvalidである限り、現在時刻との差が大きいことだけを理由にrestoreを拒否しない。
+
+- `exportedAt`はUTC RFC3339 milliseconds `YYYY-MM-DDTHH:mm:ss.SSSZ`を必須とする。
+- invalid、offset-less、milliseconds欠落等、schemaの時刻表現に違反する値はPREPARINGでinvalid backupとして拒否する。
+- validな`exportedAt`は、未来/過去の大きさだけではinvalidにしない。
+- `exportedAt`をcontent conflictの勝者判定、`KEEP_EXISTING / USE_BACKUP`の自動選択、Business上書き可否、restore適用順序に使用しない。
+- restore correctnessはowner/schema/checksums/identity/contentHash/reference/photo validation等で判定する。
+- restore時の現在時刻より24時間を超えて未来なら、summaryで「バックアップ生成時刻が現在時刻より大きく未来です。端末時計またはバックアップを確認してください」相当の警告を表示する。
+- 未来24時間以内は時計差・timezone表示等を考慮し、v0.8では専用警告を必須にしない。
+- 過去backupには固定の失効期限を設けない。summaryに生成日時と現在からの経過期間を表示し、古さの判断を利用者へ委ねる。
+- 異常時刻警告があっても、他のvalidationが通過していれば利用者はrestoreを続行できる。
+- 時刻警告はUX情報であり、RestoreHistoryのresultやbackup fingerprintを変更しない。
+
+### 根拠
+backupの有効性をwall-clockへ依存させると、端末時計の誤設定だけで正常なrecovery dataを利用不能にする危険がある。既確定のsync/business timestamp方針と同様に時刻を競合correctnessから切り離し、明らかな未来時刻だけ利用者への注意情報として扱う。
+
+## 32. 次の設計判断候補
+
+**restore PREPARINGでbackup全体の最大サイズ・写真総容量にアプリ独自の上限を設けるか**を確定する必要がある。
 
 背景:
-- `exportedAt`はbackup生成時刻の正本だが、端末時計の誤設定等で現実の時刻から大きくずれる可能性がある。
-- restore correctnessはidentity/contentHash/参照整合性等で決まり、時刻順では決めない方針が既にある。
-- 一方、極端な日時は利用者がbackupを取り違えていることに気づく材料になる。
+- backupはoriginal写真を含む自己完結ZIPであり、利用者のデータ量に応じて大きくなる。
+- stagingはIndexedDBへ展開するため、実際のbrowser/device quotaが最終制約になる。
+- 固定上限を設けると低性能端末の保護にはなるが、大容量storageを持つ端末でも正当なbackupを復元できなくなる。
+- 個々の保存原画像は既確定で最大5MiB、親entityあたり写真0–10枚という制約がある。
 
 推奨案:
-- RFC3339 millisecondsとして形式が正しい`exportedAt`は、未来/過去の大きさだけを理由にrestore拒否しない。
-- `exportedAt`を競合の勝者判定、Business上書き可否、restore順序判定には使用しない。
-- 現在時刻より大幅に未来、またはUI上注意が有用なほど古い場合はsummaryで警告表示してよい。
-- 警告閾値はrestore correctnessに影響しないUX値とする。v0.8では例えば未来24時間超を明確な時計ずれ警告とし、古いbackupは期間を表示して利用者判断に委ねる。
-- invalid/offset-less/non-millisecond等、manifest schemaで要求する時刻表現に違反する場合はPREPARINGで拒否する。
-- backup fingerprint/hash、owner、schema、checksums等のvalidationは時刻警告とは独立して必須。
+- v0.8ではbackup container全体や写真総容量に**固定のアプリ独自hard limitを設けない**。
+- manifest count/sizeを使ってPREPARING前半で必要staging容量を見積もり、`navigator.storage.estimate()`等の利用可能情報から明らかに不足する場合は早期警告/中止する。
+- 最終的な可否は既確定どおり実際のIndexedDB staging write成功を正本とする。
+- ZIP bomb対策は「総backup上限」とは別に、manifestに宣言されたentryだけを許可し、各photoは5MiB制約、thumbnailは256KiB制約、entry count/count整合、宣言sizeと実size、checksumを検証し、無制限展開を行わない。
+- manifest/checksums等のcontrol JSONには実装上合理的なparser/resource safety limitを別途定義する。
+- quota不足ならBusinessへ触れずPREPARING失敗としてcleanupする。
+- 実運用で巨大backupによる問題が確認された場合、将来versionで明示的な上限/分割backupを検討する。
 
-根拠: 端末時計の誤差で有効なbackupを失効させるべきではなく、restore内容の正しさをwall-clockへ依存させない既存設計と整合する。一方、異常時刻を情報表示すればbackup取り違えや時計設定異常には気づきやすい。
+根拠: 利用可能storageはbrowser/deviceごとの差が大きく、固定総容量上限は不要にrestore能力を狭める。一方、entry単位制約とmanifest先行検証で悪意・破損による無制限展開を防ぎ、実quotaを最終判定にすれば端末能力に応じて安全に扱える。
