@@ -363,23 +363,27 @@ control JSONはbinary photoと異なりparse時にmemory/CPUを消費するた�
 ### 根拠
 同じBusiness entityに通常入力・sync・restoreで異なるvalidationを持たせると、restore経由でだけcanonicalに存在できる値や、逆に正常なBusinessをrestoreだけ拒否するvalidation driftが生じる。Business schemaを唯一の正本にすることで、contentHash・sync・search・UIを含む後続処理の前提を統一できる。
 
-## 35. 次の設計判断候補
+## 35. backup manifest schema/version — 判断前提修正
 
-**backup manifestのschema identifier/versionをどう定義するか**を確定する必要がある。
+**利用者確認:** 旧backup formatは存在しない。
 
-背景:
-- 現行開発実装にはJSON形式の`schema: "hakomokuroku-backup@1"`が存在するが、v0.8ではself-contained ZIP + manifest/checksums/binary entriesへ全面的に設計変更している。
-- old development backupとのlegacy compatibilityは不要と既に確定している。
-- 新formatを旧`@1`と同じidentifierで扱うと、JSON backupとZIP manifest schemaの意味が曖昧になる。
-- schema identifierとversionを分離すると、将来version migration/reader compatibilityを明示しやすい。
+現行sourceに`schema: "hakomokuroku-backup@1"`というdevelopment implementation上の値が存在していても、それは公開済み・互換維持対象の「旧backup format」とは扱わない。実在する旧formatを前提としてversionを予約してはならない。
 
-推奨案:
-- v0.8の新backup manifestは、`schema: "hakomokuroku-backup"` と整数 `version: 2` にする。
-- `version: 1`は既存development JSON `hakomokuroku-backup@1`相当の旧形式として予約し、v0.8 readerではsupportしない。
-- restoreは`schema === "hakomokuroku-backup"`かつ`version === 2`をv0.8 native formatとして受理する。
+このため、前回提示した「旧形式のためversion 1を予約し、新ZIP形式をversion 2にする」という推奨理由は撤回する。
+
+### 修正後の推奨案
+- 最初に正式仕様化するv0.8 self-contained ZIP backupを**version 1**とする。
+- manifestは`schema: "hakomokuroku-backup"`とJSON integer `version: 1`を持つ。
+- 現行development JSON implementationの`hakomokuroku-backup@1`は互換対象とせず、新正式formatのversion履歴にも数えない。
+- restoreは`schema === "hakomokuroku-backup"`かつ`version === 1`をv0.8 native formatとして受理する。
 - unknown schemaは拒否する。
-- future version（3以上）はreaderが明示対応していなければ`BACKUP_VERSION_UNSUPPORTED`相当で拒否し、推測変換しない。
-- manifest内versionはJSON integerとし、文字列`"2"`や`2.0`等の曖昧表現を許可しない。
-- container extension/MIMEはschema versionとは独立し、既確定の`.hkmbackup`を継続する。
+- future version 2以上はreaderが明示対応していなければ`BACKUP_VERSION_UNSUPPORTED`相当で拒否し、推測変換しない。
+- versionはJSON integerとする。
+- container extension/MIMEはschema versionと独立し、既確定の`.hkmbackup`を継続する。
 
-根拠: 旧development形式との互換性は不要でも、既に`@1`という識別子が実装・生成物に存在するため、新ZIP形式をversion 1として再利用すると診断・migration時に混乱する。新形式をversion 2として明確に分離すれば、将来のreader compatibility tableも単純になる。
+### 根拠
+version番号は正式に存在するformatの互換性系列を表すべきであり、互換対象でないdevelopment途中の実装へversion番号を消費する必要はない。v0.8で初めて正式化するbackup formatをversion 1とする方が、利用者・実装・将来migrationの意味が一致する。
+
+## 36. 次の設計判断候補
+
+**修正後の推奨どおり、新正式backup formatをversion 1として確定するか**を利用者確認する。
