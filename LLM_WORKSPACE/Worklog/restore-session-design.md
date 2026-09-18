@@ -363,27 +363,62 @@ control JSONはbinary photoと異なりparse時にmemory/CPUを消費するた�
 ### 根拠
 同じBusiness entityに通常入力・sync・restoreで異なるvalidationを持たせると、restore経由でだけcanonicalに存在できる値や、逆に正常なBusinessをrestoreだけ拒否するvalidation driftが生じる。Business schemaを唯一の正本にすることで、contentHash・sync・search・UIを含む後続処理の前提を統一できる。
 
-## 35. backup manifest schema/version — 判断前提修正
+## 35. backup manifest schema/version — 確定
 
-**利用者確認:** 旧backup formatは存在しない。
+**確定:** v0.8で初めて正式仕様化するself-contained ZIP backupをbackup format version 1とする。development途中の実装は正式な旧backup formatとして扱わず、version履歴にも数えない。
 
-現行sourceに`schema: "hakomokuroku-backup@1"`というdevelopment implementation上の値が存在していても、それは公開済み・互換維持対象の「旧backup format」とは扱わない。実在する旧formatを前提としてversionを予約してはならない。
+manifestの識別field:
+```json
+{
+  "schema": "hakomokuroku-backup",
+  "version": 1
+}
+```
 
-このため、前回提示した「旧形式のためversion 1を予約し、新ZIP形式をversion 2にする」という推奨理由は撤回する。
-
-### 修正後の推奨案
-- 最初に正式仕様化するv0.8 self-contained ZIP backupを**version 1**とする。
-- manifestは`schema: "hakomokuroku-backup"`とJSON integer `version: 1`を持つ。
-- 現行development JSON implementationの`hakomokuroku-backup@1`は互換対象とせず、新正式formatのversion履歴にも数えない。
+- `schema`はexact string `hakomokuroku-backup`。
+- `version`はJSON integer `1`。
+- 現行development implementationに存在する`hakomokuroku-backup@1`形式は互換対象にしない。
 - restoreは`schema === "hakomokuroku-backup"`かつ`version === 1`をv0.8 native formatとして受理する。
-- unknown schemaは拒否する。
+- unknown schemaはinvalid/unsupported backupとして拒否する。
 - future version 2以上はreaderが明示対応していなければ`BACKUP_VERSION_UNSUPPORTED`相当で拒否し、推測変換しない。
-- versionはJSON integerとする。
-- container extension/MIMEはschema versionと独立し、既確定の`.hkmbackup`を継続する。
+- 将来version migrationを導入する場合は、入力versionごとの明示的migration/compatibility ruleを仕様化する。
+- container extension/MIMEはschema versionとは独立し、既確定の`.hkmbackup`を継続する。
 
 ### 根拠
-version番号は正式に存在するformatの互換性系列を表すべきであり、互換対象でないdevelopment途中の実装へversion番号を消費する必要はない。v0.8で初めて正式化するbackup formatをversion 1とする方が、利用者・実装・将来migrationの意味が一致する。
+version番号は正式に存在するformatの互換性系列を表す。v0.8が最初の正式backup formatであるためversion 1から開始するのが自然であり、互換対象でないdevelopment途中の実装のために番号を消費しないことで、利用者向けformat historyと実装上のcompatibility semanticsを一致させる。
 
 ## 36. 次の設計判断候補
 
-**修正後の推奨どおり、新正式backup formatをversion 1として確定するか**を利用者確認する。
+**manifestのtop-level構造を確定する必要がある。**
+
+背景:
+- schema/version、ownerUserId、exportedAt、Business snapshot、photo metadata/count、binary path mapping等は個別には既に確定している。
+- これらをtop-levelへ平坦に並べるか、`business` / `photos`等へgroupingするかで将来拡張性とvalidationの分かりやすさが変わる。
+- checksumsは別root file `checksums.json`として確定済みなのでmanifest内へ重複保持する必要はない。
+
+推奨案:
+- top-levelはcontrol metadataとdata sectionを分離し、次の形を基本とする。
+
+```json
+{
+  "schema": "hakomokuroku-backup",
+  "version": 1,
+  "ownerUserId": "...",
+  "exportedAt": "2026-09-18T00:00:00.000Z",
+  "business": {
+    "boxes": [],
+    "items": [],
+    "boxLocations": []
+  },
+  "photos": []
+}
+```
+
+- `business`配下にcanonical active Business snapshotをentity type別arrayで保持する。
+- `photos`はphoto binary inventoryとして独立し、`photoId`, `photoHash`, original path/size, thumbnail path/hash/size等を保持する。
+- parent Business側には既確定どおりphoto reference/orderを保持し、binary inventoryとは役割を分ける。
+- top-levelにBusiness countを重複保持せず、array lengthを正本とする。必要な件数表示はparse後に算出する。
+- checksumsは`checksums.json`だけを正本とし、manifestへ全entry checksum一覧を重複させない。
+- unknown top-level fieldはv1では拒否し、将来拡張はversion更新または明示的schema変更で行う。
+
+根拠: control metadata・Business snapshot・binary inventoryを分離すると、Business entityとphoto file validationの責務が明確になる。重複count/checksumを減らせば、同じ情報同士の不整合条件も減らせる。
