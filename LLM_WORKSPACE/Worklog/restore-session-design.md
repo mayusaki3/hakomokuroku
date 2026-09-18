@@ -347,21 +347,39 @@ backupの有効性をwall-clockへ依存させると、端末時計の誤設定�
 ### 根拠
 control JSONはbinary photoと異なりparse時にmemory/CPUを消費するため、固定backup総容量制限を設けない場合でも個別の安全境界が必要になる。64 MiB/16 MiBは通常の箱管理metadataに十分な余裕を確保しながら、異常なJSONをparse前に遮断するための実装上の防御線とする。
 
-## 34. 次の設計判断候補
+## 34. restore時のBusiness文字列validation — 確定
 
-**manifest内の文字列fieldに個別の最大長を設けるか**を確定する必要がある。
+**確定:** backup専用のBusiness文字列長制約は新設せず、restoreでもcanonical Business schemaと同じfield validationを必須適用する。
+
+- Box.name、Item.name、note、tag、BoxLocation.name等のBusiness fieldは、それぞれのcanonical Business仕様で定義する最大長・required/optional・正規化・許可形式を正本とする。
+- 同じvalidation ruleをUI入力、API、sync Push、backup export validation、restore PREPARINGで共通利用できる構造を目標とする。
+- restoreは「信頼済み内部data」扱いにせず、canonical Businessへ入る入力経路としてvalidationする。
+- canonical上限を超える値やinvalidなBusiness snapshotはtruncate、substring、silent normalizationによる救済を行わず、invalid backupとしてPREPARINGで拒否する。
+- Unicode normalizationは既確定のBusiness canonicalization規則に従う。required display stringはtrim + NFC後empty reject、case/internal whitespaceは保持する等、restoreだけ別規則を持たせない。
+- tag等、既確定の配列canonicalizationも同じ規則を使用する。
+- Business fieldの具体的最大文字数が未確定のものは、このbackup仕様で仮の数値を定めない。Box / Item / BoxLocation等のBusiness仕様化で決定し、backup仕様はそれを参照する。
+- manifest自身のcontrol field（schema identifier、version、entry path、hash algorithm/hash text、MIME等）はBusiness fieldではないため、backup manifest schema側で別途resource/format上限を定義する。
+
+### 根拠
+同じBusiness entityに通常入力・sync・restoreで異なるvalidationを持たせると、restore経由でだけcanonicalに存在できる値や、逆に正常なBusinessをrestoreだけ拒否するvalidation driftが生じる。Business schemaを唯一の正本にすることで、contentHash・sync・search・UIを含む後続処理の前提を統一できる。
+
+## 35. 次の設計判断候補
+
+**backup manifestのschema identifier/versionをどう定義するか**を確定する必要がある。
 
 背景:
-- control JSON全体に上限があっても、単一のBox名/note/tag等へ極端に長い文字列を入れられるとUI・search・contentHash・sync・restore処理へ負荷が波及する。
-- backupだけで独自の短い制限を設けるとBusiness canonical validationと不一致になる。
-- restoreはbackupを新しい入力経路として扱うため、現在のBusiness validationを迂回させない必要がある。
+- 現行開発実装にはJSON形式の`schema: "hakomokuroku-backup@1"`が存在するが、v0.8ではself-contained ZIP + manifest/checksums/binary entriesへ全面的に設計変更している。
+- old development backupとのlegacy compatibilityは不要と既に確定している。
+- 新formatを旧`@1`と同じidentifierで扱うと、JSON backupとZIP manifest schemaの意味が曖昧になる。
+- schema identifierとversionを分離すると、将来version migration/reader compatibilityを明示しやすい。
 
 推奨案:
-- backup専用のBusiness文字列長を新設せず、**canonical Business schemaと同じfield validationをrestoreでも必須適用する**。
-- Box.name、Item.name、note、tag、BoxLocation.name等の具体的な最大長は各Business仕様で一度だけ定義し、UI/API/sync/backup restoreで共通利用する。
-- manifest自身のcontrol field（schema identifier、path、hash、MIME等）はbackup schema側で別途短い固定上限を持たせる。
-- restore PREPARINGでcanonical Business上限を超えるsnapshotはinvalid backupとして拒否し、truncateして取り込まない。
-- Unicode normalization等もcanonical Businessの既確定規則に従い、restoreだけ特別扱いしない。
-- 現時点でBusiness field最大長が未確定なら、このbackup設計内で先に数値を決めず、Box/Item/Location等のBusiness仕様化で決定して参照する。
+- v0.8の新backup manifestは、`schema: "hakomokuroku-backup"` と整数 `version: 2` にする。
+- `version: 1`は既存development JSON `hakomokuroku-backup@1`相当の旧形式として予約し、v0.8 readerではsupportしない。
+- restoreは`schema === "hakomokuroku-backup"`かつ`version === 2`をv0.8 native formatとして受理する。
+- unknown schemaは拒否する。
+- future version（3以上）はreaderが明示対応していなければ`BACKUP_VERSION_UNSUPPORTED`相当で拒否し、推測変換しない。
+- manifest内versionはJSON integerとし、文字列`"2"`や`2.0`等の曖昧表現を許可しない。
+- container extension/MIMEはschema versionとは独立し、既確定の`.hkmbackup`を継続する。
 
-根拠: 同じBusiness dataが通常入力・sync・backupで異なるvalidationを持つと、restore後だけcanonicalに存在できない値が生まれる。制約をBusiness schemaへ一本化すればvalidation driftを防ぎ、backup仕様はその正本を再利用できる。
+根拠: 旧development形式との互換性は不要でも、既に`@1`という識別子が実装・生成物に存在するため、新ZIP形式をversion 1として再利用すると診断・migration時に混乱する。新形式をversion 2として明確に分離すれば、将来のreader compatibility tableも単純になる。
