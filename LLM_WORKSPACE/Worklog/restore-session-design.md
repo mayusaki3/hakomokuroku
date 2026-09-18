@@ -543,22 +543,40 @@ Business recoveryに必要なsnapshot情報とserver convergence protocol state�
 ### 根拠
 `createdAt`はidentityが最初に成立した時刻であり、既存identityの通常UPDATEでは変更しない。restoreをdestination上の通常local UPDATEとして扱う既存方針、およびserver側の既存entity UPDATEでcanonical createdAtを保持する規則と一致する。一方、destinationに存在しないentityはbackup snapshotの生成履歴を引き継ぐことができる。
 
-## 41. 次の設計判断候補
+## 41. USE_BACKUP時のupdatedAt巻き戻り — 確定
 
-**`USE_BACKUP`でbackupの`updatedAt`を採用した結果、destinationの現在値より古い時刻へ戻ることをそのまま許可するか**を明示的に確定する必要がある。
+**確定:** `USE_BACKUP`でbackup snapshotを採用する場合、backupの`updatedAt`がdestination current entityより古くても、その値をそのまま採用する。
+
+- `updatedAt`はBusiness content snapshotが最後に編集された時刻として扱う。
+- restore operationの実行時刻をBusiness `updatedAt`へ代入しない。
+- backup `updatedAt`がdestinationより古い、同じ、未来のいずれでも、representationがvalidなら採用できる。
+- timestampの大小をrestore conflict winner、上書き可否、Outbox優先度、sync cursor/revision correctnessへ使用しない。
+- restore実行時刻はRestoreSession / RestoreHistoryの`finishedAt`等、operation metadataで別に記録する。
+- UIで「最近復元したentity」を示す必要がある場合はRestoreHistory等から表現し、Business `updatedAt`をrestore時刻へ偽装しない。
+- sort/searchが`updatedAt`を利用する場合、restore直後でもbackup snapshot本来の時系列位置へ戻ることを仕様上許容する。
+- extremeだがformat-validなtimestampも既確定規則どおり保持する。
+
+### 根拠
+backupは特定時点のBusiness snapshotを回復するものであり、利用者が`USE_BACKUP`を選択したなら、そのsnapshotが持つBusiness timestampも復元する方が意味が一貫する。restore操作履歴は専用metadataで保持できるため、Business timestampへ操作時刻を混在させる必要がない。
+
+## 42. 次の設計判断候補
+
+**backup Business snapshot内のentity array順序に意味を持たせるか**を確定する必要がある。
 
 背景:
-- restore conflict winnerをtimestampで自動決定しないことは既に確定している。
-- 利用者が`USE_BACKUP`を明示選択した場合、backup snapshotの`updatedAt`が現在entityより古いことは普通にあり得る。
-- restore操作時刻へ書き換えると、backup snapshotが持つ「そのBusiness内容が最後に編集された時刻」という意味を失う。
-- 一方、UIがupdatedAtを単純な「最近変更された順」に使う場合、restore直後でも古い位置へ並ぶことになる。
+- Box / Item / BoxLocation collection自体には、現時点でmanifest array順をcanonical Business orderとして使う要件はない。
+- 一方、photo reference arrayの順序には表示順として意味があり、contentHashにもarray orderを反映する方針が確定している。
+- entity collection順まで意味を持たせると、同じBusiness集合でもexport時のquery/order差でmanifest/checksum/container hashが変化する。
 
 推奨案:
-- **古いupdatedAtへの巻き戻りを許可し、backup値をそのまま採用する。**
-- `updatedAt`はBusiness内容のsnapshot timestampとして扱い、restore operation timestampとは分離する。
-- restoreを実行した時刻はRestoreHistoryの`finishedAt`等で記録し、Business `updatedAt`へ混ぜない。
-- search/sort UIで「最近復元したもの」を表現したい場合はRestoreHistoryや別UXを使い、updatedAtをrestore時刻へ偽装しない。
-- sync conflict/cursor/revision correctnessはupdatedAtへ依存しない既確定設計を維持する。
-- extremeだがvalidなtimestampも既確定どおり保持し、時刻だけで拒否しない。
+- **`business.boxes[]`, `business.items[]`, `business.boxLocations[]`, `photos[]`のmanifest collection順にはBusiness semanticsを持たせない。**
+- writerはdeterministic backup生成のため、それぞれcanonical identityでascending sortして出力する。
+  - Business entity arrays: `id` ascending。
+  - `photos[]`: `photoId` ascending。
+- readerはv1 canonical formatとしてこのsort orderもvalidationし、未sort/duplicateをinvalid backupとして拒否する。
+- parent entity内部のphoto reference array順はBusiness semanticsとして保持し、sortしない。
+- tag等、既にcanonicalizationでsort規則があるfieldはその既存規則に従う。
+- entity collection orderはcontentHashへ含めない。各entity contentHashはentity単位canonical contentから計算する。
+- deterministic collection orderにより同一snapshotからのmanifest bytes/checksums/container差異を減らす。ただしZIP metadata等まで含むcontainer bytes完全再現性は別問題とし、ここでは保証しない。
 
-根拠: 利用者がbackup内容を明示的に選んだ場合、そのsnapshotのBusiness timestampも内容の一部として復元する方が意味が一貫する。restore操作そのものの時刻は別metadataへ記録できるため、Business timestampを操作履歴として兼用する必要がない。
+根拠: collection順にBusiness意味がないならcanonical sortでwriter/readerを統一した方がvalidation・diff・diagnosticsが単純になる。一方、写真表示順のように実際のBusiness意味があるarrayだけは順序を保持することで、semantic orderとserialization orderを明確に分離できる。
