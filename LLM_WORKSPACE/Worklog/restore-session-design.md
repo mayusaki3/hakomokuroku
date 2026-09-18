@@ -387,17 +387,9 @@ manifestの識別field:
 ### 根拠
 version番号は正式に存在するformatの互換性系列を表す。v0.8が最初の正式backup formatであるためversion 1から開始するのが自然であり、互換対象でないdevelopment途中の実装のために番号を消費しないことで、利用者向けformat historyと実装上のcompatibility semanticsを一致させる。
 
-## 36. 次の設計判断候補
+## 36. manifest top-level構造 — 確定
 
-**manifestのtop-level構造を確定する必要がある。**
-
-背景:
-- schema/version、ownerUserId、exportedAt、Business snapshot、photo metadata/count、binary path mapping等は個別には既に確定している。
-- これらをtop-levelへ平坦に並べるか、`business` / `photos`等へgroupingするかで将来拡張性とvalidationの分かりやすさが変わる。
-- checksumsは別root file `checksums.json`として確定済みなのでmanifest内へ重複保持する必要はない。
-
-推奨案:
-- top-levelはcontrol metadataとdata sectionを分離し、次の形を基本とする。
+**確定:** `manifest.json`はcontrol metadata、canonical Business snapshot、photo binary inventoryを分離したtop-level構造とする。
 
 ```json
 {
@@ -414,11 +406,50 @@ version番号は正式に存在するformatの互換性系列を表す。v0.8が
 }
 ```
 
-- `business`配下にcanonical active Business snapshotをentity type別arrayで保持する。
-- `photos`はphoto binary inventoryとして独立し、`photoId`, `photoHash`, original path/size, thumbnail path/hash/size等を保持する。
-- parent Business側には既確定どおりphoto reference/orderを保持し、binary inventoryとは役割を分ける。
-- top-levelにBusiness countを重複保持せず、array lengthを正本とする。必要な件数表示はparse後に算出する。
-- checksumsは`checksums.json`だけを正本とし、manifestへ全entry checksum一覧を重複させない。
-- unknown top-level fieldはv1では拒否し、将来拡張はversion更新または明示的schema変更で行う。
+- top-level required fieldsは`schema`, `version`, `ownerUserId`, `exportedAt`, `business`, `photos`。
+- `business`はactive canonical Business snapshotをentity type別arrayで保持する。
+- v1のBusiness collectionは少なくとも`boxes`, `items`, `boxLocations`をrequiredとし、0件でも`[]`を保持する。
+- tombstone、SyncState、Outbox、device state、RestoreSession等は`business`へ含めない。
+- `photos`はbackupに含まれるphoto binary inventoryであり、Business entityそのものとして扱わない。
+- parent Business側にはphoto reference/orderを保持し、`photos` inventoryにはbinary validation/retrievalに必要なmetadataを保持する。
+- Business count/photo countをtop-levelへ重複保持しない。array lengthを正本とする。
+- 全logical entryのchecksum一覧はroot `checksums.json`だけを正本とし、manifestへ重複保持しない。
+- v1ではunknown top-level fieldおよびunknown `business` collectionを拒否する。
+- 将来新しいBusiness entity typeやtop-level sectionを追加する場合は、reader compatibilityを明示したschema/version変更として扱う。
 
-根拠: control metadata・Business snapshot・binary inventoryを分離すると、Business entityとphoto file validationの責務が明確になる。重複count/checksumを減らせば、同じ情報同士の不整合条件も減らせる。
+### 根拠
+control metadata・Business snapshot・binary inventoryを分離することでvalidation責務が明確になる。countやchecksumの重複保存を避けることで、同じ情報を複数箇所に持つことによる不整合条件も減らせる。unknown fieldをv1で拒否すれば、未対応dataを黙って無視した不完全restoreを防止できる。
+
+## 37. 次の設計判断候補
+
+**`photos[]` inventoryの1要素のschemaを確定する必要がある。**
+
+背景:
+- originalとthumbnailを別binary entryとしてbackupへ含めることは確定済み。
+- originalは`photoHash`、thumbnailは独立した`thumbnailHash`でvalidationする。
+- binary path/sizeをmanifestに保持する方針も確定している。
+- MIME/type情報をmanifestへ持つか、v1ではWebP固定としてschemaから省略するかを決める必要がある。
+
+推奨案:
+```json
+{
+  "photoId": "<UUID>",
+  "photoHash": "<SHA-256 hex>",
+  "originalPath": "photos/<photoId>.webp",
+  "originalSize": 123456,
+  "thumbnailPath": "thumbnails/<photoId>.webp",
+  "thumbnailHash": "<SHA-256 hex>",
+  "thumbnailSize": 23456
+}
+```
+
+- v1はoriginal/thumbnailともWebP固定なので、各photoへMIMEやformat fieldを重複保存しない。
+- `photoId`はcanonical photo identity。
+- `photoHash`はoriginal raw bytesのSHA-256で、canonical photo content identityにも使用する既存値。
+- `originalSize` / `thumbnailSize`は展開後binary byte lengthのnon-negative JSON integer。
+- pathはcanonical relative pathをexact validationし、photoIdとの対応も検証する。
+- `thumbnailHash`はbackup integrity専用でparent Business contentHashには含めない。
+- unknown fieldはv1で拒否する。
+- 将来WebP以外を許可する場合はschema/version変更でformat情報を導入する。
+
+根拠: v1の保存形式がWebP固定ならMIMEをphotoごとに持つと冗長で、不整合条件が増える。path・size・hashを明示すれば、ZIP entry validationとphoto identity validationに必要な情報は十分に揃う。
