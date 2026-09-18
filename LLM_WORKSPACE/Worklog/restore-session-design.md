@@ -516,23 +516,49 @@ v1でbinary formatが固定ならMIME/formatの重複保存は不整合条件を
 ### 根拠
 Business recoveryに必要なsnapshot情報とserver convergence protocol stateを分離することで、backup元のsync状態を復元先へ誤移植せずに済む。contentHashを保存し、restore時にcanonical contentから再計算することで、container checksumとは別にBusiness canonicalizationの整合性も検証できる。
 
-## 40. 次の設計判断候補
+## 40. USE_BACKUP時のcreatedAt / updatedAt — 確定
 
-**restoreで既存entityに`USE_BACKUP`を適用したとき、`createdAt`をbackup値へ戻すか、restore先の既存値を保持するか**を確定する必要がある。
+**確定:** 既存entityへの`USE_BACKUP`ではrestore先の`createdAt`を保持し、backup-only auto-addではbackupの`createdAt`を採用する。`updatedAt`は採用するbackup snapshot値を保持する。
+
+### 既存entity + USE_BACKUP
+- destination existing entityの`createdAt`を保持する。
+- backupの`createdAt`で上書きしない。
+- backupの`updatedAt`を採用する。
+- restore操作時刻を`updatedAt`へ代入しない。
+- backup Business contentを採用した後、canonical ruleから`contentHash`を再計算/確認する。
+- destination側のsync protocol metadataは既確定どおり通常local UPDATEとして生成する。
+
+### backup-only auto-add
+- backupの`createdAt`を採用する。
+- backupの`updatedAt`を採用する。
+- destinationでは通常local CREATEとしてOutbox等を生成する。
+- serverへCREATEされた場合も、既確定のbaseRevision 0 CREATE規則に従いclient `createdAt`をcanonical作成時刻として扱う。
+
+### createdAt差異
+- 同じentity idでdestinationとbackupの`createdAt`が異なること自体はidentity conflictにしない。
+- `createdAt`の新旧でrestore winnerを決めない。
+- PREPARINGではbackup timestamp representation自体のvalidationは必須。
+- 必要ならsummary/diagnosticで差異を表示できるが、restore可否には使用しない。
+
+### 根拠
+`createdAt`はidentityが最初に成立した時刻であり、既存identityの通常UPDATEでは変更しない。restoreをdestination上の通常local UPDATEとして扱う既存方針、およびserver側の既存entity UPDATEでcanonical createdAtを保持する規則と一致する。一方、destinationに存在しないentityはbackup snapshotの生成履歴を引き継ぐことができる。
+
+## 41. 次の設計判断候補
+
+**`USE_BACKUP`でbackupの`updatedAt`を採用した結果、destinationの現在値より古い時刻へ戻ることをそのまま許可するか**を明示的に確定する必要がある。
 
 背景:
-- backupは`createdAt`をBusiness snapshotとして保存する方針を確定した。
-- 同一entity identityがrestore先にも存在する場合、現在の`createdAt`とbackupの`createdAt`が異なる可能性がある。
-- `createdAt`はentity identityの生成履歴を表し、通常のUPDATEでは変更しない既存方針がある。
-- backup-only auto-addでは既存entityがないためbackupの`createdAt`を採用するのが自然。
+- restore conflict winnerをtimestampで自動決定しないことは既に確定している。
+- 利用者が`USE_BACKUP`を明示選択した場合、backup snapshotの`updatedAt`が現在entityより古いことは普通にあり得る。
+- restore操作時刻へ書き換えると、backup snapshotが持つ「そのBusiness内容が最後に編集された時刻」という意味を失う。
+- 一方、UIがupdatedAtを単純な「最近変更された順」に使う場合、restore直後でも古い位置へ並ぶことになる。
 
 推奨案:
-- **既存entityへの`USE_BACKUP`ではrestore先の`createdAt`を保持する。**
-- backupの`createdAt`はPREPARINGで形式validationし、比較/summary情報として利用できるが、既存entity UPDATEで上書きしない。
-- backup-only auto-addではbackupの`createdAt`を採用する。
-- `updatedAt`は`USE_BACKUP`でbackup snapshot値を採用する。restore操作時刻へ書き換えない。
-- contentHashは採用後のcanonical Business contentからdestination側で再計算/確認する。
-- 同じentity idでcreatedAtが異なること自体をidentity conflictにはしない。ただし極端な差を診断情報にする余地はある。
-- server側でも既存entity UPDATEはserver canonical `createdAt`を保持する既確定規則と揃える。
+- **古いupdatedAtへの巻き戻りを許可し、backup値をそのまま採用する。**
+- `updatedAt`はBusiness内容のsnapshot timestampとして扱い、restore operation timestampとは分離する。
+- restoreを実行した時刻はRestoreHistoryの`finishedAt`等で記録し、Business `updatedAt`へ混ぜない。
+- search/sort UIで「最近復元したもの」を表現したい場合はRestoreHistoryや別UXを使い、updatedAtをrestore時刻へ偽装しない。
+- sync conflict/cursor/revision correctnessはupdatedAtへ依存しない既確定設計を維持する。
+- extremeだがvalidなtimestampも既確定どおり保持し、時刻だけで拒否しない。
 
-根拠: `createdAt`は「このidentityが最初に成立した時刻」であり、既存entityの通常UPDATEで巻き戻すfieldではない。restoreを通常local UPDATEとして扱う既存方針と揃えれば、server側のcreatedAt保持規則とも一貫する。一方、新規に復元するentityはbackup snapshotの生成履歴を引き継げる。
+根拠: 利用者がbackup内容を明示的に選んだ場合、そのsnapshotのBusiness timestampも内容の一部として復元する方が意味が一貫する。restore操作そのものの時刻は別metadataへ記録できるため、Business timestampを操作履歴として兼用する必要がない。
