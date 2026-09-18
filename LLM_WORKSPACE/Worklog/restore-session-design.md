@@ -420,17 +420,10 @@ version番号は正式に存在するformatの互換性系列を表す。v0.8が
 ### 根拠
 control metadata・Business snapshot・binary inventoryを分離することでvalidation責務が明確になる。countやchecksumの重複保存を避けることで、同じ情報を複数箇所に持つことによる不整合条件も減らせる。unknown fieldをv1で拒否すれば、未対応dataを黙って無視した不完全restoreを防止できる。
 
-## 37. 次の設計判断候補
+## 37. photos[] binary inventory schema — 確定
 
-**`photos[]` inventoryの1要素のschemaを確定する必要がある。**
+**確定:** v1の`photos[]`は、photo identityとoriginal/thumbnail binaryのpath・hash・sizeを保持する。
 
-背景:
-- originalとthumbnailを別binary entryとしてbackupへ含めることは確定済み。
-- originalは`photoHash`、thumbnailは独立した`thumbnailHash`でvalidationする。
-- binary path/sizeをmanifestに保持する方針も確定している。
-- MIME/type情報をmanifestへ持つか、v1ではWebP固定としてschemaから省略するかを決める必要がある。
-
-推奨案:
 ```json
 {
   "photoId": "<UUID>",
@@ -443,13 +436,40 @@ control metadata・Business snapshot・binary inventoryを分離することでv
 }
 ```
 
-- v1はoriginal/thumbnailともWebP固定なので、各photoへMIMEやformat fieldを重複保存しない。
-- `photoId`はcanonical photo identity。
-- `photoHash`はoriginal raw bytesのSHA-256で、canonical photo content identityにも使用する既存値。
-- `originalSize` / `thumbnailSize`は展開後binary byte lengthのnon-negative JSON integer。
-- pathはcanonical relative pathをexact validationし、photoIdとの対応も検証する。
-- `thumbnailHash`はbackup integrity専用でparent Business contentHashには含めない。
+- 全field required。
+- v1ではoriginal / thumbnailともstored formatをWebP固定とし、photoごとのMIME/format fieldは持たない。
+- `photoId`はcanonical photo identityで、canonical UUID表現としてBusiness/photo仕様と同じvalidationを使用する。
+- `photoHash`はoriginal entryのdecompressed/raw bytesに対するSHA-256 lowercase hexadecimal 64 charsとし、canonical photo content identityとして既存Business referenceでも使用する。
+- `thumbnailHash`はthumbnail entryのdecompressed/raw bytesに対するSHA-256 lowercase hexadecimal 64 chars。backup integrity用であり、parent Business contentHashへ含めない。
+- `originalSize` / `thumbnailSize`はdecompressed/raw binary byte lengthを表すnon-negative JSON integer。実際のentry bytesとexact一致を要求する。
+- originalは既確定のstored-original上限5MiB以下、thumbnailは256KiB以下を別途要求する。
+- `originalPath`はexact `photos/<photoId>.webp`、`thumbnailPath`はexact `thumbnails/<photoId>.webp`。canonical path以外、別photoIdを指すpath、absolute/traversal/backslash pathは拒否する。
+- `photos[]`内の`photoId`重複はinvalid backupとして拒否する。
+- path重複もinvalid backupとして拒否する。
+- Business snapshotが参照する全photoId/photoHashについて、対応する`photos[]` entryがexactly one存在することを要求する。
+- `photos[]`に存在するがBusiness snapshotから一切参照されないorphan photo inventory entryはv1では拒否する。active Business backupに不要なbinaryを含めない。
 - unknown fieldはv1で拒否する。
-- 将来WebP以外を許可する場合はschema/version変更でformat情報を導入する。
+- 将来WebP以外を許可する場合はschema/version compatibilityを明示してformat情報を導入する。
 
-根拠: v1の保存形式がWebP固定ならMIMEをphotoごとに持つと冗長で、不整合条件が増える。path・size・hashを明示すれば、ZIP entry validationとphoto identity validationに必要な情報は十分に揃う。
+### 根拠
+v1でbinary formatが固定ならMIME/formatの重複保存は不整合条件を増やす。identity・canonical path・raw byte size・hashを明示すれば、ZIP entry安全性、backup completeness、photo identityを相互検証できる。orphan inventoryを拒否することでactive Business snapshotに必要なdataだけを自己完結backupへ含める。
+
+## 38. 次の設計判断候補
+
+**同じphotoIdを複数のBusiness parentから参照することをbackup schema上で許可するか**を確定する必要がある。
+
+背景:
+- 現在の設計ではphotoIdはcanonical photo identityで、`photos[]`はphotoIdごとに1 entry。
+- UI上は各写真を特定のBox / Item / BoxLocationへ追加する形だが、backup manifestだけを見ると複数parentが同じphotoId/photoHashを参照する構造も表現できる。
+- photoのserver authorization/GCは「現在canonical parentから参照されているか」を基準にする方針であり、ownership cardinalityを曖昧にするとdelete/reorder/replacement処理が複雑になる。
+
+推奨案:
+- v0.8では**1 photoId = exactly 1 Business parent**をcanonical invariantとする。
+- 1つのparent内でも同じphotoIdを複数位置に重複参照することを禁止する。
+- PREPARINGで全Business photo referencesを走査し、同じphotoIdが2回以上出現したbackupはinvalidとして拒否する。
+- `photos[]` entry自体はphotoIdごとにexactly one。
+- 同じ画像bytesを複数parentへ使いたい場合は、それぞれ別photoIdを生成する。photoHashが同じでも問題ない。
+- photoの移動という操作を将来導入する場合も、v0.8では「既存photoIdのowner parentを書き換える」より、必要ならnew photoIdとして扱う設計を優先する。
+- このinvariantをBusiness schema、sync Push validation、backup export/restoreで共通適用する。
+
+根拠: 既確定の「dedupしない・photoIdは論理identity・同じ画像は別IDで繰り返せる」方針と整合する。単一parent ownershipなら削除、並び順、authorization、GC、contentHashの責務が明確になり、photoを独立sync entityにしない設計も維持しやすい。
