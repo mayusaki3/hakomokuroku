@@ -472,23 +472,67 @@ v1でbinary formatが固定ならMIME/formatの重複保存は不整合条件を
 ### 根拠
 既確定の「photo dedupを行わない」「photoIdはlogical identity」「同じbytesでも別photoIdを許可する」方針と整合する。単一parent ownershipに限定すれば、photo array order、parent contentHash、削除、authorization、orphan GCの責務が明確になり、Photoを独立sync entityにしない設計を維持しやすい。
 
-## 39. 次の設計判断候補
+## 39. backup Business snapshotのmetadata境界 — 確定
 
-**backup manifest内のBusiness entityにsync metadataをどこまで含めるかをschema levelで明示する必要がある。**
+**確定:** backup Business snapshotにはBusiness recoveryに必要なidentity/content/timestamps/contentHashを含め、server convergence用sync protocol metadataは含めない。
+
+### 含める
+- entity `id`
+- entity typeごとのcanonical Business fields
+- canonical referencesおよびphoto reference/order
+- `createdAt`
+- `updatedAt`
+- `contentHash`
+
+### 含めない
+- `revision`
+- `baseRevision`
+- `syncSeq`
+- `serverUpdatedAt`
+- server change log / cursor
+- Outbox state / Outbox version
+- SyncConflict / restore conflict state
+- device/sync runtime metadata
+- その他、restore destinationで再構築すべきprotocol state
+
+### deletedAt
+- v1 normal backupはactive Business snapshotのみを対象とするため、`deletedAt`はmanifest Business entityへ保存しない。
+- backupに存在するentityはactive stateとして解釈する。
+- tombstone/deletion historyをbackupで再現しない。
+
+### restore validation
+- PREPARINGで各Business entityのcanonical Business contentから`contentHash`を仕様どおり再計算する。
+- manifestに保存された`contentHash`とexact一致しなければinvalid backupとして拒否する。
+- ZIP/checksums validationが通っていてもcontentHash mismatchを許可しない。
+- `createdAt` / `updatedAt`は既確定のRFC3339/ISO8601 representation ruleでvalidationする。
+- timestampの新旧はrestore conflict winnerや上書き可否に使用しない。
+
+### apply後のsync
+- `USE_BACKUP`またはbackup-only auto-addで採用するBusiness content/timestampsはbackup snapshot値を基礎とする。
+- destination側のrevision/baseRevision/Outbox等はbackupから復元せず、destinationの現在canonical/sync stateに対する通常のlocal CREATE/UPDATEとして生成する。
+- restore元でsyncedだったかunsyncedだったかは復元しない。
+- restore completionは既確定どおりlocal atomic commitで成立し、その後normal sync schedulerがOutboxを処理する。
+
+### 根拠
+Business recoveryに必要なsnapshot情報とserver convergence protocol stateを分離することで、backup元のsync状態を復元先へ誤移植せずに済む。contentHashを保存し、restore時にcanonical contentから再計算することで、container checksumとは別にBusiness canonicalizationの整合性も検証できる。
+
+## 40. 次の設計判断候補
+
+**restoreで既存entityに`USE_BACKUP`を適用したとき、`createdAt`をbackup値へ戻すか、restore先の既存値を保持するか**を確定する必要がある。
 
 背景:
-- backupからSyncState / Outbox / cursor / syncSeq / server revision等を除外することは既に確定している。
-- 一方、canonical Business modelには`createdAt`, `updatedAt`, `contentHash`等、Business snapshotの一部として意味を持つfieldもある。
-- 「sync metadataを除外」という表現だけでは、`contentHash`やbusiness timestampsまで除外するのか曖昧になる。
+- backupは`createdAt`をBusiness snapshotとして保存する方針を確定した。
+- 同一entity identityがrestore先にも存在する場合、現在の`createdAt`とbackupの`createdAt`が異なる可能性がある。
+- `createdAt`はentity identityの生成履歴を表し、通常のUPDATEでは変更しない既存方針がある。
+- backup-only auto-addでは既存entityがないためbackupの`createdAt`を採用するのが自然。
 
 推奨案:
-- backup Business snapshotには**Business content + business identity + business timestamps + contentHash**を含める。
-- 含める: entity `id`, canonical Business fields/references, `createdAt`, `updatedAt`, `contentHash`。
-- active-only backupなので`deletedAt`は原則manifestへ持たない。restore後のentityはactive。
-- 含めない: `revision`, `baseRevision`, `syncSeq`, `serverUpdatedAt`, server log/cursor, Outbox state/version, conflict state等。
-- restore PREPARINGでmanifest Business contentからcanonical `contentHash`を再計算し、保存された`contentHash`と一致しなければinvalid backupとして拒否する。
-- restoreで`USE_BACKUP`またはbackup-only auto-addする際、backupのBusiness content/timestampsはsnapshot値として採用するが、destination側のsync protocol metadataは新規に生成する。
-- destination Outboxは通常のlocal CREATE/UPDATEとして生成し、backup元のrevision等を再現しない。
-- `createdAt/updatedAt`は既確定のtimestamp representation validationを適用するが、時刻の新旧でrestore winnerを決めない。
+- **既存entityへの`USE_BACKUP`ではrestore先の`createdAt`を保持する。**
+- backupの`createdAt`はPREPARINGで形式validationし、比較/summary情報として利用できるが、既存entity UPDATEで上書きしない。
+- backup-only auto-addではbackupの`createdAt`を採用する。
+- `updatedAt`は`USE_BACKUP`でbackup snapshot値を採用する。restore操作時刻へ書き換えない。
+- contentHashは採用後のcanonical Business contentからdestination側で再計算/確認する。
+- 同じentity idでcreatedAtが異なること自体をidentity conflictにはしない。ただし極端な差を診断情報にする余地はある。
+- server側でも既存entity UPDATEはserver canonical `createdAt`を保持する既確定規則と揃える。
 
-根拠: contentHashをbackup内に保持して再計算検証すれば、Business snapshot自体のcanonical integrityをbinary/checksumsとは別の層でも確認できる。一方、server convergence用metadataを持ち込まなければrestore destinationのsync状態を破壊せず、backupをBusiness recoveryとして扱える。
+根拠: `createdAt`は「このidentityが最初に成立した時刻」であり、既存entityの通常UPDATEで巻き戻すfieldではない。restoreを通常local UPDATEとして扱う既存方針と揃えれば、server側のcreatedAt保持規則とも一貫する。一方、新規に復元するentityはbackup snapshotの生成履歴を引き継げる。
