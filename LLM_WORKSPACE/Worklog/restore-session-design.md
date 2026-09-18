@@ -329,22 +329,39 @@ backupの有効性をwall-clockへ依存させると、端末時計の誤設定�
 ### 根拠
 利用可能storageは端末・browserごとの差が大きく、固定総容量上限は十分なstorageを持つ端末の正当なrestoreまで妨げる。一方、entry単位の展開後size制約、manifest/checksum整合、許可entry限定、実quota判定を組み合わせれば、固定総量制限なしでも破損ZIPや典型的なZIP bombによる無制限展開を抑制できる。
 
-## 33. 次の設計判断候補
+## 33. control JSON resource safety上限 — 確定
 
-**manifest.json / checksums.json のresource safety上限を具体的にいくつにするか**を確定する必要がある。
+**確定:** v0.8 backup readerは、展開後raw UTF-8 bytesで`manifest.json <= 64 MiB`、`checksums.json <= 16 MiB`をresource safety上限とする。
+
+- 上限はZIP内のcompressed sizeではなく、decompressed/raw entry bytesに適用する。
+- `manifest.json`が64 MiBを超える、または`checksums.json`が16 MiBを超える場合、PREPARINGで`BACKUP_RESOURCE_LIMIT_EXCEEDED`相当として拒否する。
+- ZIP entry metadataでuncompressed sizeを信頼できる形で取得できる場合はparse前の早期判定に利用する。ただしmetadataだけを信用せず、streaming/read時にも実raw byte countが上限を超えないことを確認する。
+- 上限超過entryを一旦全量memoryへ展開してから判定しない。
+- raw bytesはstrict UTF-8としてdecodeする。invalid UTF-8はinvalid backupとして拒否する。
+- JSON parse後もschema validationを必須とし、上限内だから安全・validとはみなさない。
+- schemaでは少なくとも配列count、required field、文字列形式/長さ、path、hash、size、Business/photo mappingを検証する。
+- この値はBox/Item/Photo等のproduct上の件数上限ではなく、v0.8 reader implementationのresource safety ceilingである。
+- writerは通常、この上限へ近づく前に利用者へbackup生成不能を明示する。readerだけが上限を持ちwriterがそれを超えるbackupを正常生成する状態を許容しない。
+- 実運用で正当なbackupが上限へ達する場合、互換性影響を確認した上でreader/writer双方の実装上限を引き上げることは可能とする。
+
+### 根拠
+control JSONはbinary photoと異なりparse時にmemory/CPUを消費するため、固定backup総容量制限を設けない場合でも個別の安全境界が必要になる。64 MiB/16 MiBは通常の箱管理metadataに十分な余裕を確保しながら、異常なJSONをparse前に遮断するための実装上の防御線とする。
+
+## 34. 次の設計判断候補
+
+**manifest内の文字列fieldに個別の最大長を設けるか**を確定する必要がある。
 
 背景:
-- 写真binaryにはentry単位上限があるが、control JSONを無制限にparseすると巨大JSONによるmemory/CPU消費を許してしまう。
-- manifestはBusiness snapshotと全photo metadataを含むため、利用者データ件数に応じて成長する。
-- 固定backup総容量上限を設けない方針でも、control structureには実装安全上の現実的な上限が必要になる。
+- control JSON全体に上限があっても、単一のBox名/note/tag等へ極端に長い文字列を入れられるとUI・search・contentHash・sync・restore処理へ負荷が波及する。
+- backupだけで独自の短い制限を設けるとBusiness canonical validationと不一致になる。
+- restoreはbackupを新しい入力経路として扱うため、現在のBusiness validationを迂回させない必要がある。
 
 推奨案:
-- v0.8では`manifest.json`を**64MiB以下**、`checksums.json`を**16MiB以下**とする。
-- 上限はZIP上の圧縮sizeではなく、展開後raw UTF-8 bytesに適用する。
-- 上限超過はPREPARINGで`BACKUP_RESOURCE_LIMIT_EXCEEDED`相当として拒否する。
-- JSON parse前にentry metadata/streaming byte countで上限を確認し、巨大entryを丸ごとmemoryへ展開してから判定しない。
-- UTF-8 decode/JSON parse後もschemaで配列件数・文字列長・path形式等を検証する。
-- この上限はBusiness件数そのもののproduct limitではなく、v0.8 backup parserのresource safety limitと位置付ける。
-- 将来、実データ規模で不足する場合はbackup schema versionを変えず実装上限を引き上げられるが、readerが対応上限を超えるbackupは明示的に拒否する。
+- backup専用のBusiness文字列長を新設せず、**canonical Business schemaと同じfield validationをrestoreでも必須適用する**。
+- Box.name、Item.name、note、tag、BoxLocation.name等の具体的な最大長は各Business仕様で一度だけ定義し、UI/API/sync/backup restoreで共通利用する。
+- manifest自身のcontrol field（schema identifier、path、hash、MIME等）はbackup schema側で別途短い固定上限を持たせる。
+- restore PREPARINGでcanonical Business上限を超えるsnapshotはinvalid backupとして拒否し、truncateして取り込まない。
+- Unicode normalization等もcanonical Businessの既確定規則に従い、restoreだけ特別扱いしない。
+- 現時点でBusiness field最大長が未確定なら、このbackup設計内で先に数値を決めず、Box/Item/Location等のBusiness仕様化で決定して参照する。
 
-根拠: 64MiBのmanifestは通常の箱管理データとして十分大きな余裕を持ちつつ、異常なcontrol JSONを早期拒否できる。checksumsはpath+SHA-256中心なのでmanifestより小さく16MiBで十分な余裕がある。
+根拠: 同じBusiness dataが通常入力・sync・backupで異なるvalidationを持つと、restore後だけcanonicalに存在できない値が生まれる。制約をBusiness schemaへ一本化すればvalidation driftを防ぎ、backup仕様はその正本を再利用できる。
