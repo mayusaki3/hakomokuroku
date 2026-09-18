@@ -454,22 +454,41 @@ control metadata・Business snapshot・binary inventoryを分離することでv
 ### 根拠
 v1でbinary formatが固定ならMIME/formatの重複保存は不整合条件を増やす。identity・canonical path・raw byte size・hashを明示すれば、ZIP entry安全性、backup completeness、photo identityを相互検証できる。orphan inventoryを拒否することでactive Business snapshotに必要なdataだけを自己完結backupへ含める。
 
-## 38. 次の設計判断候補
+## 38. photoIdのBusiness parent ownership — 確定
 
-**同じphotoIdを複数のBusiness parentから参照することをbackup schema上で許可するか**を確定する必要がある。
+**確定:** v0.8では`1 photoId = exactly 1 Business parent`をcanonical invariantとする。
+
+- Box / Item / BoxLocation等の全Business parentを横断して、1つの`photoId`はexactly one parentからのみ参照される。
+- 同じparent内のphoto reference arrayでも同じ`photoId`を複数位置に重複させない。
+- Business snapshot内で同じ`photoId`が2回以上出現するbackupはPREPARINGでinvalid backupとして拒否する。
+- `photos[]` inventoryは既確定どおりphotoIdごとにexactly one entry。
+- 同じ画像bytesを複数parentまたは同一parentへ複数回追加する場合は、それぞれ独立したnew `photoId`を生成する。`photoHash`が同じであることは許可する。
+- photoHash一致を理由にphotoIdを共有・merge・deduplicateしない。
+- photoの削除/replacementはowner parentのphoto reference/orderをBusiness updateし、参照されなくなったphoto binaryは既確定のserver GC/cache規則に従う。
+- v0.8でparent間photo移動専用operationを導入する場合でも、既存photoIdを複数parentへ一時共有する状態は作らない。必要ならnew photoIdとして追加し旧参照を削除する。
+- Business schema、sync Push validation、backup export、restore PREPARINGで同じownership invariantを検証する。
+- server original/thumbnail authorizationの「authenticated Userのcurrent canonical parentから参照されていること」という既確定条件は、この単一parent ownershipを前提に適用できる。
+
+### 根拠
+既確定の「photo dedupを行わない」「photoIdはlogical identity」「同じbytesでも別photoIdを許可する」方針と整合する。単一parent ownershipに限定すれば、photo array order、parent contentHash、削除、authorization、orphan GCの責務が明確になり、Photoを独立sync entityにしない設計を維持しやすい。
+
+## 39. 次の設計判断候補
+
+**backup manifest内のBusiness entityにsync metadataをどこまで含めるかをschema levelで明示する必要がある。**
 
 背景:
-- 現在の設計ではphotoIdはcanonical photo identityで、`photos[]`はphotoIdごとに1 entry。
-- UI上は各写真を特定のBox / Item / BoxLocationへ追加する形だが、backup manifestだけを見ると複数parentが同じphotoId/photoHashを参照する構造も表現できる。
-- photoのserver authorization/GCは「現在canonical parentから参照されているか」を基準にする方針であり、ownership cardinalityを曖昧にするとdelete/reorder/replacement処理が複雑になる。
+- backupからSyncState / Outbox / cursor / syncSeq / server revision等を除外することは既に確定している。
+- 一方、canonical Business modelには`createdAt`, `updatedAt`, `contentHash`等、Business snapshotの一部として意味を持つfieldもある。
+- 「sync metadataを除外」という表現だけでは、`contentHash`やbusiness timestampsまで除外するのか曖昧になる。
 
 推奨案:
-- v0.8では**1 photoId = exactly 1 Business parent**をcanonical invariantとする。
-- 1つのparent内でも同じphotoIdを複数位置に重複参照することを禁止する。
-- PREPARINGで全Business photo referencesを走査し、同じphotoIdが2回以上出現したbackupはinvalidとして拒否する。
-- `photos[]` entry自体はphotoIdごとにexactly one。
-- 同じ画像bytesを複数parentへ使いたい場合は、それぞれ別photoIdを生成する。photoHashが同じでも問題ない。
-- photoの移動という操作を将来導入する場合も、v0.8では「既存photoIdのowner parentを書き換える」より、必要ならnew photoIdとして扱う設計を優先する。
-- このinvariantをBusiness schema、sync Push validation、backup export/restoreで共通適用する。
+- backup Business snapshotには**Business content + business identity + business timestamps + contentHash**を含める。
+- 含める: entity `id`, canonical Business fields/references, `createdAt`, `updatedAt`, `contentHash`。
+- active-only backupなので`deletedAt`は原則manifestへ持たない。restore後のentityはactive。
+- 含めない: `revision`, `baseRevision`, `syncSeq`, `serverUpdatedAt`, server log/cursor, Outbox state/version, conflict state等。
+- restore PREPARINGでmanifest Business contentからcanonical `contentHash`を再計算し、保存された`contentHash`と一致しなければinvalid backupとして拒否する。
+- restoreで`USE_BACKUP`またはbackup-only auto-addする際、backupのBusiness content/timestampsはsnapshot値として採用するが、destination側のsync protocol metadataは新規に生成する。
+- destination Outboxは通常のlocal CREATE/UPDATEとして生成し、backup元のrevision等を再現しない。
+- `createdAt/updatedAt`は既確定のtimestamp representation validationを適用するが、時刻の新旧でrestore winnerを決めない。
 
-根拠: 既確定の「dedupしない・photoIdは論理identity・同じ画像は別IDで繰り返せる」方針と整合する。単一parent ownershipなら削除、並び順、authorization、GC、contentHashの責務が明確になり、photoを独立sync entityにしない設計も維持しやすい。
+根拠: contentHashをbackup内に保持して再計算検証すれば、Business snapshot自体のcanonical integrityをbinary/checksumsとは別の層でも確認できる。一方、server convergence用metadataを持ち込まなければrestore destinationのsync状態を破壊せず、backupをBusiness recoveryとして扱える。
