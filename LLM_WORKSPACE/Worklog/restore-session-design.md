@@ -578,17 +578,10 @@ backupは特定時点のBusiness snapshotを回復するものであり、利用
 ### 根拠
 collection順にBusiness意味がない場合、writerごとのquery順やruntime/locale差をそのまま保存する理由はない。canonical sortをwriter/reader双方で要求すれば、validation、diff、diagnosticsが単純になり、同一Business集合の不要なmanifest差異も減らせる。一方、photo display orderのように意味のあるarrayはその順序を保持することで、serialization orderとBusiness semantic orderを分離できる。
 
-## 43. 次の設計判断候補
+## 43. checksums.json exact schema — 確定
 
-**root `checksums.json`のexact schemaとentry順序を確定する必要がある。**
+**確定:** root `checksums.json`はlogical file entryのcanonical pathとSHA-256 hashだけを保持する。
 
-背景:
-- `checksums.json`が全logical file entryのSHA-256一覧の唯一の正本で、自分自身は含めないことは確定済み。
-- hash対象はdecompressed/raw bytes、pathはcanonical relative path、algorithmはSHA-256固定。
-- manifest側へchecksumを重複保持しないことも確定済み。
-- ただしJSON field構造、hash表現、entry順、sizeを重複保持するかはまだexact schemaとして固定していない。
-
-推奨案:
 ```json
 {
   "algorithm": "sha256",
@@ -609,18 +602,50 @@ collection順にBusiness意味がない場合、writerごとのquery順やruntim
 }
 ```
 
-- top-level required fieldは`algorithm`, `entries`のみ。unknown field拒否。
-- `algorithm` exact string `sha256`。
-- each entry required fieldは`path`, `hash`のみ。unknown field拒否。
-- `hash`はSHA-256 lowercase hexadecimal exactly 64 chars。
-- `size`はchecksumsへ重複保持しない。binary sizeはmanifest `photos[]`、control JSON size limitはreader ruleを正本とする。
-- `entries[]`はcanonical relative path ascendingでdeterministic sortし、readerもsort済みを要求する。locale依存sort禁止。
-- `manifest.json`を必ず含む。
-- 全photo original/thumbnail logical fileをexactly once含む。
+- top-level required fieldは`algorithm`, `entries`のみ。unknown fieldはv1で拒否する。
+- `algorithm`はexact string `sha256`。
+- each entry required fieldは`path`, `hash`のみ。unknown fieldはv1で拒否する。
+- `hash`は対象logical fileのdecompressed/raw bytesに対するSHA-256 lowercase hexadecimal exactly 64 chars。
+- `size`はchecksumsへ保存しない。binary sizeはmanifest `photos[]`を正本とし、manifest/checksums control JSON自体のsizeはreader resource limitで検証する。
+- `entries[]`はcanonical relative path ascendingでdeterministic sortする。comparisonはlocale非依存のcanonical string比較を使用する。
+- readerもcanonical sort済みであることを要求し、未sortをinvalid backupとして拒否する。
+- `manifest.json`をexactly once含める。
+- manifest `photos[]`で宣言された全original/thumbnail logical fileをそれぞれexactly once含める。
 - `checksums.json`自身は含めない。
-- directory entryはlogical fileではないので含めない。
-- duplicate path、missing logical file、unknown/unlisted logical fileは拒否する。
+- directory entryはlogical fileではないため含めない。
+- duplicate path、missing logical file、checksumsに未記載のlogical file、manifestから導出できないunknown logical fileを拒否する。
 - zero-photo backupでは`entries[]`は`manifest.json`の1件のみ。
-- v1でalgorithm追加選択肢は持たず、将来変更時はschema/version compatibilityを明示する。
+- v1はalgorithm selectionを持たない。将来hash algorithmを変更/追加する場合はschema/version compatibilityを明示する。
 
-根拠: checksum fileの責務をpath→hash対応だけに限定すると、manifestとのsize重複による不整合を避けられる。canonical path sortとstrict schemaを採用すればwriter/readerの挙動が決定的になり、unknown dataを黙って無視する余地も減らせる。
+### 根拠
+checksums.jsonの責務をpath→hash対応へ限定することで、manifestに既に存在するbinary sizeとの重複・不整合を避けられる。canonical path sortとstrict schemaによりwriter/readerを決定的にし、未対応dataを黙って無視する余地を減らす。
+
+## 44. 次の設計判断候補
+
+**`manifest.json`と`checksums.json`のJSON serializationをcanonical化するか**を確定する必要がある。
+
+背景:
+- checksumsはraw bytesをhashするため、manifestの意味が同一でもwhitespace/key orderが異なればmanifest hashは変わる。
+- backup fingerprintはcontainer bytes全体のSHA-256なので、JSON serialization差やZIP metadata差でも変化し得る。
+- manifest collection orderとchecksums entry orderは既にdeterministic化した。
+- ただしobject key order、indentation、line ending、UTF-8 BOM等はまだ固定していない。
+
+推奨案:
+- **v1 writerのJSON serializationをdeterministicに固定するが、readerはsemantic/schema validationを正本とし、JSON byte formattingの非canonical性だけでは拒否しない。**
+- writer:
+  - UTF-8 without BOM。
+  - LF line ending。
+  - pretty-printは2-space indentation。
+  - trailing whitespaceなし。
+  - file末尾LFあり。
+  - object key orderはschemaで定義した順序。
+  - array orderは各既確定canonical order。
+  - JSON escapingは標準JSONとして必要最小限を使用し、ASCII化のためだけの任意Unicode escapeを行わない。
+- reader:
+  - strict UTF-8、size limit、JSON syntax/schema/unknown field、array canonical order等は検証する。
+  - object key order、indentation、whitespace、末尾LF、BOM以外のformat差をsemantic invalid理由にはしない。
+  - BOMはstrict UTF-8 JSON writer ruleに反するためrejectする。
+  - checksumsは実際のraw manifest bytesをhashして検証するため、formatを変えたmanifestでもchecksumsが一致しschemaがvalidなら読める。
+- backup fingerprint/container hashは「同じBusiness snapshotなら必ず同じ」とは定義しない。
+
+根拠: writerをdeterministic化すればdiff/debug/reproducibilityは改善する。一方、readerまでbyte formattingを強制すると、意味的に正しいbackupをindentation等だけで拒否する脆弱なformatになる。integrityはraw-byte checksumで担保できるため、readerは意味と安全性をstrictにし、装飾的serialization差は許容する方が堅牢。
