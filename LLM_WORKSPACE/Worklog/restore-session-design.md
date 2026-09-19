@@ -559,24 +559,68 @@ Business recoveryに必要なsnapshot情報とserver convergence protocol state�
 ### 根拠
 backupは特定時点のBusiness snapshotを回復するものであり、利用者が`USE_BACKUP`を選択したなら、そのsnapshotが持つBusiness timestampも復元する方が意味が一貫する。restore操作履歴は専用metadataで保持できるため、Business timestampへ操作時刻を混在させる必要がない。
 
-## 42. 次の設計判断候補
+## 42. manifest collection order — 確定
 
-**backup Business snapshot内のentity array順序に意味を持たせるか**を確定する必要がある。
+**確定:** `business.boxes[]`, `business.items[]`, `business.boxLocations[]`, `photos[]`のmanifest collection順にはBusiness semanticsを持たせず、writerはcanonical identityによるdeterministic ascending sortで出力する。
+
+- `business.boxes[]`: `id` ascending。
+- `business.items[]`: `id` ascending。
+- `business.boxLocations[]`: `id` ascending。
+- `photos[]`: `photoId` ascending。
+- comparisonはcanonical identifier stringのcode point/byte-equivalentな決定的比較規則を仕様化し、locale依存sortを使用しない。
+- readerはv1 canonical formatとしてcollection sort orderをvalidationし、未sort collectionをinvalid backupとして拒否する。
+- duplicate identityはsort orderとは別にinvalid backupとして拒否する。
+- parent Business entity内部のphoto reference array順は表示順というBusiness semanticsを持つため、sortせずsnapshot順を保持する。
+- tag等、既にBusiness canonicalizationでsort規則を持つfieldはその規則に従う。
+- manifest collection order自体はentity contentHashへ含めない。contentHashは各entity単位のcanonical Business contentから計算する。
+- deterministic manifest collection orderは同一snapshotのserialization差異を減らすためのcanonical format ruleであり、ZIP metadataを含むcontainer bytes全体の完全再現性までは保証しない。
+
+### 根拠
+collection順にBusiness意味がない場合、writerごとのquery順やruntime/locale差をそのまま保存する理由はない。canonical sortをwriter/reader双方で要求すれば、validation、diff、diagnosticsが単純になり、同一Business集合の不要なmanifest差異も減らせる。一方、photo display orderのように意味のあるarrayはその順序を保持することで、serialization orderとBusiness semantic orderを分離できる。
+
+## 43. 次の設計判断候補
+
+**root `checksums.json`のexact schemaとentry順序を確定する必要がある。**
 
 背景:
-- Box / Item / BoxLocation collection自体には、現時点でmanifest array順をcanonical Business orderとして使う要件はない。
-- 一方、photo reference arrayの順序には表示順として意味があり、contentHashにもarray orderを反映する方針が確定している。
-- entity collection順まで意味を持たせると、同じBusiness集合でもexport時のquery/order差でmanifest/checksum/container hashが変化する。
+- `checksums.json`が全logical file entryのSHA-256一覧の唯一の正本で、自分自身は含めないことは確定済み。
+- hash対象はdecompressed/raw bytes、pathはcanonical relative path、algorithmはSHA-256固定。
+- manifest側へchecksumを重複保持しないことも確定済み。
+- ただしJSON field構造、hash表現、entry順、sizeを重複保持するかはまだexact schemaとして固定していない。
 
 推奨案:
-- **`business.boxes[]`, `business.items[]`, `business.boxLocations[]`, `photos[]`のmanifest collection順にはBusiness semanticsを持たせない。**
-- writerはdeterministic backup生成のため、それぞれcanonical identityでascending sortして出力する。
-  - Business entity arrays: `id` ascending。
-  - `photos[]`: `photoId` ascending。
-- readerはv1 canonical formatとしてこのsort orderもvalidationし、未sort/duplicateをinvalid backupとして拒否する。
-- parent entity内部のphoto reference array順はBusiness semanticsとして保持し、sortしない。
-- tag等、既にcanonicalizationでsort規則があるfieldはその既存規則に従う。
-- entity collection orderはcontentHashへ含めない。各entity contentHashはentity単位canonical contentから計算する。
-- deterministic collection orderにより同一snapshotからのmanifest bytes/checksums/container差異を減らす。ただしZIP metadata等まで含むcontainer bytes完全再現性は別問題とし、ここでは保証しない。
+```json
+{
+  "algorithm": "sha256",
+  "entries": [
+    {
+      "path": "manifest.json",
+      "hash": "<64 lowercase hex>"
+    },
+    {
+      "path": "photos/<photoId>.webp",
+      "hash": "<64 lowercase hex>"
+    },
+    {
+      "path": "thumbnails/<photoId>.webp",
+      "hash": "<64 lowercase hex>"
+    }
+  ]
+}
+```
 
-根拠: collection順にBusiness意味がないならcanonical sortでwriter/readerを統一した方がvalidation・diff・diagnosticsが単純になる。一方、写真表示順のように実際のBusiness意味があるarrayだけは順序を保持することで、semantic orderとserialization orderを明確に分離できる。
+- top-level required fieldは`algorithm`, `entries`のみ。unknown field拒否。
+- `algorithm` exact string `sha256`。
+- each entry required fieldは`path`, `hash`のみ。unknown field拒否。
+- `hash`はSHA-256 lowercase hexadecimal exactly 64 chars。
+- `size`はchecksumsへ重複保持しない。binary sizeはmanifest `photos[]`、control JSON size limitはreader ruleを正本とする。
+- `entries[]`はcanonical relative path ascendingでdeterministic sortし、readerもsort済みを要求する。locale依存sort禁止。
+- `manifest.json`を必ず含む。
+- 全photo original/thumbnail logical fileをexactly once含む。
+- `checksums.json`自身は含めない。
+- directory entryはlogical fileではないので含めない。
+- duplicate path、missing logical file、unknown/unlisted logical fileは拒否する。
+- zero-photo backupでは`entries[]`は`manifest.json`の1件のみ。
+- v1でalgorithm追加選択肢は持たず、将来変更時はschema/version compatibilityを明示する。
+
+根拠: checksum fileの責務をpath→hash対応だけに限定すると、manifestとのsize重複による不整合を避けられる。canonical path sortとstrict schemaを採用すればwriter/readerの挙動が決定的になり、unknown dataを黙って無視する余地も減らせる。
