@@ -713,24 +713,44 @@ control JSONはDEFLATEの効果が期待でき、既に圧縮済みのWebPはSTO
 ### 根拠
 writer順を固定するとfixture、debug、manual inspectionが安定し、checksumsを最後に生成するstreaming exportとも整合する。一方、readerがphysical orderへ依存しなければ、semantic/integrity上validな別実装backupとのinteroperabilityを維持できる。
 
-## 47. 次の設計判断候補
+## 47. export中のphoto concurrent change — 確定
 
-**backup export中にBusiness snapshotが参照するoriginal photoを取得できた後、そのphotoがexport完了前にlocal/server側で削除・変更された場合の扱い**をさらに明示する必要がある。
+**確定:** backup export開始時に固定したBusiness snapshotと必要`photoId/photoHash`集合を唯一のexport対象とし、一度snapshotとの一致を検証してexport pipelineへ取り込んだbinaryは、その後のcurrent state変化では無効化しない。
+
+- export開始時にactive local Business snapshotと、そのsnapshotが参照する必要photoId/photoHash集合を固定する。
+- originalはlocal cache、必要ならauthenticated server fetchから取得するが、採用条件はsnapshotのphotoId/photoHashとの一致。
+- originalはZIPへ書き込む直前またはstreaming中にSHA-256を計算し、snapshot `photoHash`とexact一致を要求する。
+- snapshot取得後にcurrent Businessからphoto referenceが削除されても、snapshotが参照しているbinaryは今回backupへ含める。
+- snapshot取得後にcurrent Businessが別photoへreplacementされても、今回backupではsnapshot側photoを使用する。
+- server fetch中に404、authorization失効、network failure等でsnapshot binaryを完全取得できなければ、そのphotoをmissing/unavailableとしてexport全体を失敗させる。
+- 完全取得・hash validation済みbinaryについて、export完了前にcurrent serverへ再照会して存在確認しない。
+- export途中に同一photoIdでcurrent側に別hashが観測されても、snapshot hash以外へ差し替えない。
+- thumbnailもsnapshot parent referenceに対応するbinaryとして、既確定のthumbnailHash/size validationを行い、取得済みvalid dataをcurrent state変化だけで無効化しない。
+- 全required logical entriesが揃い、manifest/checksums/ZIP生成が完了するまでcompleted backupとしてhandoffしない。
+- export完了後のcurrent Businessとの差異は次回backupの対象とする。
+
+### 根拠
+export開始時snapshotを固定した後にcurrent stateへ追従すると、parent Businessとphoto binaryが異なる時点から混在する。snapshot photoHashに一致するbinaryを確保できたかだけを基準にすれば、concurrent edit/deleteがあっても一貫したBusiness snapshot backupを生成できる。
+
+## 48. 次の設計判断候補
+
+**backup export時にthumbnailがlocal側に存在しない/壊れている場合、originalからthumbnailを再生成してbackupへ含めてよいか**を確定する必要がある。
 
 背景:
-- export開始時にBusiness snapshotと必要photoId/photoHash集合を固定することは確定済み。
-- snapshot後のBusiness変更は今回backupへ反映しない。
-- originalはlocal cache、なければserverからsnapshotと同じphotoId/photoHashを取得する。
-- streaming ZIP生成中には、取得済みbinaryとcurrent Business/server stateが時間的にずれる可能性がある。
+- restore側ではbackupにthumbnail entryが必須で、missing/hash/size mismatchをsilent regenerationせずPREPARING failureとすることが確定済み。
+- 一方export元ではcanonical originalが取得できても、local thumbnail cache/dataが欠損している可能性がある。
+- thumbnailはparent contentHashに含めないbackup-integrity用derived binaryであり、server側でもthumbnail repairはBusiness revision/hash/syncSeqを変えない方針が確定している。
+- 現在のimage処理はstored originalからmax400px/q0.8 WebP thumbnailを生成する設計。
 
 推奨案:
-- **export開始時snapshotを唯一の対象とし、一度photoId/photoHash一致を検証してexport pipelineへ取り込んだbinaryは、その後のcurrent state変化では無効化しない。**
-- 各originalはZIPへ書き込む直前またはstreaming中にSHA-256を計算し、snapshotのphotoHashとexact一致を要求する。
-- local/serverから取得後、export完了前にcurrent Businessから参照が消えても、そのsnapshotが参照している限り今回backupへ含める。
-- serverから取得中に404/authorization失効等になりbinaryを完全取得できなければ、そのphotoはmissingとしてexport失敗。
-- 完全取得・hash検証済みbinaryをcurrent serverへ再照会して存在確認しない。
-- export途中で同じphotoIdに別hashのcurrent binaryが現れてもsnapshot hash以外へ差し替えない。
-- thumbnailもsnapshotに対応するbinaryとして同様にhash/size validationし、取得済みvalid dataをcurrent state変化で無効化しない。
-- 全logical entries完成後にmanifest/checksums/ZIPを完成させ、途中状態をcompleted backupとしてhandoffしない。
+- **export時は、canonical thumbnailが利用可能ならそれを使い、欠損/破損時は検証済みstored originalからcanonical thumbnail ruleで再生成してよい。**
+- local thumbnailが存在する場合は、canonical thumbnail metadata/hashがあるならそれと検証して採用する。
+- local thumbnailが欠損/破損なら、検証済みoriginalからmax400px/q0.8 WebP等のcanonical thumbnail生成規則でexport専用thumbnailを生成する。
+- 再生成したthumbnailはbackup manifestの`thumbnailHash/thumbnailSize`をその生成bytesから計算する。
+- export専用再生成はBusiness contentHash/revision/updatedAtを変更しない。
+- exportのためだけに再生成したthumbnailをnormal local cacheへpersistする必要はない。
+- serverにcanonical thumbnailが取得可能でも、originalが手元にありcanonical生成を確実に再現できるなら再生成を許可する。
+- original自体が取得/validationできなければthumbnailだけからbackupを完成させない。
+- restore側では引き続きbackupに格納済みthumbnailをstrict validationし、silent regenerationしない。
 
-根拠: backup対象をexport開始時snapshotで固定した以上、途中でcurrent stateへ追従すると単一時点snapshotではなくなり、parent referenceとphoto binaryの不整合を生む。snapshot photoHashに一致するbinaryを確保できたかを基準にすれば、concurrent edit/deleteに左右されない一貫したbackupを生成できる。
+根拠: thumbnailはderived representationでありBusiness identityではないため、export時にoriginalから正規規則で再生成してもsnapshotのBusiness意味は変わらない。restore時の欠損補完とは異なり、writerが完全なbackupを作る段階で必要binaryを生成する処理なので、self-contained backup要件とも整合する。
