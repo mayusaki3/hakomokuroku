@@ -685,29 +685,52 @@ writerをdeterministicにすればdiff、debug、fixture生成、実装検証が
 ### 根拠
 control JSONはDEFLATEの効果が期待でき、既に圧縮済みのWebPはSTOREの方が余分な圧縮処理を避けやすい。一方、integrityはdecompressed/raw logical bytesのchecksumで検証するため、安全に展開できるSTORE/DEFLATEならreaderがwriterと同じmethodを強制する必要はない。これにより生成方針を安定させつつinteroperabilityを維持できる。
 
-## 46. 次の設計判断候補
+## 46. ZIP physical entry order — 確定
 
-**backup export時のZIP entry書き込み順序をcanonical writer ruleとして固定するか**を確定する必要がある。
+**確定:** canonical writerのZIP physical entry orderを固定するが、readerはphysical orderへ依存しない。
+
+### canonical writer order
+1. `manifest.json`
+2. `photos/<photoId>.webp` — `photoId` ascending
+3. `thumbnails/<photoId>.webp` — `photoId` ascending
+4. `checksums.json`
+
+- originalとthumbnailはphotoIdごとに交互配置せず、category単位でまとめる。
+- directory entryは生成しない。
+- `checksums.json`は全checksum対象logical entryのraw/decompressed bytes hashが確定した後、最後に生成・書き込みする。
+- writerのentry orderはBusiness semanticsではなくcanonical serialization/debug rule。
+
+### reader
+- ZIP central directory等からlogical entriesを列挙し、physical entry orderがcanonical writer orderと異なっても、それだけではrejectしない。
+- duplicate canonical pathはphysical orderに関係なくrejectする。
+- logical path、schema、checksum、size、resource/path safety等を正本としてvalidationする。
+- reader processing orderは安全性/streaming都合で自由に選べるが、Business適用はPREPARING完了前に行わない。
+
+### fingerprintとの関係
+- physical entry orderが異なるとcontainer bytes/fingerprintは変化し得る。
+- 同一logical snapshotのfingerprint一致は保証しない。
+
+### 根拠
+writer順を固定するとfixture、debug、manual inspectionが安定し、checksumsを最後に生成するstreaming exportとも整合する。一方、readerがphysical orderへ依存しなければ、semantic/integrity上validな別実装backupとのinteroperabilityを維持できる。
+
+## 47. 次の設計判断候補
+
+**backup export中にBusiness snapshotが参照するoriginal photoを取得できた後、そのphotoがexport完了前にlocal/server側で削除・変更された場合の扱い**をさらに明示する必要がある。
 
 背景:
-- manifest collectionとchecksums entryはcanonical sort済み。
-- ZIP entry自体の順序はlogical semanticsを持たないが、container bytes/fingerprintやdebug時の見通しに影響する。
-- `checksums.json`は他logical fileのhash一覧を持つため、streaming writerでは最後に生成する方が自然。
-- 一方、restore readerはentry順に依存すべきではない。
+- export開始時にBusiness snapshotと必要photoId/photoHash集合を固定することは確定済み。
+- snapshot後のBusiness変更は今回backupへ反映しない。
+- originalはlocal cache、なければserverからsnapshotと同じphotoId/photoHashを取得する。
+- streaming ZIP生成中には、取得済みbinaryとcurrent Business/server stateが時間的にずれる可能性がある。
 
 推奨案:
-- **writerのZIP entry順は固定するが、readerはentry順を要求しない。**
-- canonical writer order:
-  1. `manifest.json`
-  2. `photos/<photoId>.webp` — photoId ascending
-  3. `thumbnails/<photoId>.webp` — photoId ascending
-  4. `checksums.json`
-- originalとthumbnailをphotoIdごとに交互にせず、category単位でまとめる。
-- directory entryは生成しない。
-- checksumsは全対象entryのraw-byte hash確定後に最後へ書く。
-- readerはcentral directory等からlogical entriesを列挙してvalidationし、physical ZIP entry orderが異なってもrejectしない。
-- duplicate canonical pathはphysical orderに関係なくreject。
-- ZIP entry orderはBusiness semanticsではなくcanonical writer/debug rule。
-- fingerprintはentry order差でも変わり得るため、同一snapshot fingerprint一致は保証しない。
+- **export開始時snapshotを唯一の対象とし、一度photoId/photoHash一致を検証してexport pipelineへ取り込んだbinaryは、その後のcurrent state変化では無効化しない。**
+- 各originalはZIPへ書き込む直前またはstreaming中にSHA-256を計算し、snapshotのphotoHashとexact一致を要求する。
+- local/serverから取得後、export完了前にcurrent Businessから参照が消えても、そのsnapshotが参照している限り今回backupへ含める。
+- serverから取得中に404/authorization失効等になりbinaryを完全取得できなければ、そのphotoはmissingとしてexport失敗。
+- 完全取得・hash検証済みbinaryをcurrent serverへ再照会して存在確認しない。
+- export途中で同じphotoIdに別hashのcurrent binaryが現れてもsnapshot hash以外へ差し替えない。
+- thumbnailもsnapshotに対応するbinaryとして同様にhash/size validationし、取得済みvalid dataをcurrent state変化で無効化しない。
+- 全logical entries完成後にmanifest/checksums/ZIPを完成させ、途中状態をcompleted backupとしてhandoffしない。
 
-根拠: writer順を固定するとfixture、debug、manual inspectionが安定し、checksumsを最後に生成するstreaming処理とも相性がよい。一方readerがphysical orderへ依存しなければ、別実装で生成されたsemantic-valid backupとのinteroperabilityを維持できる。
+根拠: backup対象をexport開始時snapshotで固定した以上、途中でcurrent stateへ追従すると単一時点snapshotではなくなり、parent referenceとphoto binaryの不整合を生む。snapshot photoHashに一致するbinaryを確保できたかを基準にすれば、concurrent edit/deleteに左右されない一貫したbackupを生成できる。
