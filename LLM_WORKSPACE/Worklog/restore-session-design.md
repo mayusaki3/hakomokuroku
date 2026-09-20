@@ -749,23 +749,47 @@ export開始時snapshotを固定した後にcurrent stateへ追従すると、pa
 ### 根拠
 thumbnailはBusiness identityではなくderived representationであり、parent contentHashにも含めない。writerがself-contained backupを完成させる段階でcanonical originalから必要なderived binaryを生成することはBusiness snapshotを変更しない。一方restore時のsilent regenerationを禁止することで、受け取ったbackup containerそのものの完全性検証は維持できる。
 
-## 49. 次の設計判断候補
+## 49. thumbnail generation determinism — 確定
 
-**thumbnail再生成bytesの完全な決定性をbackup format要件として要求するか**を確定する必要がある。
+**確定:** thumbnail生成のsemantic ruleは固定するが、encoded WebP bytes / hashのcross-browser・cross-library完全決定性はv0.8のformat要件としない。
+
+- canonical thumbnail generation semantics:
+  - inputはvalidation済みstored original。
+  - stored originalは既にorientation適用済みであることを前提とする。
+  - aspect ratio維持。
+  - max dimension 400px。
+  - no upscale。
+  - output WebP。
+  - quality 0.8。
+- writerは生成したactual thumbnail bytesから`thumbnailHash` / `thumbnailSize`を計算してmanifestへ記録する。
+- 同一original/photoHashから別browser/library/encoder versionで生成したthumbnail bytes/hashが異なっても、それだけではBusiness inconsistency、photo identity collision、backup invalidとはしない。
+- restoreはbackup内のactual thumbnail bytesがそのmanifest `thumbnailHash/thumbnailSize`と一致することを検証し、restore環境で再生成した値との一致を要求しない。
+- server thumbnail repairもderived representationの更新として扱い、Business revision/contentHash/syncSeqを変更しない既確定方針を維持する。
+- encoder固有差は、canonical visual/geometry/output format/size constraintsを満たす範囲で許容する。
+- 将来pixel-exact / byte-exact thumbnail再現性が必要になった場合はencoder/version/parameterまでformat contractとして固定する別version設計とする。
+
+### 根拠
+thumbnailはderived representationでありBusiness identityはoriginal `photoHash`で担保される。cross-platformでencoded bytesまで固定するとbrowser/codec実装への強い依存が生じる一方、backup integrityは実際に格納したthumbnail bytesのhashで十分検証できるため、v0.8でbyte-exact再現性を要求する利点は小さい。
+
+## 50. 次の設計判断候補
+
+**backup export時にthumbnail再生成が必要だが、stored originalのdecodeに失敗した場合の扱い**を確定する必要がある。
 
 背景:
-- WebP encoder/browser/libraryの実装差により、同じstored originalとquality/size指定でもencoded bytesが完全一致しない可能性がある。
-- backup manifestの`thumbnailHash`は、そのbackupに実際に格納したthumbnail bytesのintegrityを検証する値であり、Business contentHashには含まれない。
-- restoreはbackup内thumbnail bytesとmanifest hash/sizeの一致を検証できればよく、別環境で同じthumbnailHashを再現する必要はない。
+- originalはraw bytesの`photoHash`が一致していても、画像としてdecode可能とは限らない。
+- normal ingestion時にはWebP生成処理を通るため通常はdecode可能だが、storage corruptionや過去実装不具合を完全には排除できない。
+- self-contained backupではthumbnailが必須で、restore側のsilent regenerationは禁止済み。
+- corrupt originalをhash一致だけでbackupへ含めると、将来表示不能なphotoを「正常なbackup」として保存する可能性がある。
 
 推奨案:
-- **thumbnail生成のsemantic ruleは固定するが、encoded WebP bytes/hashのcross-implementation完全決定性は要求しない。**
-- canonical generation semanticsは入力stored original、orientation済み、no upscale、max 400px、aspect ratio維持、WebP quality 0.8。
-- writerは生成したactual bytesから`thumbnailHash/thumbnailSize`を計算する。
-- 同じoriginalから別browser/libraryで生成したthumbnailのhashが異なっても、それだけではBusiness inconsistencyではない。
-- server thumbnail repairでも同様にBusiness revision/contentHashを変えない。
-- restoreはbackupに格納されたthumbnail bytesをそのbackup manifest値で検証し、local再生成値との一致を要求しない。
-- visual/size constraintsを満たす限りencoder固有差を許容する。
-- 将来pixel-exact/byte-exact thumbnailが必要になった場合はencoder/version/parametersをformatとして固定する別設計とする。
+- **export対象の全stored originalについて、photoHash一致に加えてWebPとしてdecode可能であることを要求する。**
+- thumbnailが既にvalidでもoriginal decode validationを省略しない。
+- original raw bytes hash一致 + size上限 + WebP decode成功をcanonical original export条件とする。
+- decode failureは`PHOTO_ORIGINAL_INVALID`等の明確なerror categoryでexport全体を失敗させる。
+- serverから同じphotoId/photoHashの別copyを再取得できる場合は、一度だけ/規定retryで取得し直してvalidationしてよい。
+- 同じhashのbytesなら通常同じdecode結果になるため、恒常的decode failureではretryを無限に行わない。
+- invalid originalからthumbnailだけを利用してbackupを完成させない。
+- export failureはBusiness/SyncState/Outboxを変更しない。
+- UIでは対象photo数/可能ならparentを示し、元写真の再登録・修復が必要であることを案内する。
 
-根拠: derived thumbnail bytesまでcross-platformで固定するとencoder実装/versionへの強い依存が生じる。一方、backup integrityは実際に格納したbytesのhashで十分検証でき、Business identityはoriginal photoHashで担保されるため、v0.8でbyte-exact thumbnail再現性を要求する利点は小さい。
+根拠: backupの目的は将来復元可能な自己完結snapshotを作ることであり、hash一致だけでは「そのbytesが意図したWebP画像として利用可能」までは保証しない。export時にdecode validationまで行えば、破損をbackupへ固定化するより早い段階で検出できる。
