@@ -620,32 +620,63 @@ collection順にBusiness意味がない場合、writerごとのquery順やruntim
 ### 根拠
 checksums.jsonの責務をpath→hash対応へ限定することで、manifestに既に存在するbinary sizeとの重複・不整合を避けられる。canonical path sortとstrict schemaによりwriter/readerを決定的にし、未対応dataを黙って無視する余地を減らす。
 
-## 44. 次の設計判断候補
+## 44. control JSON serialization — 確定
 
-**`manifest.json`と`checksums.json`のJSON serializationをcanonical化するか**を確定する必要がある。
+**確定:** v1 writerの`manifest.json` / `checksums.json` serializationはdeterministicに固定する。一方readerはsemantic/schema validationを正本とし、byte formattingの非canonical性だけではrejectしない。
+
+### writer
+- UTF-8 without BOM。
+- line endingはLF。
+- 2-space indentationでpretty-printする。
+- trailing whitespaceを出力しない。
+- file末尾にLFを1つ付ける。
+- object key orderは各schemaで定義したfield順に固定する。
+- array orderは各既確定canonical orderに従う。
+- JSON escapingはvalid JSONとして必要なescapeを行う。ASCII化だけを目的とした任意のUnicode escapeは行わない。
+- number/string/null等はschemaが許可するrepresentationだけを出力する。
+
+### reader
+- strict UTF-8としてdecodeし、invalid UTF-8を拒否する。
+- UTF-8 BOMはrejectする。
+- control JSON size limit、JSON syntax、schema、required/unknown field、type/value constraint、canonical array order等を検証する。
+- object key order、indentation、一般的whitespace、末尾LFの有無など、意味に影響しないformat差だけではrejectしない。
+- checksum検証は実際にZIPへ格納されたraw/decompressed file bytesを対象にするため、writer canonical formattingと異なるmanifestでも、checksumsがその実bytesと一致しsemantic validationを満たすなら受理できる。
+- readerは入力JSONを再serializeしてchecksum比較しない。
+
+### fingerprintとの関係
+- backup fingerprintはcontainer bytes全体のSHA-256であり、JSON formattingやZIP metadataの差で変化し得る。
+- 「同じBusiness snapshotなら同じbackup fingerprintになる」とは定義しない。
+- fingerprintは既確定どおり履歴上の識別補助であり、Business identity/authenticity保証ではない。
+
+### 根拠
+writerをdeterministicにすればdiff、debug、fixture生成、実装検証が安定する。一方readerまで装飾的serializationを強制すると、意味的・integrity的に正しいbackupをwhitespace等だけで拒否する脆弱なformatになる。raw-byte checksumで実際のfile bytesのintegrityを検証できるため、readerは意味・安全性をstrictにし、装飾差を許容する。
+
+## 45. 次の設計判断候補
+
+**ZIP entryのcompression methodとmetadataをどこまでv1 formatとして固定するか**を確定する必要がある。
 
 背景:
-- checksumsはraw bytesをhashするため、manifestの意味が同一でもwhitespace/key orderが異なればmanifest hashは変わる。
-- backup fingerprintはcontainer bytes全体のSHA-256なので、JSON serialization差やZIP metadata差でも変化し得る。
-- manifest collection orderとchecksums entry orderは既にdeterministic化した。
-- ただしobject key order、indentation、line ending、UTF-8 BOM等はまだ固定していない。
+- logical file構造、raw/decompressed bytesのchecksum、resource limitsは確定済み。
+- container fingerprintはZIP bytes全体をhashするため、compression level、entry timestamp、extra field等で同一logical backupでも異なるfingerprintになり得る。
+- WebPは既に圧縮済みなのでDEFLATEしても効果が小さい一方、control JSONは圧縮効果がある。
+- ZIP library/browser実装差まで厳格にreaderが要求するとinteroperabilityを損なう。
 
 推奨案:
-- **v1 writerのJSON serializationをdeterministicに固定するが、readerはsemantic/schema validationを正本とし、JSON byte formattingの非canonical性だけでは拒否しない。**
+- **writerはmethodを固定するが、readerは安全なmethodの範囲で許容する。**
 - writer:
-  - UTF-8 without BOM。
-  - LF line ending。
-  - pretty-printは2-space indentation。
-  - trailing whitespaceなし。
-  - file末尾LFあり。
-  - object key orderはschemaで定義した順序。
-  - array orderは各既確定canonical order。
-  - JSON escapingは標準JSONとして必要最小限を使用し、ASCII化のためだけの任意Unicode escapeを行わない。
+  - `manifest.json`, `checksums.json`: DEFLATE。
+  - `photos/*.webp`, `thumbnails/*.webp`: STORE。
+  - directory entryは生成しなくてよい。
+  - encryptionは使用しない。
+  - ZIP64は必要時のみlibraryに許可し、v1 readerは対応libraryで読めることを要求する。
+  - entry timestamp等のnon-semantic metadataはBusiness意味を持たせない。
 - reader:
-  - strict UTF-8、size limit、JSON syntax/schema/unknown field、array canonical order等は検証する。
-  - object key order、indentation、whitespace、末尾LF、BOM以外のformat差をsemantic invalid理由にはしない。
-  - BOMはstrict UTF-8 JSON writer ruleに反するためrejectする。
-  - checksumsは実際のraw manifest bytesをhashして検証するため、formatを変えたmanifestでもchecksumsが一致しschemaがvalidなら読める。
-- backup fingerprint/container hashは「同じBusiness snapshotなら必ず同じ」とは定義しない。
+  - STORE / DEFLATEのみ許可し、それ以外のcompression methodはreject。
+  - logical path/schema/checksum/actual decompressed sizeを正本として検証する。
+  - writer推奨methodと異なるだけではrejectしない。
+  - encrypted ZIP/entryはreject。
+  - ZIP extra fields/commentsはBusiness dataとして解釈しない。ただしpath safetyやresource safetyを迂回する構造はreject。
+  - archive-level/entry commentは無視し、canonical writerは生成しない。
+- compression level、entry timestamp、extra fieldのbyte-level canonicalizationまではv1で保証しない。
 
-根拠: writerをdeterministic化すればdiff/debug/reproducibilityは改善する。一方、readerまでbyte formattingを強制すると、意味的に正しいbackupをindentation等だけで拒否する脆弱なformatになる。integrityはraw-byte checksumで担保できるため、readerは意味と安全性をstrictにし、装飾的serialization差は許容する方が堅牢。
+根拠: writer methodを固定すると生成物の傾向は安定するが、readerまで同じmethodを強制する必要はない。checksumはdecompressed raw bytesを検証するため、安全に展開できるSTORE/DEFLATEならlogical contentのintegrityは同じように確認できる。
