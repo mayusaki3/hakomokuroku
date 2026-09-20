@@ -732,25 +732,40 @@ writer順を固定するとfixture、debug、manual inspectionが安定し、che
 ### 根拠
 export開始時snapshotを固定した後にcurrent stateへ追従すると、parent Businessとphoto binaryが異なる時点から混在する。snapshot photoHashに一致するbinaryを確保できたかだけを基準にすれば、concurrent edit/deleteがあっても一貫したBusiness snapshot backupを生成できる。
 
-## 48. 次の設計判断候補
+## 48. export時のthumbnail欠損/破損 — 確定
 
-**backup export時にthumbnailがlocal側に存在しない/壊れている場合、originalからthumbnailを再生成してbackupへ含めてよいか**を確定する必要がある。
+**確定:** backup export時は利用可能なcanonical thumbnailを検証して使用し、欠損/破損時は検証済みstored originalからcanonical thumbnail ruleでexport用thumbnailを再生成してよい。
+
+- local thumbnailが利用可能でcanonical thumbnail metadata/hashがある場合は、それとvalidationして採用する。
+- local thumbnailが欠損、decode不能、hash/size不一致等でinvalidな場合は、検証済みstored originalからcanonical thumbnail生成規則で再生成する。
+- canonical thumbnail generationは既定のstored originalを入力とし、max 400px、no upscale、WebP quality 0.8、既定orientation済みoriginalを前提とする。
+- 再生成したthumbnailのactual bytesから`thumbnailHash`と`thumbnailSize`を計算し、backup manifestへ記録する。
+- export専用thumbnail再生成はBusiness contentHash、revision、syncSeq、createdAt、updatedAtを変更しない。
+- exportのためだけに再生成したthumbnailをnormal local cacheへpersistすることは必須としない。
+- server canonical thumbnailを取得できる場合でも、検証済みstored originalからcanonical ruleで再生成可能ならexport pipeline内での再生成を許可する。
+- original自体を取得・photoHash validationできない場合、thumbnailだけを根拠にbackupを完成させない。
+- restore PREPARING側では引き続きbackupに格納済みthumbnailのhash/size/entryをstrict validationし、missing/invalid thumbnailをsilent regenerationしない。
+
+### 根拠
+thumbnailはBusiness identityではなくderived representationであり、parent contentHashにも含めない。writerがself-contained backupを完成させる段階でcanonical originalから必要なderived binaryを生成することはBusiness snapshotを変更しない。一方restore時のsilent regenerationを禁止することで、受け取ったbackup containerそのものの完全性検証は維持できる。
+
+## 49. 次の設計判断候補
+
+**thumbnail再生成bytesの完全な決定性をbackup format要件として要求するか**を確定する必要がある。
 
 背景:
-- restore側ではbackupにthumbnail entryが必須で、missing/hash/size mismatchをsilent regenerationせずPREPARING failureとすることが確定済み。
-- 一方export元ではcanonical originalが取得できても、local thumbnail cache/dataが欠損している可能性がある。
-- thumbnailはparent contentHashに含めないbackup-integrity用derived binaryであり、server側でもthumbnail repairはBusiness revision/hash/syncSeqを変えない方針が確定している。
-- 現在のimage処理はstored originalからmax400px/q0.8 WebP thumbnailを生成する設計。
+- WebP encoder/browser/libraryの実装差により、同じstored originalとquality/size指定でもencoded bytesが完全一致しない可能性がある。
+- backup manifestの`thumbnailHash`は、そのbackupに実際に格納したthumbnail bytesのintegrityを検証する値であり、Business contentHashには含まれない。
+- restoreはbackup内thumbnail bytesとmanifest hash/sizeの一致を検証できればよく、別環境で同じthumbnailHashを再現する必要はない。
 
 推奨案:
-- **export時は、canonical thumbnailが利用可能ならそれを使い、欠損/破損時は検証済みstored originalからcanonical thumbnail ruleで再生成してよい。**
-- local thumbnailが存在する場合は、canonical thumbnail metadata/hashがあるならそれと検証して採用する。
-- local thumbnailが欠損/破損なら、検証済みoriginalからmax400px/q0.8 WebP等のcanonical thumbnail生成規則でexport専用thumbnailを生成する。
-- 再生成したthumbnailはbackup manifestの`thumbnailHash/thumbnailSize`をその生成bytesから計算する。
-- export専用再生成はBusiness contentHash/revision/updatedAtを変更しない。
-- exportのためだけに再生成したthumbnailをnormal local cacheへpersistする必要はない。
-- serverにcanonical thumbnailが取得可能でも、originalが手元にありcanonical生成を確実に再現できるなら再生成を許可する。
-- original自体が取得/validationできなければthumbnailだけからbackupを完成させない。
-- restore側では引き続きbackupに格納済みthumbnailをstrict validationし、silent regenerationしない。
+- **thumbnail生成のsemantic ruleは固定するが、encoded WebP bytes/hashのcross-implementation完全決定性は要求しない。**
+- canonical generation semanticsは入力stored original、orientation済み、no upscale、max 400px、aspect ratio維持、WebP quality 0.8。
+- writerは生成したactual bytesから`thumbnailHash/thumbnailSize`を計算する。
+- 同じoriginalから別browser/libraryで生成したthumbnailのhashが異なっても、それだけではBusiness inconsistencyではない。
+- server thumbnail repairでも同様にBusiness revision/contentHashを変えない。
+- restoreはbackupに格納されたthumbnail bytesをそのbackup manifest値で検証し、local再生成値との一致を要求しない。
+- visual/size constraintsを満たす限りencoder固有差を許容する。
+- 将来pixel-exact/byte-exact thumbnailが必要になった場合はencoder/version/parametersをformatとして固定する別設計とする。
 
-根拠: thumbnailはderived representationでありBusiness identityではないため、export時にoriginalから正規規則で再生成してもsnapshotのBusiness意味は変わらない。restore時の欠損補完とは異なり、writerが完全なbackupを作る段階で必要binaryを生成する処理なので、self-contained backup要件とも整合する。
+根拠: derived thumbnail bytesまでcross-platformで固定するとencoder実装/versionへの強い依存が生じる。一方、backup integrityは実際に格納したbytesのhashで十分検証でき、Business identityはoriginal photoHashで担保されるため、v0.8でbyte-exact thumbnail再現性を要求する利点は小さい。
