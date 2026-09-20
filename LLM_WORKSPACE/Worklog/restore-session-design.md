@@ -651,32 +651,63 @@ checksums.jsonの責務をpath→hash対応へ限定することで、manifest�
 ### 根拠
 writerをdeterministicにすればdiff、debug、fixture生成、実装検証が安定する。一方readerまで装飾的serializationを強制すると、意味的・integrity的に正しいbackupをwhitespace等だけで拒否する脆弱なformatになる。raw-byte checksumで実際のfile bytesのintegrityを検証できるため、readerは意味・安全性をstrictにし、装飾差を許容する。
 
-## 45. 次の設計判断候補
+## 45. ZIP compression / metadata policy — 確定
 
-**ZIP entryのcompression methodとmetadataをどこまでv1 formatとして固定するか**を確定する必要がある。
+**確定:** canonical writerはentry種別ごとにcompression methodを固定するが、readerは安全に検証可能なSTORE / DEFLATEを許容する。
 
-背景:
-- logical file構造、raw/decompressed bytesのchecksum、resource limitsは確定済み。
-- container fingerprintはZIP bytes全体をhashするため、compression level、entry timestamp、extra field等で同一logical backupでも異なるfingerprintになり得る。
-- WebPは既に圧縮済みなのでDEFLATEしても効果が小さい一方、control JSONは圧縮効果がある。
-- ZIP library/browser実装差まで厳格にreaderが要求するとinteroperabilityを損なう。
-
-推奨案:
-- **writerはmethodを固定するが、readerは安全なmethodの範囲で許容する。**
-- writer:
-  - `manifest.json`, `checksums.json`: DEFLATE。
-  - `photos/*.webp`, `thumbnails/*.webp`: STORE。
-  - directory entryは生成しなくてよい。
-  - encryptionは使用しない。
-  - ZIP64は必要時のみlibraryに許可し、v1 readerは対応libraryで読めることを要求する。
-  - entry timestamp等のnon-semantic metadataはBusiness意味を持たせない。
-- reader:
-  - STORE / DEFLATEのみ許可し、それ以外のcompression methodはreject。
-  - logical path/schema/checksum/actual decompressed sizeを正本として検証する。
-  - writer推奨methodと異なるだけではrejectしない。
-  - encrypted ZIP/entryはreject。
-  - ZIP extra fields/commentsはBusiness dataとして解釈しない。ただしpath safetyやresource safetyを迂回する構造はreject。
-  - archive-level/entry commentは無視し、canonical writerは生成しない。
+### writer
+- `manifest.json`: DEFLATE。
+- `checksums.json`: DEFLATE。
+- `photos/*.webp`: STORE。
+- `thumbnails/*.webp`: STORE。
+- directory entryは生成不要。
+- ZIP encryption / encrypted entryを生成しない。
+- ZIP64はarchive size / entry count等で必要な場合のみZIP libraryに許可する。
+- entry timestamp、extra field等のnon-semantic ZIP metadataへBusiness意味を持たせない。
+- archive-level / entry commentは生成しない。
 - compression level、entry timestamp、extra fieldのbyte-level canonicalizationまではv1で保証しない。
 
-根拠: writer methodを固定すると生成物の傾向は安定するが、readerまで同じmethodを強制する必要はない。checksumはdecompressed raw bytesを検証するため、安全に展開できるSTORE/DEFLATEならlogical contentのintegrityは同じように確認できる。
+### reader
+- STORE / DEFLATE compression methodを許可する。
+- canonical writerの推奨methodと異なることだけをinvalid理由にしない。
+- STORE / DEFLATE以外のcompression methodはv1でrejectする。
+- encrypted ZIP / encrypted entryはrejectする。
+- ZIP64は使用libraryが安全にparse/readできることを前提に許可する。
+- logical path/schema/checksum/actual decompressed size/resource limitsを正本として検証する。
+- ZIP extra field/commentをBusiness dataとして解釈しない。
+- archive-level / entry commentは無視できるが、canonical writerは生成しない。
+- extra field等を利用してpath safety、size limit、duplicate detection等を迂回する構造はrejectする。
+
+### fingerprintとの関係
+- compression level、entry timestamp、extra field等が異なればcontainer bytesおよびbackup fingerprintは変化し得る。
+- fingerprintはlogical Business snapshotのcanonical hashとは定義しない。
+
+### 根拠
+control JSONはDEFLATEの効果が期待でき、既に圧縮済みのWebPはSTOREの方が余分な圧縮処理を避けやすい。一方、integrityはdecompressed/raw logical bytesのchecksumで検証するため、安全に展開できるSTORE/DEFLATEならreaderがwriterと同じmethodを強制する必要はない。これにより生成方針を安定させつつinteroperabilityを維持できる。
+
+## 46. 次の設計判断候補
+
+**backup export時のZIP entry書き込み順序をcanonical writer ruleとして固定するか**を確定する必要がある。
+
+背景:
+- manifest collectionとchecksums entryはcanonical sort済み。
+- ZIP entry自体の順序はlogical semanticsを持たないが、container bytes/fingerprintやdebug時の見通しに影響する。
+- `checksums.json`は他logical fileのhash一覧を持つため、streaming writerでは最後に生成する方が自然。
+- 一方、restore readerはentry順に依存すべきではない。
+
+推奨案:
+- **writerのZIP entry順は固定するが、readerはentry順を要求しない。**
+- canonical writer order:
+  1. `manifest.json`
+  2. `photos/<photoId>.webp` — photoId ascending
+  3. `thumbnails/<photoId>.webp` — photoId ascending
+  4. `checksums.json`
+- originalとthumbnailをphotoIdごとに交互にせず、category単位でまとめる。
+- directory entryは生成しない。
+- checksumsは全対象entryのraw-byte hash確定後に最後へ書く。
+- readerはcentral directory等からlogical entriesを列挙してvalidationし、physical ZIP entry orderが異なってもrejectしない。
+- duplicate canonical pathはphysical orderに関係なくreject。
+- ZIP entry orderはBusiness semanticsではなくcanonical writer/debug rule。
+- fingerprintはentry order差でも変わり得るため、同一snapshot fingerprint一致は保証しない。
+
+根拠: writer順を固定するとfixture、debug、manual inspectionが安定し、checksumsを最後に生成するstreaming処理とも相性がよい。一方readerがphysical orderへ依存しなければ、別実装で生成されたsemantic-valid backupとのinteroperabilityを維持できる。
