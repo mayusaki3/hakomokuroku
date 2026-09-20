@@ -771,25 +771,47 @@ thumbnailはBusiness identityではなくderived representationであり、paren
 ### 根拠
 thumbnailはderived representationでありBusiness identityはoriginal `photoHash`で担保される。cross-platformでencoded bytesまで固定するとbrowser/codec実装への強い依存が生じる一方、backup integrityは実際に格納したthumbnail bytesのhashで十分検証できるため、v0.8でbyte-exact再現性を要求する利点は小さい。
 
-## 50. 次の設計判断候補
+## 50. export original decode validation — 確定
 
-**backup export時にthumbnail再生成が必要だが、stored originalのdecodeに失敗した場合の扱い**を確定する必要がある。
+**確定:** backup export対象の全stored originalは、raw-byte `photoHash`一致・size制約に加えて、WebP画像として正常にdecode可能であることを必須条件とする。
+
+- export対象originalごとに、snapshotの`photoHash`とのSHA-256 exact一致を検証する。
+- original actual byte sizeが既確定の上限5MiB以下であることを検証する。
+- WebPとしてdecode可能であることを検証する。
+- thumbnailが既にvalidでもoriginal decode validationを省略しない。
+- hash一致でもdecode不能なoriginalはvalid backup sourceとして扱わない。
+- decode failureは`PHOTO_ORIGINAL_INVALID`等の明確なerror categoryとしてexport全体を失敗させる。
+- local copyがinvalidで、authenticated serverから同じphotoId/photoHashのcanonical copyを取得可能な場合は、規定された有限retryの範囲で再取得してvalidationしてよい。
+- 同一hash bytesで恒常的にdecode失敗する場合、無限retryしない。
+- invalid originalから既存thumbnailだけを採用してbackupを完成させない。
+- export failure時はBusiness / SyncState / Outboxを変更しない。
+- UIは可能な範囲で対象photo数およびparentを示し、元写真の再登録/修復が必要であることを案内する。
+- restore PREPARING側でもoriginal entryはphotoHash/sizeだけでなくWebP decode validationを行い、将来利用不能なbinaryをcanonical originalへpromoteしない。
+
+### 根拠
+backupは将来復元可能なself-contained snapshotである必要がある。raw bytesのhash一致はbytes identityを証明するが、そのbytesが期待するWebP画像として利用可能であることまでは保証しない。export/restore双方でdecode validationを行えば、破損binaryを正常なbackup/canonical dataとして固定化することを防げる。
+
+## 51. 次の設計判断候補
+
+**thumbnailについてもbackup export/restore時にWebP decode validationを必須にするか**を確定する必要がある。
 
 背景:
-- originalはraw bytesの`photoHash`が一致していても、画像としてdecode可能とは限らない。
-- normal ingestion時にはWebP生成処理を通るため通常はdecode可能だが、storage corruptionや過去実装不具合を完全には排除できない。
-- self-contained backupではthumbnailが必須で、restore側のsilent regenerationは禁止済み。
-- corrupt originalをhash一致だけでbackupへ含めると、将来表示不能なphotoを「正常なbackup」として保存する可能性がある。
+- thumbnailはhash/size validation必須で、欠損時のrestore silent regenerationは禁止済み。
+- originalについてはWebP decode validation必須と確定した。
+- thumbnailはderived representationでBusiness identityではないが、restore後に一覧表示等で直接利用するbinaryである。
+- hashが一致していてもdecode不能なthumbnailを受理すると、integrity上は一致していてもUIでは利用不能になる。
 
 推奨案:
-- **export対象の全stored originalについて、photoHash一致に加えてWebPとしてdecode可能であることを要求する。**
-- thumbnailが既にvalidでもoriginal decode validationを省略しない。
-- original raw bytes hash一致 + size上限 + WebP decode成功をcanonical original export条件とする。
-- decode failureは`PHOTO_ORIGINAL_INVALID`等の明確なerror categoryでexport全体を失敗させる。
-- serverから同じphotoId/photoHashの別copyを再取得できる場合は、一度だけ/規定retryで取得し直してvalidationしてよい。
-- 同じhashのbytesなら通常同じdecode結果になるため、恒常的decode failureではretryを無限に行わない。
-- invalid originalからthumbnailだけを利用してbackupを完成させない。
-- export failureはBusiness/SyncState/Outboxを変更しない。
-- UIでは対象photo数/可能ならparentを示し、元写真の再登録・修復が必要であることを案内する。
+- **thumbnailもhash/sizeに加えてWebP decode validationを必須にする。**
+- export:
+  - 既存thumbnailを採用する場合、thumbnailHash/sizeだけでなくdecode成功を要求する。
+  - decode失敗は「破損thumbnail」とみなし、検証済みoriginalからcanonical ruleで再生成してよい。
+  - 再生成thumbnailもdecode validationしてからbackupへ格納する。
+- restore PREPARING:
+  - backup thumbnail entryのhash/size/WebP decode成功を全て要求する。
+  - decode失敗時はbackup invalidとしてPREPARING failure。
+  - restore時silent regenerationは引き続き禁止。
+- image dimensionsもcanonical thumbnail constraint（max 400px/no upscaleの結果として妥当な範囲）を検証する。
+- decode validationはBusiness contentHash/revisionには影響しない。
 
-根拠: backupの目的は将来復元可能な自己完結snapshotを作ることであり、hash一致だけでは「そのbytesが意図したWebP画像として利用可能」までは保証しない。export時にdecode validationまで行えば、破損をbackupへ固定化するより早い段階で検出できる。
+根拠: thumbnailはBusiness identityではないが、self-contained backupの一部として復元後に直接利用する。hash一致だけで壊れた画像を受理するより、writer側では再生成、reader側ではrejectと責務を分ける方が、backup completenessと表示可能性を保証しやすい。
