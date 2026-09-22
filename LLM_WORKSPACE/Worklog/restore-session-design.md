@@ -916,27 +916,42 @@ extension/MIMEはmetadataでありuntrusted inputのactual formatを保証しな
 ### 根拠
 canonical storageは任意WebP fileのarchiveではなく、箱目録が生成・利用する静止写真の内部形式である。必要な静止画像chunkだけに限定すれば、lossy/lossless/alphaを維持しながらprivacy/security/parser attack surfaceを抑え、export/restore/normal ingestionで同じcanonical invariantを共有できる。
 
-## 57. 次の設計判断候補
+## 57. canonical WebP alpha channel — 確定
 
-**canonical stored WebPでalpha channel（透明度）を許可するか**を確定する必要がある。
+**確定:** v0.8のcanonical stored original / thumbnailではstatic WebPのalpha channelを許可する。
+
+- transparent inputはcanonical conversion時にalphaを保持してよい。
+- alpha有無をBusiness metadataとして別管理しない。
+- alphaを理由に背景色へflattenしてcanonical pixels/photoHashを変更しない。
+- thumbnailもalpha保持を許可する。
+- WebP chunk allowlistでは、extended lossy alphaの`VP8X + ALPH + VP8 `およびWebP仕様上alphaを内包可能な`VP8L`をvalid static representationとして扱う。
+- alpha付き画像にもoriginal max dimension 1600px / max 5MiB、thumbnail max dimension 400px / max 256KiB等の既確定resource limitsを同様に適用する。
+- export/restoreのdecode/dimension/hash/size/container validationもalpha有無で緩和しない。
+- Vision providerがalpha inputを直接扱えない場合はVision adapter側のtemporary representationとしてflatten/format conversionしてよいが、canonical originalは変更しない。
+- UIはalpha専用Business behaviorを持たず、browser image renderingに委ねる。
+
+### 根拠
+alphaを禁止するとtransparent sourceのためだけに背景色選択という追加canonical ruleが必要になり、元画像の意味/pixelsを不要に変更する。WebPはstatic alphaを正式に扱えるため、静止画の範囲で許可する方がnormal ingestion・backup・displayを単純に保てる。
+
+## 58. 次の設計判断候補
+
+**canonical stored originalをlossy WebPとlossless WebPの両方許可するか、それともwriter出力をlossyに固定するか**を確定する必要がある。
 
 背景:
-- 箱目録の主用途はcamera/photo画像で、通常alphaは不要。
-- ただし端末の画像選択からPNG等を登録した場合、透明部分を持つ入力があり得る。
-- 現在のcanvas→WebP pipelineでは透明canvasをそのままencodeするとalphaが保持される可能性がある。
-- alphaを許可すると`VP8X + ALPH + VP8`等をcanonical allowlistに含める必要がある。
-- alphaを禁止する場合はcanonical conversion時に背景色へflattenする規則が必要で、背景色選択がpixel/photoHashへ影響する。
+- current canonical ingestionはcanvas `toBlob("image/webp", 0.85)`相当で、通常はlossy WebPを生成する想定。
+- chunk allowlistでは`VP8L`も許可候補として確定しているため、現状のままだとreaderはlosslessもcanonicalとして受理する。
+- transparent graphics/text/screenshotではlosslessが品質上有利な場合がある一方、写真主体ではfile sizeが増えやすい。
+- backupはcanonical stored bytesをそのまま保持するため、readerが許可するformatとnormal writerが生成するformatの関係を明確にした方がよい。
 
 推奨案:
-- **v0.8ではalphaを許可する。**
-- static WebPのalphaはcanonical photoとしてvalid。
-- alpha有無はBusiness metadataとして別管理しない。
-- transparent inputはcanonical conversionで透明度を保持してよい。
-- thumbnailもalpha保持を許可する。
-- `VP8X + ALPH + VP8`、およびWebP仕様上lossless alphaを内包する`VP8L`を許可する。
-- alphaを理由に背景色へflattenしてpixelを変更しない。
-- Vision providerへ送る際にalpha対応が必要なら、そのadapter側で一時的なflatten/format変換を行いcanonical originalは変更しない。
-- UIはcheckerboard等を必須とせず、通常のbrowser image renderingに任せる。
-- resource limitsはalpha有無に関係なく同じ。
+- **reader/canonical formatとしてlossy `VP8` と lossless `VP8L` の両方を許可し、v0.8 normal ingestion writerは原則lossy quality 0.85を使用する。**
+- normal photo ingestionのdefault writer outputはWebP quality 0.85。
+- thumbnail default writer outputはWebP quality 0.8。
+- lossless WebPがcanonical storageへ存在しても、static/metadata-free/dimensions/size等の全invariantを満たせばvalid。
+- restore/exportはlosslessをlossyへ再encodeしない。
+- photoHashはactual stored bytesをidentityとする。
+- 将来input特性に応じてlosslessを選択するwriter optimizationを導入しても、reader format変更なしで対応可能。
+- losslessでも5MiB/256KiB上限を超える場合はnormal ingestion時に既定writer strategyでcanonical sizeへ収める必要がある。
+- writerがどの条件でlosslessを選ぶかはv0.8では追加しない。
 
-根拠: alphaを禁止すると透明画像のためだけに背景色という新たなcanonical ruleが必要になり、元画像の意味を不要に変更する。WebPはalphaを正式に扱え、既存pipelineとも自然に整合するため、静止画の範囲で許可する方が単純。
+根拠: readerまでlossy限定にすると既にallowlistした`VP8L`を使えず、将来のwriter最適化にもformat migrationが必要になる。一方v0.8 writerは写真用途に適した現行quality設定を維持すれば実装を増やさずに済む。
