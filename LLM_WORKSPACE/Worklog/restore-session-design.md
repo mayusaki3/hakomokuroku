@@ -889,29 +889,54 @@ extension/MIMEはmetadataでありuntrusted inputのactual formatを保証しな
 ### 根拠
 現在の箱目録では撮影metadataをBusiness機能として利用しない一方、EXIF GPS等は不要なprivacy leakになり得る。orientationだけをpixelへ反映しmetadataを除去することで表示結果を維持しつつ、canonical formatとbackupを単純化できる。
 
-## 56. 次の設計判断候補
+## 56. WebP chunk allowlist — 確定
 
-**WebP container内の未知/不要chunkをどこまで許可するか**を確定する必要がある。
+**確定:** canonical stored WebPは静止画像表現に必要な既知chunkのみをallowlistし、unknown/不要chunkをrejectする。
+
+### 許可するchunk
+- simple lossy WebP: `VP8 `
+- simple lossless WebP: `VP8L`
+- extended static WebP: `VP8X`
+- extended lossy alphaで必要な場合: `ALPH`
+- `VP8X`使用時のimage payloadとして仕様上妥当な`VP8 `または`VP8L`
+
+### 禁止するchunk
+- animation: `ANIM`, `ANMF`
+- metadata/color profile: `EXIF`, `XMP `, `ICCP`
+- canonical photo specで明示的に許可していないunknown/unrecognized chunk
+
+### validation
+- RIFF/WebP containerのchunk boundary、declared length、padding、組み合わせ/order等を、採用parser/libraryで安全に検証可能な範囲でstructural validationする。
+- simple/extended WebPとして不正なchunk combinationはrejectする。
+- signature/chunk allowlistだけではなく、既確定のactual decode、dimensions、hash、size validationも全て必要。
+- export writerがlocal/server/generated binaryを採用するときと、restore PREPARINGで同じallowlistを適用する。
+- normal ingestion/re-encode outputがこのallowlist内に収まることをtestで保証する。
+- 将来必要なWebP extension chunkが増えた場合はcanonical photo specificationを更新し、明示的にallowlistへ追加する。unknown chunkを自動許可しない。
+
+### 根拠
+canonical storageは任意WebP fileのarchiveではなく、箱目録が生成・利用する静止写真の内部形式である。必要な静止画像chunkだけに限定すれば、lossy/lossless/alphaを維持しながらprivacy/security/parser attack surfaceを抑え、export/restore/normal ingestionで同じcanonical invariantを共有できる。
+
+## 57. 次の設計判断候補
+
+**canonical stored WebPでalpha channel（透明度）を許可するか**を確定する必要がある。
 
 背景:
-- WebP RIFF containerには`VP8 ` / `VP8L` / `VP8X`等の画像本体/feature chunksのほか、metadataやanimation等のoptional chunks、将来拡張/unknown chunksが入り得る。
-- animationとEXIF/XMP/ICCPは禁止と確定した。
-- 「decodeできればunknown chunkを許可」するとcanonical bytesの自由度とparser attack surfaceが増える。
-- 一方、WebP仕様上正当なfeature chunkまで過度に禁止するとlossy/lossless/alpha等の正常画像を拒否する可能性がある。
+- 箱目録の主用途はcamera/photo画像で、通常alphaは不要。
+- ただし端末の画像選択からPNG等を登録した場合、透明部分を持つ入力があり得る。
+- 現在のcanvas→WebP pipelineでは透明canvasをそのままencodeするとalphaが保持される可能性がある。
+- alphaを許可すると`VP8X + ALPH + VP8`等をcanonical allowlistに含める必要がある。
+- alphaを禁止する場合はcanonical conversion時に背景色へflattenする規則が必要で、背景色選択がpixel/photoHashへ影響する。
 
 推奨案:
-- **canonical stored WebPは、静止画表示に必要な既知chunkだけをallowlistする。unknown/不要chunkはrejectする。**
-- 許可候補:
-  - simple lossy: `VP8 `
-  - simple lossless: `VP8L`
-  - extended static: `VP8X` + 必要に応じて`ALPH` + `VP8 `/ `VP8L`
-- 禁止:
-  - `ANIM`, `ANMF`
-  - `EXIF`, `XMP `, `ICCP`
-  - unknown/unrecognized chunks
-- RIFF/WebP chunk ordering/combinationも利用するWebP parser/libraryで可能な範囲でstructural validationする。
-- export/restore双方で同じallowlist。
-- normal ingestionのre-encode outputもこのallowlistへ収まることをtestする。
-- 将来WebP拡張chunkを必要とする場合はcanonical photo specを更新して明示的にallowlistへ追加する。
+- **v0.8ではalphaを許可する。**
+- static WebPのalphaはcanonical photoとしてvalid。
+- alpha有無はBusiness metadataとして別管理しない。
+- transparent inputはcanonical conversionで透明度を保持してよい。
+- thumbnailもalpha保持を許可する。
+- `VP8X + ALPH + VP8`、およびWebP仕様上lossless alphaを内包する`VP8L`を許可する。
+- alphaを理由に背景色へflattenしてpixelを変更しない。
+- Vision providerへ送る際にalpha対応が必要なら、そのadapter側で一時的なflatten/format変換を行いcanonical originalは変更しない。
+- UIはcheckerboard等を必須とせず、通常のbrowser image renderingに任せる。
+- resource limitsはalpha有無に関係なく同じ。
 
-根拠: canonical storageは任意WebPファイルの保管庫ではなく、箱目録が生成・利用する静止写真の内部形式である。必要な静止画chunkだけに絞ればprivacy/security/resource面を単純化しつつ、lossy/lossless/alphaの実用的な静止WebPは維持できる。
+根拠: alphaを禁止すると透明画像のためだけに背景色という新たなcanonical ruleが必要になり、元画像の意味を不要に変更する。WebPはalphaを正式に扱え、既存pipelineとも自然に整合するため、静止画の範囲で許可する方が単純。
