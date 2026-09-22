@@ -814,26 +814,44 @@ backupは将来復元可能なself-contained snapshotである必要がある。
 ### 根拠
 thumbnailはBusiness identityではないが、self-contained backupから復元後に一覧等で直接利用するbinaryである。writer側ではinvalid thumbnailをoriginalから修復して完全なbackupを生成でき、reader側では受け取ったbackupそのものをstrictに検証することで、integrityと表示可能性の双方を維持できる。
 
-## 52. 次の設計判断候補
+## 52. original decoded dimensions — 確定
 
-**original photoのdecoded dimensionsに上限を設けるか**を確定する必要がある。
+**確定:** canonical stored originalのdecoded dimensionsはexport/restore双方で検証し、max dimension 1600px以下を必須とする。
+
+- decoded `width` / `height` はpositive integerでなければならない。
+- 0、negative、non-finite、decoderがdimensionを確定できない画像はinvalid。
+- `max(width, height) <= 1600`。
+- aspect ratioにbackup固有の追加制限は設けない。
+- decoder/browser/library自身のresource safety limitはこのcanonical constraintとは別に適用してよい。
+- export時はphotoHash一致、actual size <= 5MiB、WebP decode成功に加えてdimension constraintを検証する。
+- restore PREPARINGでもchecksum/photoHash/size/decode/dimensionsを同じcanonical constraintで検証する。
+- 1600px超のoriginalは5MiB以下かつdecode可能でもcanonical stored originalではないためrejectする。
+- backup export処理内で1600px超originalを勝手にresize/re-encodeして別photoHashへ変換しない。
+- 修復が必要な場合はnormal Business photo replacement/re-registrationとして新しいcanonical photoを作成する。
+- thumbnailは既確定どおりpositive dimensionsかつmax dimension 400px以下。
+- 将来original resolution policyを変更する場合はBusiness/photo canonical specification変更として扱い、backup reader compatibilityを明示する。
+
+### 根拠
+canonical ingestionがmax 1600pxである以上、backup経路だけcanonical invariantを緩める理由はない。またcompressed byte sizeだけではdecode時のmemory/resource消費を十分制限できないため、decoded dimensionsの検証はuntrusted backupに対するresource safetyにもなる。
+
+## 53. 次の設計判断候補
+
+**original/thumbnailのWebP形式判定を、拡張子やMIMEではなく実際のdecoded formatまで要求するか**を確定する必要がある。
 
 背景:
-- stored originalはcanonical ingestionでmax dimension 1600px、no upscale、WebP quality 0.85として生成する方針がある。
-- byte size上限5MiBとdecode成功だけでは、異常に大きいdimensionsを持つ圧縮率の高い画像によるdecode memory/resource負荷を十分に防げない。
-- backup restoreはuntrusted inputを扱うため、decompression bomb的なresource abuseも考慮する必要がある。
-- normal canonical photoであれば1600pxを超える必要はない。
+- v1 backup pathは`.webp`固定で、original/thumbnail formatもWebP固定と確定済み。
+- browser decoderによってはBlob typeや拡張子に関係なくJPEG/PNG等をdecodeできるため、「decode成功」だけではWebP format invariantを保証できない。
+- untrusted backupでは`photos/<id>.webp`というpathだけを信用できない。
+- file signature/RFC container validationと実decodeを組み合わせれば、format spoofingを防げる。
 
 推奨案:
-- **original decoded dimensionsもcanonical ingestion constraintとしてmax dimension 1600px以下を必須にする。**
-- width/heightはpositive integer、0/invalid dimension reject。
-- `max(width,height) <= 1600`。
-- aspect ratioそのものに追加制限は設けない。ただしdecoder/browser/library側の安全限界は別途適用できる。
-- export時、hash/size/decode成功に加えてdimension constraintを検証する。
-- restore PREPARINGでも同じconstraintを検証する。
-- 1600px超のoriginalは、たとえ5MiB以下でdecode可能でもcanonical stored originalではないためinvalidとして扱う。
-- backup export時に勝手に縮小して別photoHashへ変換しない。元Businessのphoto identityを変更するため、修復は通常のphoto replacement/re-registrationとして行う。
-- thumbnailは既確定どおりmax dimension 400px以下。
-- 将来original resolution policyを変更する場合はBusiness/photo canonical specificationの変更として扱い、backup reader compatibilityも明示する。
+- **actual binaryがWebP containerであることをmagic/signatureで検証し、その上でdecode validationを行う。**
+- minimum format checkとしてRIFF containerの`RIFF` + size field + `WEBP` signatureを検証する。
+- signatureだけでvalid imageとはみなさず、既確定のdecode/dimensions/hash/size validationも全て行う。
+- Blob MIME/typeやfilename extensionはformat判定の根拠にしない。
+- export writerが生成/採用するoriginal/thumbnailにも同じformat validationを適用する。
+- restore PREPARINGではpathが`.webp`でもactual binaryがWebPでなければrejectする。
+- malformed RIFF/WEBP containerはdecoderが偶然受理する場合でも安全側でrejectできるよう、利用ライブラリで可能な範囲のcontainer validationを行う。
+- 将来AVIF等を採用する場合はbackup schema/version compatibilityとして明示する。
 
-根拠: canonical ingestionが1600px上限なら、backupだけ緩いdimensionを許可する理由はない。byte sizeだけではdecode時resource消費を制限できないため、dimensionsもvalidationすることでuntrusted backupに対するresource safetyとcanonical photo invariantを同時に守れる。
+根拠: extension/MIMEはmetadataに過ぎず、untrusted inputのactual format保証にはならない。WebP固定format contractを守るにはbinary signature/containerとdecode結果の両方を検証するのが一貫している。
