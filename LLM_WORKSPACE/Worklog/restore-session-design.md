@@ -870,26 +870,48 @@ extension/MIMEはmetadataでありuntrusted inputのactual formatを保証しな
 ### 根拠
 箱目録のphotoは箱・アイテム・場所の静止記録用途でありanimation保持の製品要件がない。static-onlyとすることでframe数/duration/decode負荷等の追加attack surfaceを避け、thumbnail生成、Vision、backup validationを単純かつ一貫して維持できる。
 
-## 55. 次の設計判断候補
+## 55. WebP metadata policy — 確定
 
-**WebP metadata chunk（EXIF / XMP / ICCP）をcanonical stored originalに残すか**を確定する必要がある。
+**確定:** canonical stored original / thumbnailはEXIF・XMP・ICCP等のmetadata chunkを保持しない。orientationだけcanonical pixelへ反映し、metadata自体は除去する。
+
+- ingestion時にsource orientationをdecodeしてpixel orientationへ焼き込む。
+- EXIF Orientationはcanonical stored WebPへ保持しない。
+- EXIF GPS、camera model、撮影日時その他EXIF metadataをBusiness情報として自動保存しない。
+- XMP metadataをcanonical stored binaryへ保持しない。
+- thumbnailもmetadataなしのstatic WebPとする。
+- ICCP/color profileもv0.8ではcanonical binaryへ保持しない。color-management metadata preservationは製品要件外とする。
+- canonical writer/re-encode pipelineは可能な限りmetadata chunkを生成しない。
+- actual WebP container validationで`EXIF`、`XMP `、`ICCP` chunkを検出したcanonical original/thumbnailはinvalidとする。
+- export/restore処理はmetadataをその場で削除してphotoHashを変更しない。既にcanonical storage/backup内に禁止metadataを含むbinaryがある場合はinvalid dataとして扱う。
+- 修復はnormal photo replacement/re-registrationを通じてmetadata-free canonical binaryを生成する。
+- 将来color profileや撮影metadataを利用する場合はprivacy、UI、Business schema、canonical photo format、backup compatibilityを含む別仕様として導入する。
+
+### 根拠
+現在の箱目録では撮影metadataをBusiness機能として利用しない一方、EXIF GPS等は不要なprivacy leakになり得る。orientationだけをpixelへ反映しmetadataを除去することで表示結果を維持しつつ、canonical formatとbackupを単純化できる。
+
+## 56. 次の設計判断候補
+
+**WebP container内の未知/不要chunkをどこまで許可するか**を確定する必要がある。
 
 背景:
-- current image pipelineはbrowser canvasでorientation適用後にWebPへ再encodeするため、通常は元画像のEXIF/XMP等が落ちる想定。
-- 箱目録では位置情報・撮影機器情報等のmetadataをBusiness要件として利用していない。
-- EXIFにはGPS等のprivacy-sensitive dataが含まれる可能性がある。
-- ICC profileを保持すると表示色の再現性に寄与する場合があるが、browser/canvas再encodeでの挙動は実装依存。
-- backupはstored original bytesをそのまま保持するため、canonical storageにmetadataを許すとbackupにも含まれる。
+- WebP RIFF containerには`VP8 ` / `VP8L` / `VP8X`等の画像本体/feature chunksのほか、metadataやanimation等のoptional chunks、将来拡張/unknown chunksが入り得る。
+- animationとEXIF/XMP/ICCPは禁止と確定した。
+- 「decodeできればunknown chunkを許可」するとcanonical bytesの自由度とparser attack surfaceが増える。
+- 一方、WebP仕様上正当なfeature chunkまで過度に禁止するとlossy/lossless/alpha等の正常画像を拒否する可能性がある。
 
 推奨案:
-- **canonical stored original / thumbnailはEXIF・XMP等のapplication metadataを保持しない方針とし、ingestion時のre-encodeで除去する。**
-- orientationはdecode時に適用してpixel orientationへ焼き込み、EXIF Orientation自体は保持しない。
-- GPS、camera model、timestamp等のEXIF metadataをBusiness情報として自動保存しない。
-- XMP等も保持しない。
-- thumbnailはmetadataなし。
-- ICCPについてもv0.8ではcanonical binary simplicityを優先し、保持を必須としない。canonical ingestion outputに残存させない方針を基本とする。
-- export/restoreはmetadataを新たに追加/削除してphotoHashを変えず、既にcanonical stored binaryがmetadata policyに違反していればinvalid dataとして扱う。
-- WebP container validationでEXIF/XMP/ICCP chunkの禁止を検証可能ならrejectする。
-- 将来color-managementや撮影metadata利用が必要になった場合はprivacy/UI/schemaを含め別仕様として導入する。
+- **canonical stored WebPは、静止画表示に必要な既知chunkだけをallowlistする。unknown/不要chunkはrejectする。**
+- 許可候補:
+  - simple lossy: `VP8 `
+  - simple lossless: `VP8L`
+  - extended static: `VP8X` + 必要に応じて`ALPH` + `VP8 `/ `VP8L`
+- 禁止:
+  - `ANIM`, `ANMF`
+  - `EXIF`, `XMP `, `ICCP`
+  - unknown/unrecognized chunks
+- RIFF/WebP chunk ordering/combinationも利用するWebP parser/libraryで可能な範囲でstructural validationする。
+- export/restore双方で同じallowlist。
+- normal ingestionのre-encode outputもこのallowlistへ収まることをtestする。
+- 将来WebP拡張chunkを必要とする場合はcanonical photo specを更新して明示的にallowlistへ追加する。
 
-根拠: 現在の製品要件でmetadataを保持する利益が小さい一方、GPS等のprivacy leakとformat complexityを増やす。orientationだけpixelへ反映しmetadataを除去すれば、表示結果を維持しつつbackupへ不要な撮影情報を持ち込まない。
+根拠: canonical storageは任意WebPファイルの保管庫ではなく、箱目録が生成・利用する静止写真の内部形式である。必要な静止画chunkだけに絞ればprivacy/security/resource面を単純化しつつ、lossy/lossless/alphaの実用的な静止WebPは維持できる。
