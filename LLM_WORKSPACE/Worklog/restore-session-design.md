@@ -834,24 +834,44 @@ thumbnailはBusiness identityではないが、self-contained backupから復元
 ### 根拠
 canonical ingestionがmax 1600pxである以上、backup経路だけcanonical invariantを緩める理由はない。またcompressed byte sizeだけではdecode時のmemory/resource消費を十分制限できないため、decoded dimensionsの検証はuntrusted backupに対するresource safetyにもなる。
 
-## 53. 次の設計判断候補
+## 53. WebP actual format validation — 確定
 
-**original/thumbnailのWebP形式判定を、拡張子やMIMEではなく実際のdecoded formatまで要求するか**を確定する必要がある。
+**確定:** original/thumbnailはfilename extensionやBlob MIMEだけではなく、actual binaryがWebP containerであることを検証し、その上で既確定のdecode/hash/size/dimensions validationを行う。
+
+- v1 backupのoriginal/thumbnail actual formatはWebP固定。
+- pathの`.webp`、Blob `type`、HTTP `Content-Type`は補助metadataであり、format判定のauthoritative sourceとしない。
+- minimum binary signature checkとして先頭RIFF headerの`RIFF`、RIFF size field、`WEBP` FourCCを検証する。
+- declared RIFF container sizeとactual entry sizeの整合を、利用decoder/libraryで安全に確認可能な範囲で検証する。
+- signature一致だけでvalid imageとはみなさない。
+- originalはphotoHash、size <= 5MiB、WebP decode、positive dimensions、max dimension <= 1600pxを全て要求する。
+- thumbnailはthumbnailHash、size <= 256KiB、WebP decode、positive dimensions、max dimension <= 400pxを全て要求する。
+- export writerがlocal/server/generated binaryを採用する際にも同じactual-format validationを行う。
+- restore PREPARINGではpathが`.webp`でもactual binaryがWebPでなければrejectする。
+- decoderがformat sniffingでJPEG/PNG等をdecodeできてもWebP signature/containerを満たさなければrejectする。
+- malformed RIFF/WEBP containerはdecoder/libraryで可能な範囲のstructural validationを行い、ambiguous/unsafeなものはrejectする。
+- 将来AVIF等を採用する場合はBusiness/photo canonical specificationおよびbackup schema/version compatibilityとして明示する。
+
+### 根拠
+extension/MIMEはmetadataでありuntrusted inputのactual formatを保証しない。v1 format contractをWebP固定とする以上、binary container identityと実decodeの両方を検証することでformat spoofingを防ぎ、canonical photo invariantをbackup/export/restoreで共通化できる。
+
+## 54. 次の設計判断候補
+
+**WebP animationをcanonical stored photoとして許可するか**を確定する必要がある。
 
 背景:
-- v1 backup pathは`.webp`固定で、original/thumbnail formatもWebP固定と確定済み。
-- browser decoderによってはBlob typeや拡張子に関係なくJPEG/PNG等をdecodeできるため、「decode成功」だけではWebP format invariantを保証できない。
-- untrusted backupでは`photos/<id>.webp`というpathだけを信用できない。
-- file signature/RFC container validationと実decodeを組み合わせれば、format spoofingを防げる。
+- WebP containerは静止画だけでなくanimated WebPも表現できる。
+- 現在の写真用途は箱/アイテム/場所の静止写真であり、thumbnail生成・Vision・表示・hash/size/dimension validationも静止画前提で設計されている。
+- browser canvas経由のcanonical ingestionは通常first/current frameを静止WebPとして再encodeするため、正常経路ではanimationを保持しない想定。
+- untrusted backup/server dataでanimated WebPを許すと、frame count/duration/decode resourceの追加制約が必要になる。
 
 推奨案:
-- **actual binaryがWebP containerであることをmagic/signatureで検証し、その上でdecode validationを行う。**
-- minimum format checkとしてRIFF containerの`RIFF` + size field + `WEBP` signatureを検証する。
-- signatureだけでvalid imageとはみなさず、既確定のdecode/dimensions/hash/size validationも全て行う。
-- Blob MIME/typeやfilename extensionはformat判定の根拠にしない。
-- export writerが生成/採用するoriginal/thumbnailにも同じformat validationを適用する。
-- restore PREPARINGではpathが`.webp`でもactual binaryがWebPでなければrejectする。
-- malformed RIFF/WEBP containerはdecoderが偶然受理する場合でも安全側でrejectできるよう、利用ライブラリで可能な範囲のcontainer validationを行う。
-- 将来AVIF等を採用する場合はbackup schema/version compatibilityとして明示する。
+- **v0.8/v1 backupおよびcanonical stored photoはstatic WebPのみ許可し、animated WebPをrejectする。**
+- WebP container parsingで`VP8X` animation flag / `ANIM` / `ANMF` chunk等を検出した場合はinvalid canonical photoとする。
+- original/thumbnailともanimation禁止。
+- export/restore双方で同じvalidation。
+- normal ingestionでanimated input（GIF/animated WebP等）を受ける場合は、canonical conversion時に単一静止frameへ変換して新しいstatic WebPとして保存する方針をphoto ingestion specで明示する。
+- animation frame count/duration等はBusiness metadataに持たない。
+- backup処理中にanimated stored originalを勝手にfirst-frame変換してphotoHashを変えない。既にcanonical storageへ入っているanimated WebPはinvalid dataとして通常のphoto replacement/re-registrationで修復する。
+- 将来animationをBusiness機能として導入する場合はphoto format/spec/schema/resource limitsを別途拡張する。
 
-根拠: extension/MIMEはmetadataに過ぎず、untrusted inputのactual format保証にはならない。WebP固定format contractを守るにはbinary signature/containerとdecode結果の両方を検証するのが一貫している。
+根拠: 箱目録のphotoは静止記録用途であり、animationを保持する製品要件がない。static-onlyにすればdecoder resource safety、thumbnail生成、Vision、backup validationを単純かつ一貫して保てる。
