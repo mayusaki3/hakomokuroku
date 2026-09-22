@@ -854,24 +854,42 @@ canonical ingestionがmax 1600pxである以上、backup経路だけcanonical in
 ### 根拠
 extension/MIMEはmetadataでありuntrusted inputのactual formatを保証しない。v1 format contractをWebP固定とする以上、binary container identityと実decodeの両方を検証することでformat spoofingを防ぎ、canonical photo invariantをbackup/export/restoreで共通化できる。
 
-## 54. 次の設計判断候補
+## 54. animated WebP — 確定
 
-**WebP animationをcanonical stored photoとして許可するか**を確定する必要がある。
+**確定:** v0.8のcanonical stored photoおよびbackup v1ではstatic WebPのみ許可し、animated WebPはrejectする。
+
+- original / thumbnailともanimated WebPをcanonical binaryとして許可しない。
+- WebP container validationで`VP8X` animation flag、`ANIM`、`ANMF`等のanimation indicationを検出した場合はinvalidとする。
+- export/restore PREPARING双方で同じstatic-only validationを行う。
+- normal ingestionでanimated GIF / animated WebP等を入力可能とする場合、canonical conversion段階で単一静止frameへ変換し、新しいstatic WebPとして保存する。
+- animation frame count、duration、loop count等をBusiness metadataへ保持しない。
+- backup export処理中に既存animated stored originalをfirst-frameへ自動変換しない。変換するとphotoHash/Business snapshot identityが変わるため、invalid canonical dataとして通常のphoto replacement/re-registrationで修復する。
+- thumbnailも常にsingle-frame static WebPとして生成する。
+- 将来animationをBusiness機能として導入する場合はphoto canonical format、resource limits、thumbnail/Vision behavior、backup schema/version compatibilityを明示的に拡張する。
+
+### 根拠
+箱目録のphotoは箱・アイテム・場所の静止記録用途でありanimation保持の製品要件がない。static-onlyとすることでframe数/duration/decode負荷等の追加attack surfaceを避け、thumbnail生成、Vision、backup validationを単純かつ一貫して維持できる。
+
+## 55. 次の設計判断候補
+
+**WebP metadata chunk（EXIF / XMP / ICCP）をcanonical stored originalに残すか**を確定する必要がある。
 
 背景:
-- WebP containerは静止画だけでなくanimated WebPも表現できる。
-- 現在の写真用途は箱/アイテム/場所の静止写真であり、thumbnail生成・Vision・表示・hash/size/dimension validationも静止画前提で設計されている。
-- browser canvas経由のcanonical ingestionは通常first/current frameを静止WebPとして再encodeするため、正常経路ではanimationを保持しない想定。
-- untrusted backup/server dataでanimated WebPを許すと、frame count/duration/decode resourceの追加制約が必要になる。
+- current image pipelineはbrowser canvasでorientation適用後にWebPへ再encodeするため、通常は元画像のEXIF/XMP等が落ちる想定。
+- 箱目録では位置情報・撮影機器情報等のmetadataをBusiness要件として利用していない。
+- EXIFにはGPS等のprivacy-sensitive dataが含まれる可能性がある。
+- ICC profileを保持すると表示色の再現性に寄与する場合があるが、browser/canvas再encodeでの挙動は実装依存。
+- backupはstored original bytesをそのまま保持するため、canonical storageにmetadataを許すとbackupにも含まれる。
 
 推奨案:
-- **v0.8/v1 backupおよびcanonical stored photoはstatic WebPのみ許可し、animated WebPをrejectする。**
-- WebP container parsingで`VP8X` animation flag / `ANIM` / `ANMF` chunk等を検出した場合はinvalid canonical photoとする。
-- original/thumbnailともanimation禁止。
-- export/restore双方で同じvalidation。
-- normal ingestionでanimated input（GIF/animated WebP等）を受ける場合は、canonical conversion時に単一静止frameへ変換して新しいstatic WebPとして保存する方針をphoto ingestion specで明示する。
-- animation frame count/duration等はBusiness metadataに持たない。
-- backup処理中にanimated stored originalを勝手にfirst-frame変換してphotoHashを変えない。既にcanonical storageへ入っているanimated WebPはinvalid dataとして通常のphoto replacement/re-registrationで修復する。
-- 将来animationをBusiness機能として導入する場合はphoto format/spec/schema/resource limitsを別途拡張する。
+- **canonical stored original / thumbnailはEXIF・XMP等のapplication metadataを保持しない方針とし、ingestion時のre-encodeで除去する。**
+- orientationはdecode時に適用してpixel orientationへ焼き込み、EXIF Orientation自体は保持しない。
+- GPS、camera model、timestamp等のEXIF metadataをBusiness情報として自動保存しない。
+- XMP等も保持しない。
+- thumbnailはmetadataなし。
+- ICCPについてもv0.8ではcanonical binary simplicityを優先し、保持を必須としない。canonical ingestion outputに残存させない方針を基本とする。
+- export/restoreはmetadataを新たに追加/削除してphotoHashを変えず、既にcanonical stored binaryがmetadata policyに違反していればinvalid dataとして扱う。
+- WebP container validationでEXIF/XMP/ICCP chunkの禁止を検証可能ならrejectする。
+- 将来color-managementや撮影metadata利用が必要になった場合はprivacy/UI/schemaを含め別仕様として導入する。
 
-根拠: 箱目録のphotoは静止記録用途であり、animationを保持する製品要件がない。static-onlyにすればdecoder resource safety、thumbnail生成、Vision、backup validationを単純かつ一貫して保てる。
+根拠: 現在の製品要件でmetadataを保持する利益が小さい一方、GPS等のprivacy leakとformat complexityを増やす。orientationだけpixelへ反映しmetadataを除去すれば、表示結果を維持しつつbackupへ不要な撮影情報を持ち込まない。
