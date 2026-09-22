@@ -933,25 +933,44 @@ canonical storageは任意WebP fileのarchiveではなく、箱目録が生成�
 ### 根拠
 alphaを禁止するとtransparent sourceのためだけに背景色選択という追加canonical ruleが必要になり、元画像の意味/pixelsを不要に変更する。WebPはstatic alphaを正式に扱えるため、静止画の範囲で許可する方がnormal ingestion・backup・displayを単純に保てる。
 
-## 58. 次の設計判断候補
+## 58. lossy / lossless WebP — 確定
 
-**canonical stored originalをlossy WebPとlossless WebPの両方許可するか、それともwriter出力をlossyに固定するか**を確定する必要がある。
+**確定:** canonical readerはstatic lossy WebP（`VP8 `）とstatic lossless WebP（`VP8L`）の両方を許可し、v0.8 normal ingestion writerは原則として現行のlossy WebPを生成する。
+
+- originalのv0.8 default writerはWebP quality 0.85。
+- thumbnailのv0.8 default writerはWebP quality 0.8。
+- lossless WebPもstatic、metadata-free、allowlisted chunks、decode可能、dimension/size制約等の全canonical invariantを満たせばvalid canonical stored binaryとする。
+- export/restoreはvalid lossless original/thumbnailをlossyへre-encodeしない。
+- `photoHash` / `thumbnailHash`はactual stored/exported bytesから計算する。
+- losslessであること自体をBusiness metadataへ保存しない。
+- v0.8 writerにinput特性によるlossy/lossless自動選択ロジックは追加しない。
+- 将来、screenshot/text/graphic等にlossless writer optimizationを追加しても、既存reader format contract内で対応可能。
+- losslessであってもoriginal <= 5MiB、thumbnail <= 256KiB等のresource limitsを緩和しない。
+- normal ingestion writerがsize上限を満たせない場合の処理はphoto ingestion specificationで別途確定する。
+
+### 根拠
+readerをlossy限定にするとWebPが正式に持つlossless static representationを不必要に排除し、将来のwriter最適化にもformat migrationが必要になる。一方v0.8 writerは写真主体の現行quality設定を維持することで追加実装を避けられる。
+
+## 59. 次の設計判断候補
+
+**normal photo ingestionでWebP変換後のoriginalが5MiB上限を超えた場合の処理**を確定する必要がある。
 
 背景:
-- current canonical ingestionはcanvas `toBlob("image/webp", 0.85)`相当で、通常はlossy WebPを生成する想定。
-- chunk allowlistでは`VP8L`も許可候補として確定しているため、現状のままだとreaderはlosslessもcanonicalとして受理する。
-- transparent graphics/text/screenshotではlosslessが品質上有利な場合がある一方、写真主体ではfile sizeが増えやすい。
-- backupはcanonical stored bytesをそのまま保持するため、readerが許可するformatとnormal writerが生成するformatの関係を明確にした方がよい。
+- canonical originalはmax dimension 1600px、default WebP quality 0.85、max 5MiBと確定している。
+- 通常の写真では1600px/q0.85なら5MiBを超える可能性は低いが、ノイズの多い画像やencoder差によっては超過し得る。
+- canonical writerが5MiB超binaryを生成したまま保存することはできない。
+- 単純rejectだけにすると、利用者が別途画像加工しないと登録できない場合がある。
 
 推奨案:
-- **reader/canonical formatとしてlossy `VP8` と lossless `VP8L` の両方を許可し、v0.8 normal ingestion writerは原則lossy quality 0.85を使用する。**
-- normal photo ingestionのdefault writer outputはWebP quality 0.85。
-- thumbnail default writer outputはWebP quality 0.8。
-- lossless WebPがcanonical storageへ存在しても、static/metadata-free/dimensions/size等の全invariantを満たせばvalid。
-- restore/exportはlosslessをlossyへ再encodeしない。
-- photoHashはactual stored bytesをidentityとする。
-- 将来input特性に応じてlosslessを選択するwriter optimizationを導入しても、reader format変更なしで対応可能。
-- losslessでも5MiB/256KiB上限を超える場合はnormal ingestion時に既定writer strategyでcanonical sizeへ収める必要がある。
-- writerがどの条件でlosslessを選ぶかはv0.8では追加しない。
+- **dimension 1600pxを維持したままqualityを段階的に下げ、それでも5MiBへ収まらない場合だけdimensionを段階的に縮小する。**
+- first attempt: max1600px / quality 0.85。
+- size >5MiBならqualityを有限回だけ下げて再encodeする。例: 0.80 → 0.75 → 0.70。
+- それでも超える場合はmax dimensionを段階的に縮小し、各段階で既定qualityから有限retryする。具体的なdimension/quality ladderはphoto ingestion test/specで固定する。
+- 最低quality/最低dimensionを下回っても5MiBへ収まらない場合は`PHOTO_TOO_LARGE`として登録失敗。
+- 無限quality search/binary searchは行わず、決定的な有限candidate sequenceとする。
+- 採用したactual bytesがcanonical originalとなり、そのbytesからphotoHashを計算する。
+- thumbnailは採用後のcanonical originalから生成する。
+- UIでは必要なら「画像を最適化して保存した」ことを表示できるが、通常成功時に警告を必須とはしない。
+- original source fileそのものは保存しないため、canonical化後の画質が製品上の保存品質となる。
 
-根拠: readerまでlossy限定にすると既にallowlistした`VP8L`を使えず、将来のwriter最適化にもformat migrationが必要になる。一方v0.8 writerは写真用途に適した現行quality設定を維持すれば実装を増やさずに済む。
+根拠: 5MiB上限をcanonical invariantとして守りつつ、一般的な大容量/高entropy画像を利用者操作なしで可能な限り登録できる。有限candidate sequenceならbrowser encoder差があっても処理上限とtest条件を明確にできる。
