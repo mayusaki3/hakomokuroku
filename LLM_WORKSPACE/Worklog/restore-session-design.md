@@ -1077,28 +1077,49 @@ thumbnailは表示補助のderived representationなので、originalよりsize�
 ### 根拠
 画像decode/encode/hashはCPU/codec時間が長くIndexedDB transaction内で実行すべきではない。一方、準備完了後のbinary・Business reference・contentHash・Outbox・upload stateを短いtransactionで一括commitすれば、offline-firstでも参照切れやoriginalだけ/parentだけが残るpartial registrationを防止できる。
 
-## 63. 次の設計判断候補
+## 63. PhotoUploadState / eviction protection — 確定
 
-**未upload originalをlocal evictionから保護する期間と、server upload済み判定のauthoritative state**を確定する必要がある。
+**確定:** localに`PhotoUploadState = PENDING | UPLOADING | CONFIRMED`を持ち、serverから同一`photoId/photoHash`の保存成功を確認した後にのみ`CONFIRMED`へ遷移する。`CONFIRMED`前のBusiness参照中originalはeviction禁止とする。
+
+### state transition
+- canonical local photo commit時: `PENDING`。
+- sync workerがupload処理を開始するとき: `UPLOADING`へ遷移可能。
+- app/browser crash、worker interruption、timeout等で`UPLOADING`のまま残った場合はretryable stateとして扱う。
+- server upload APIがsame `photoId` + same `photoHash`の保存済み状態をsuccess/UNCHANGED相当で返した場合もsuccessful confirmationとして扱う。
+- exact matching server success responseを受信した後、short local transactionで`CONFIRMED`へ更新する。
+- local stateをserver confirmationより先に`CONFIRMED`へしない。
+- different hash / photoId collision responseでは`CONFIRMED`へ遷移せず、既確定のcollision recoveryへ進む。
+
+### eviction
+- `PENDING` / `UPLOADING`かつBusinessから参照中のoriginalはlocal唯一copy保護対象でありevict禁止。
+- `CONFIRMED`後のoriginalは通常のreferenced-photo on-demand cache eviction policy対象にできる。
+- parent Push成功をoriginal upload confirmationの代用にしない。
+- server success後、local `CONFIRMED`保存前にcrashした場合は、次回同一upload/存在確認をidempotently再試行して`CONFIRMED`へ収束する。
+- false-negativeな`PENDING`残存は許容するが、server未確認のfalse-positive `CONFIRMED`は許容しない。
+- server側で後日blob missingが判明し、local copyがまだ存在する場合は`PENDING`へ戻して再upload可能とする。
+
+### 根拠
+server存在確認前にlocal唯一copyをevictすると写真を永久消失させる可能性がある。idempotent uploadを利用してfalse-negative PENDINGを安全側として許容し、false-positive CONFIRMEDを禁止すれば、network/crash境界でもdata lossを避けて単純に収束できる。
+
+## 64. 次の設計判断候補
+
+**`PhotoUploadState=CONFIRMED`後にlocal originalがevictされ、その後server blobがmissingになった場合のUI/復旧動作**を確定する必要がある。
 
 背景:
-- section 62で「未uploadかつBusiness参照中のlocal唯一copyはevictしない」と確定した。
-- server upload成功後はoriginalを通常のon-demand cacheとしてevict可能にできる。
-- network response受信とlocal state更新の間でcrashすると、serverには存在するがlocalは未upload扱いのままになる可能性がある。
-- 逆にlocalだけをupload済みと先にmarkすると、serverに存在しないのに唯一copyをevictする危険がある。
+- server GCはcanonical parentから参照されるblobを削除しない設計だが、storage障害/運用不具合等で`PHOTO_BLOB_NOT_AVAILABLE`が起こる可能性は残る。
+- local originalが残っていれば再uploadできるが、CONFIRMED後はcache eviction可能なのでlocal copyも無い場合がある。
+- thumbnailは残っていてもoriginalを復元できる品質/bytes identityではなく、同じphotoHashのoriginalを再生成できない。
+- backupに同じoriginalが存在する可能性はあるが、自動的にユーザーの任意backup fileを検索することはできない。
 
 推奨案:
-- **local `PhotoUploadState`を持ち、serverからphotoId/photoHash一致のupload成功確認を受けた後にのみ`CONFIRMED`へ遷移する。CONFIRMED前はBusiness参照中originalをeviction禁止とする。**
-- state例: `PENDING | UPLOADING | CONFIRMED`。
-- canonical local commit時は`PENDING`。
-- sync worker開始時に`UPLOADING`へしてよいが、crash recoveryでは`UPLOADING`をretryableとして扱う。
-- server upload APIはsame photoId+same photoHashをidempotent success/UNCHANGEDとして返せるため、response前crashでも安全にretry可能。
-- exact matching server success responseを受けた後、short local transactionで`CONFIRMED`へ更新。
-- `CONFIRMED`になったoriginalだけ通常のreferenced-photo cache eviction policy対象にできる。
-- server success後、local CONFIRMED保存前にcrashした場合は再upload/存在確認でidempotently CONFIRMEDへ収束する。
-- localを先にCONFIRMEDへしない。
-- photoId collision/different hashはCONFIRMEDにせず、既確定collision recoveryへ進む。
-- parent Push成功だけをoriginal upload confirmationの代用にしない。
-- server GC等で後日blob missingが判明した場合は既確定`PHOTO_BLOB_NOT_AVAILABLE` flowにより再uploadが必要になるため、local copyが残っていれば再度protected/pendingへ戻せる設計とする。
+- **local originalもserver originalも存在しない場合は自動復元を試みず、photoを「original missing」状態として明示し、ユーザーに元写真の再登録またはbackup restoreを案内する。**
+- thumbnailが利用可能なら一覧/parent表示はthumbnailを継続表示し、original表示要求時にmissing状態を示す。
+- missing originalをthumbnailから再生成して同一photoId/photoHashとして扱わない。
+- ユーザーが新しい元写真を登録する場合はnew photoId/new photoHashのnormal replacementとする。
+- 同じbackupからoriginalをrestoreできる場合はbackup/restoreの通常identity/hash validationを通す。
+- server `PHOTO_BLOB_NOT_AVAILABLE`を検出したclientはlocal original有無を確認し、あれば`PENDING`へ戻して再upload、無ければlocal missing marker/stateを記録する。
+- missing markerはBusiness contentHash/revisionを変更しないruntime/storage-health stateとする。
+- sync自体を永久停止せず、該当photo依存parent Pushだけretry/block reasonを明示する。
+- UIでは「写真データが見つかりません。元写真を再登録するか、バックアップから復元してください」等のactionable messageを出す。
 
-根拠: server existenceを確認する前にlocal唯一copyをevictすると写真を永久消失させ得る。server upload APIのidempotencyを利用し、false-positive CONFIRMEDを避けてfalse-negative PENDINGを許容する方が安全で、crash recoveryも単純になる。
+根拠: thumbnailからoriginal bytesを再構成することはできず、photoHash identityを偽装すべきではない。復元可能なcanonical sourceが存在しない場合はdata lossを隠さず、Business identityを保ったまま明示的な修復操作へ誘導する方が安全。
