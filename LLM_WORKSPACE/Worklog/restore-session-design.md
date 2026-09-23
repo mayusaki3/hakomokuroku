@@ -951,26 +951,61 @@ alphaを禁止するとtransparent sourceのためだけに背景色選択とい
 ### 根拠
 readerをlossy限定にするとWebPが正式に持つlossless static representationを不必要に排除し、将来のwriter最適化にもformat migrationが必要になる。一方v0.8 writerは写真主体の現行quality設定を維持することで追加実装を避けられる。
 
-## 59. 次の設計判断候補
+## 59. normal ingestion original size fallback — 確定
 
-**normal photo ingestionでWebP変換後のoriginalが5MiB上限を超えた場合の処理**を確定する必要がある。
+**確定:** normal photo ingestionでfirst canonical encodeが5MiBを超えた場合、まずmax dimension 1600pxを維持したままqualityを有限段階で下げ、それでも収まらない場合のみmax dimensionを有限段階で縮小する。
+
+- first attemptはmax dimension 1600px / WebP quality 0.85。
+- actual encoded sizeが5MiB以下ならそのbytesをcanonical originalとして採用する。
+- 5MiB超の場合、1600pxを維持してqualityを有限candidate sequenceで下げて再encodeする。
+- 初期quality候補は`0.85 -> 0.80 -> 0.75 -> 0.70`を基本とし、exact ladderはphoto ingestion specification/testで固定する。
+- quality候補を使い切っても5MiB超の場合のみ、max dimensionを有限candidate sequenceで段階的に縮小する。
+- 各dimension段階では定義済みquality candidate sequenceを有限回試行する。
+- 無限retry、continuous binary search、端末性能に応じた非決定的探索は行わない。
+- minimum quality / minimum dimensionの最終candidateでも5MiBを超える場合は`PHOTO_TOO_LARGE`として登録失敗。
+- 採用したactual bytesをcanonical stored originalとし、そのbytesから`photoHash`を計算する。
+- thumbnailは採用済みcanonical originalから生成する。
+- source upload fileそのものはcanonical storageへ保存しない。
+- successful optimizationを通常時にwarning表示することは必須としない。ただしdiagnostic/debug情報として採用dimension/qualityを記録可能とする。
+- backup/export/restoreではこのfallback変換を行わない。既存canonical originalは既確定invariantに適合するかをvalidationするだけとする。
+
+### 根拠
+5MiB canonical invariantを維持しつつ、encoder差や高entropy画像でも利用者による事前加工を可能な限り不要にできる。qualityを先に下げることで解像度を保持し、有限candidate sequenceに限定することで処理時間・test条件・失敗条件を明確にできる。
+
+## 60. 次の設計判断候補
+
+**5MiB fallbackのmax-dimension ladderとminimum quality/dimensionを具体的に固定するか**を確定する必要がある。
 
 背景:
-- canonical originalはmax dimension 1600px、default WebP quality 0.85、max 5MiBと確定している。
-- 通常の写真では1600px/q0.85なら5MiBを超える可能性は低いが、ノイズの多い画像やencoder差によっては超過し得る。
-- canonical writerが5MiB超binaryを生成したまま保存することはできない。
-- 単純rejectだけにすると、利用者が別途画像加工しないと登録できない場合がある。
+- section 59で有限candidate sequenceを使うことは確定したが、dimension側の具体値は未確定。
+- test caseを作るにはwriterが試す順序を固定する必要がある。
+- 写真用途では極端に低qualityへ落とすより、一定点からresolutionを下げた方が視認性を保ちやすい。
+- 箱目録では物品識別やVision利用があるため、最低resolutionを過度に下げるべきではない。
 
 推奨案:
-- **dimension 1600pxを維持したままqualityを段階的に下げ、それでも5MiBへ収まらない場合だけdimensionを段階的に縮小する。**
-- first attempt: max1600px / quality 0.85。
-- size >5MiBならqualityを有限回だけ下げて再encodeする。例: 0.80 → 0.75 → 0.70。
-- それでも超える場合はmax dimensionを段階的に縮小し、各段階で既定qualityから有限retryする。具体的なdimension/quality ladderはphoto ingestion test/specで固定する。
-- 最低quality/最低dimensionを下回っても5MiBへ収まらない場合は`PHOTO_TOO_LARGE`として登録失敗。
-- 無限quality search/binary searchは行わず、決定的な有限candidate sequenceとする。
-- 採用したactual bytesがcanonical originalとなり、そのbytesからphotoHashを計算する。
-- thumbnailは採用後のcanonical originalから生成する。
-- UIでは必要なら「画像を最適化して保存した」ことを表示できるが、通常成功時に警告を必須とはしない。
-- original source fileそのものは保存しないため、canonical化後の画質が製品上の保存品質となる。
+- **quality ladderを`0.85, 0.80, 0.75, 0.70`、max-dimension ladderを`1600, 1440, 1280, 1024`pxに固定する。**
+- candidate順序:
+  1. 1600/0.85
+  2. 1600/0.80
+  3. 1600/0.75
+  4. 1600/0.70
+  5. 1440/0.85
+  6. 1440/0.80
+  7. 1440/0.75
+  8. 1440/0.70
+  9. 1280/0.85
+  10. 1280/0.80
+  11. 1280/0.75
+  12. 1280/0.70
+  13. 1024/0.85
+  14. 1024/0.80
+  15. 1024/0.75
+  16. 1024/0.70
+- first candidate <=5MiBを採用。
+- source imageがcandidate max dimension未満ならupscaleせず、同じdimensionsでquality候補のみ試す。重複dimensions candidateはskip可能。
+- 1024px / q0.70でも5MiB超なら`PHOTO_TOO_LARGE`。
+- q0.70未満、1024px未満へ自動劣化しない。
+- thumbnailは採用originalからmax400/q0.8で生成する。
+- 将来Vision精度/実データで調整する場合はcanonical photo ingestion specのversioned changeとしてtestとともに変更する。
 
-根拠: 5MiB上限をcanonical invariantとして守りつつ、一般的な大容量/高entropy画像を利用者操作なしで可能な限り登録できる。有限candidate sequenceならbrowser encoder差があっても処理上限とtest条件を明確にできる。
+根拠: 1024pxは箱/物品の視認とVision入力に十分な実用下限を確保しやすく、q0.70は過度な圧縮劣化を避ける境界として扱いやすい。最大16回という明確な上限も設けられる。
