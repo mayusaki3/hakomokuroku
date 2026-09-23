@@ -972,40 +972,72 @@ readerをlossy限定にするとWebPが正式に持つlossless static representa
 ### 根拠
 5MiB canonical invariantを維持しつつ、encoder差や高entropy画像でも利用者による事前加工を可能な限り不要にできる。qualityを先に下げることで解像度を保持し、有限candidate sequenceに限定することで処理時間・test条件・失敗条件を明確にできる。
 
-## 60. 次の設計判断候補
+## 60. 5MiB fallback candidate ladder — 確定
 
-**5MiB fallbackのmax-dimension ladderとminimum quality/dimensionを具体的に固定するか**を確定する必要がある。
+**確定:** normal photo ingestionの5MiB fallbackは、quality ladder `0.85, 0.80, 0.75, 0.70`とmax-dimension ladder `1600, 1440, 1280, 1024`pxの有限candidate sequenceに固定する。
+
+### candidate順序
+1. 1600 / 0.85
+2. 1600 / 0.80
+3. 1600 / 0.75
+4. 1600 / 0.70
+5. 1440 / 0.85
+6. 1440 / 0.80
+7. 1440 / 0.75
+8. 1440 / 0.70
+9. 1280 / 0.85
+10. 1280 / 0.80
+11. 1280 / 0.75
+12. 1280 / 0.70
+13. 1024 / 0.85
+14. 1024 / 0.80
+15. 1024 / 0.75
+16. 1024 / 0.70
+
+- 各candidateのdimension値はlong edgeのmax dimension。
+- first actual encoded size <= 5MiB candidateをcanonical originalとして採用する。
+- source imageのlong edgeがcandidate max dimension未満の場合はupscaleしない。
+- no-upscaleにより同一pixel dimensionsとなるdimension段階は重複encodeを避けるためskipしてよい。ただしquality順序は維持する。
+- q0.70未満へ自動劣化しない。
+- max dimension 1024px未満へ自動縮小しない。
+- 最終有効candidateでも5MiB超なら`PHOTO_TOO_LARGE`。
+- 採用originalからmax400px / q0.8のthumbnailを生成する。
+- 実装/testでは最大16 logical candidatesという上限を前提にできる。
+- 将来ladderを変更する場合はcanonical photo ingestion specification/testを同時更新する。
+
+### 根拠
+qualityを先に調整して解像度を維持しつつ、1024pxを自動縮小の下限として箱/物品の視認性と将来のVision入力品質を確保する。q0.70をquality下限とすることで過度な圧縮劣化を避け、最大16候補に限定することで処理時間とtest条件も明確になる。
+
+## 61. 次の設計判断候補
+
+**thumbnail生成後に256KiB上限を超えた場合のfallback strategy**を確定する必要がある。
 
 背景:
-- section 59で有限candidate sequenceを使うことは確定したが、dimension側の具体値は未確定。
-- test caseを作るにはwriterが試す順序を固定する必要がある。
-- 写真用途では極端に低qualityへ落とすより、一定点からresolutionを下げた方が視認性を保ちやすい。
-- 箱目録では物品識別やVision利用があるため、最低resolutionを過度に下げるべきではない。
+- thumbnailはcanonical originalからmax400px / WebP q0.8で生成し、max 256KiBと確定している。
+- 通常の400px画像で256KiBを超える可能性は低いが、高entropy/alpha/encoder差では理論上あり得る。
+- thumbnailはderived representationでBusiness identityではないため、originalと同じ高品質保持を優先する必要はない。
+- export時のthumbnail再生成も同じcanonical generation ruleを使用するため、normal ingestionとexportで同じfallbackを共有した方がよい。
 
 推奨案:
-- **quality ladderを`0.85, 0.80, 0.75, 0.70`、max-dimension ladderを`1600, 1440, 1280, 1024`pxに固定する。**
+- **まず400pxを維持してqualityを下げ、それでも256KiB超ならdimensionを段階的に縮小する有限ladderを定義する。**
+- quality ladder: `0.80, 0.70, 0.60`。
+- max-dimension ladder: `400, 320, 256`px。
 - candidate順序:
-  1. 1600/0.85
-  2. 1600/0.80
-  3. 1600/0.75
-  4. 1600/0.70
-  5. 1440/0.85
-  6. 1440/0.80
-  7. 1440/0.75
-  8. 1440/0.70
-  9. 1280/0.85
-  10. 1280/0.80
-  11. 1280/0.75
-  12. 1280/0.70
-  13. 1024/0.85
-  14. 1024/0.80
-  15. 1024/0.75
-  16. 1024/0.70
-- first candidate <=5MiBを採用。
-- source imageがcandidate max dimension未満ならupscaleせず、同じdimensionsでquality候補のみ試す。重複dimensions candidateはskip可能。
-- 1024px / q0.70でも5MiB超なら`PHOTO_TOO_LARGE`。
-- q0.70未満、1024px未満へ自動劣化しない。
-- thumbnailは採用originalからmax400/q0.8で生成する。
-- 将来Vision精度/実データで調整する場合はcanonical photo ingestion specのversioned changeとしてtestとともに変更する。
+  1. 400/0.80
+  2. 400/0.70
+  3. 400/0.60
+  4. 320/0.80
+  5. 320/0.70
+  6. 320/0.60
+  7. 256/0.80
+  8. 256/0.70
+  9. 256/0.60
+- first <=256KiBを採用。
+- no upscale、duplicate dimensions skip。
+- 256/q0.60でも超える場合は`THUMBNAIL_TOO_LARGE`としてphoto ingestion/exportを失敗させる。
+- thumbnail失敗だけでoriginalをBusinessへcommitしない。normal ingestionではphoto parent updateと必要binary準備前に失敗させる。
+- export regenerationでも同じladderを使用し、backupへ入るactual thumbnail bytesからhash/sizeを計算する。
+- restoreは再生成せずbackup thumbnailをvalidationするだけ。
+- thumbnail quality/dimensionはBusiness contentHashに含めない。
 
-根拠: 1024pxは箱/物品の視認とVision入力に十分な実用下限を確保しやすく、q0.70は過度な圧縮劣化を避ける境界として扱いやすい。最大16回という明確な上限も設けられる。
+根拠: thumbnailは表示補助のderived dataなので、originalより強くsize上限を優先してよい。有限9候補ならresource boundが明確で、normal ingestion/export regenerationの両方で同一規則を再利用できる。
