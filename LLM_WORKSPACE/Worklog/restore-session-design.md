@@ -1039,40 +1039,66 @@ qualityを先に調整して解像度を維持しつつ、1024pxを自動縮小�
 ### 根拠
 thumbnailは表示補助のderived representationなので、originalよりsize制約を優先できる。有限9候補に固定することでresource bound/test条件が明確になり、normal ingestionとbackup export regenerationで同じcanonical generation behaviorを共有できる。
 
-## 62. 次の設計判断候補
+## 62. photo ingestion local atomic boundary — 確定
 
-**photo ingestion中のoriginal/thumbnail生成とBusiness parent updateのatomic boundary**を確定する必要がある。
+**確定:** photo ingestionのdecode/encode/hash/validationはIndexedDB transaction外で完了させ、全binary/metadata準備成功後に1回のshort readwrite transactionでlocal canonical stateへatomic commitする。
+
+### transaction開始前
+- source image decode。
+- source orientationをcanonical pixelsへ適用。
+- original fallback ladderによるcandidate encode。
+- original actual-format / static-only / metadata/chunk / hash / size / dimensions / decode validation。
+- `photoHash`計算。
+- thumbnail fallback ladderによるcandidate encode。
+- thumbnail actual-format / static-only / metadata/chunk / hash / size / dimensions / decode validation。
+- `thumbnailHash` / `thumbnailSize`計算。
+- client-generated `photoId`確定。
+- parentの新しいphoto reference/orderを構成。
+- parent canonical payload / contentHashを計算。
+- ここまでのどこかで失敗した場合、Business / Outbox / canonical binary stateを変更しない。
+
+### 1回のlocal commit transaction内
+- original local binary recordを保存。
+- thumbnail local canonical recordを保存。
+- parent Business photo references/orderを更新。
+- parent `contentHash` / `updatedAt`を更新。
+- parent Outbox CREATE/UPDATEを既確定fold ruleに従ってcreate/fold。
+- original server uploadに必要なpending state/metadataを保存。
+- 必要なreference/index metadataを同transactionで更新。
+- transaction failure時は上記全てrollbackし、partial photo registrationを残さない。
+
+### transaction後
+- server original uploadはnormal sync schedulerが処理する。
+- original upload成功後にparent Pushする既確定dependencyを維持する。
+- remote upload/network failureはlocal Business commitをrollbackしない。Outbox/pending stateからretryする。
+- 未uploadかつBusinessから参照中のoriginalがlocal唯一copyである間は、通常のevictable cacheとして削除しない。
+- thumbnailもparentが参照するcanonical local representationとしてtransactionと整合させる。
+
+### 根拠
+画像decode/encode/hashはCPU/codec時間が長くIndexedDB transaction内で実行すべきではない。一方、準備完了後のbinary・Business reference・contentHash・Outbox・upload stateを短いtransactionで一括commitすれば、offline-firstでも参照切れやoriginalだけ/parentだけが残るpartial registrationを防止できる。
+
+## 63. 次の設計判断候補
+
+**未upload originalをlocal evictionから保護する期間と、server upload済み判定のauthoritative state**を確定する必要がある。
 
 背景:
-- section 61でthumbnail失敗時にoriginalだけをBusinessへcommitしないことは確定した。
-- photoはBusiness parentが`photoId/photoHash`を参照し、original/thumbnail binaryは別storage/server uploadを持つ。
-- offline-firstではlocal IndexedDBへBusiness/Outbox/binaryを整合して保存する必要がある。
-- Blob生成自体はIndexedDB transaction外で行う方が安全で、長時間transactionを保持すべきではない。
-- server uploadはlocal commit後のsync処理なので、local atomicityとremote uploadは分離する必要がある。
+- section 62で「未uploadかつBusiness参照中のlocal唯一copyはevictしない」と確定した。
+- server upload成功後はoriginalを通常のon-demand cacheとしてevict可能にできる。
+- network response受信とlocal state更新の間でcrashすると、serverには存在するがlocalは未upload扱いのままになる可能性がある。
+- 逆にlocalだけをupload済みと先にmarkすると、serverに存在しないのに唯一copyをevictする危険がある。
 
 推奨案:
-- **encode/hash/validationはtransaction外で完了させ、準備済みbinaryとmetadataを1回のshort IndexedDB readwrite transactionでlocal canonical stateへcommitする。**
-- transaction前:
-  - source decode/orientation
-  - original candidate encode
-  - original validation + photoHash
-  - thumbnail candidate encode
-  - thumbnail validation + thumbnailHash/size
-  - photoId確定
-  - parentの新しいphoto reference/orderとcontentHash payloadを準備
-- その全準備が成功した後だけlocal commit transactionを開始。
-- transaction内:
-  - original local binary/cache recordを保存
-  - thumbnail canonical local recordを保存
-  - parent Business photo refsを更新
-  - parent contentHash/updatedAtを更新
-  - parent Outbox CREATE/UPDATEをfold/create
-  - 必要なphoto upload pending metadataを保存
-- transaction失敗時は全local canonical変更をrollback。
-- encode途中/validation失敗時はBusiness/Outboxへ変更なし。
-- server original upload / parent Pushはtransaction後のnormal sync schedulerが行う。
-- sync順序は既確定どおりoriginal upload成功後にparent Push。
-- local binary cacheのeviction対象とcanonical pending-upload originalを区別し、未uploadでBusiness参照中の唯一copyをevictしない。
-- thumbnailもBusiness参照に必要なcanonical local representationとして、parent commitと整合するよう保存する。
+- **local `PhotoUploadState`を持ち、serverからphotoId/photoHash一致のupload成功確認を受けた後にのみ`CONFIRMED`へ遷移する。CONFIRMED前はBusiness参照中originalをeviction禁止とする。**
+- state例: `PENDING | UPLOADING | CONFIRMED`。
+- canonical local commit時は`PENDING`。
+- sync worker開始時に`UPLOADING`へしてよいが、crash recoveryでは`UPLOADING`をretryableとして扱う。
+- server upload APIはsame photoId+same photoHashをidempotent success/UNCHANGEDとして返せるため、response前crashでも安全にretry可能。
+- exact matching server success responseを受けた後、short local transactionで`CONFIRMED`へ更新。
+- `CONFIRMED`になったoriginalだけ通常のreferenced-photo cache eviction policy対象にできる。
+- server success後、local CONFIRMED保存前にcrashした場合は再upload/存在確認でidempotently CONFIRMEDへ収束する。
+- localを先にCONFIRMEDへしない。
+- photoId collision/different hashはCONFIRMEDにせず、既確定collision recoveryへ進む。
+- parent Push成功だけをoriginal upload confirmationの代用にしない。
+- server GC等で後日blob missingが判明した場合は既確定`PHOTO_BLOB_NOT_AVAILABLE` flowにより再uploadが必要になるため、local copyが残っていれば再度protected/pendingへ戻せる設計とする。
 
-根拠: CPU/codec処理をDB transaction外へ出すことでtransaction timeout/lockを避けつつ、Business reference・Outbox・binary metadataを一括commitすればoffline直後でも参照切れやpartial photo registrationを防げる。
+根拠: server existenceを確認する前にlocal唯一copyをevictすると写真を永久消失させ得る。server upload APIのidempotencyを利用し、false-positive CONFIRMEDを避けてfalse-negative PENDINGを許容する方が安全で、crash recoveryも単純になる。
