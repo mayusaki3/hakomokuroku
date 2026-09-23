@@ -1008,36 +1008,71 @@ readerをlossy限定にするとWebPが正式に持つlossless static representa
 ### 根拠
 qualityを先に調整して解像度を維持しつつ、1024pxを自動縮小の下限として箱/物品の視認性と将来のVision入力品質を確保する。q0.70をquality下限とすることで過度な圧縮劣化を避け、最大16候補に限定することで処理時間とtest条件も明確になる。
 
-## 61. 次の設計判断候補
+## 61. thumbnail size fallback ladder — 確定
 
-**thumbnail生成後に256KiB上限を超えた場合のfallback strategy**を確定する必要がある。
+**確定:** canonical thumbnail生成後に256KiBを超える場合、qualityを先に下げ、その後max dimensionを縮小する有限9-candidate ladderをnormal ingestion/export regenerationで共通利用する。
+
+### candidate順序
+1. 400 / 0.80
+2. 400 / 0.70
+3. 400 / 0.60
+4. 320 / 0.80
+5. 320 / 0.70
+6. 320 / 0.60
+7. 256 / 0.80
+8. 256 / 0.70
+9. 256 / 0.60
+
+- dimensionはlong edgeのmax dimension。
+- first actual encoded size <= 256KiB candidateをcanonical/export thumbnailとして採用する。
+- source canonical originalがcandidate max dimension未満の場合はupscaleしない。
+- no-upscaleにより同一pixel dimensionsとなるdimension段階はduplicate encodeを避けてskipしてよい。ただしquality順序は維持する。
+- q0.60未満へ自動劣化しない。
+- max dimension 256px未満へ自動縮小しない。
+- 最終有効candidateでも256KiB超なら`THUMBNAIL_TOO_LARGE`。
+- normal ingestionではthumbnail生成成功前にphoto/parent Business updateをcommitしない。originalだけをBusinessへ参照させるpartial successは禁止。
+- export時にthumbnail再生成が必要な場合も同じladderを使用する。
+- export thumbnailのactual bytesから`thumbnailHash` / `thumbnailSize`を計算する。
+- restore PREPARINGは再生成せず、backupに格納されたthumbnailをstrict validationする。
+- thumbnail quality/dimensionsはBusiness contentHash/revisionへ含めない。
+
+### 根拠
+thumbnailは表示補助のderived representationなので、originalよりsize制約を優先できる。有限9候補に固定することでresource bound/test条件が明確になり、normal ingestionとbackup export regenerationで同じcanonical generation behaviorを共有できる。
+
+## 62. 次の設計判断候補
+
+**photo ingestion中のoriginal/thumbnail生成とBusiness parent updateのatomic boundary**を確定する必要がある。
 
 背景:
-- thumbnailはcanonical originalからmax400px / WebP q0.8で生成し、max 256KiBと確定している。
-- 通常の400px画像で256KiBを超える可能性は低いが、高entropy/alpha/encoder差では理論上あり得る。
-- thumbnailはderived representationでBusiness identityではないため、originalと同じ高品質保持を優先する必要はない。
-- export時のthumbnail再生成も同じcanonical generation ruleを使用するため、normal ingestionとexportで同じfallbackを共有した方がよい。
+- section 61でthumbnail失敗時にoriginalだけをBusinessへcommitしないことは確定した。
+- photoはBusiness parentが`photoId/photoHash`を参照し、original/thumbnail binaryは別storage/server uploadを持つ。
+- offline-firstではlocal IndexedDBへBusiness/Outbox/binaryを整合して保存する必要がある。
+- Blob生成自体はIndexedDB transaction外で行う方が安全で、長時間transactionを保持すべきではない。
+- server uploadはlocal commit後のsync処理なので、local atomicityとremote uploadは分離する必要がある。
 
 推奨案:
-- **まず400pxを維持してqualityを下げ、それでも256KiB超ならdimensionを段階的に縮小する有限ladderを定義する。**
-- quality ladder: `0.80, 0.70, 0.60`。
-- max-dimension ladder: `400, 320, 256`px。
-- candidate順序:
-  1. 400/0.80
-  2. 400/0.70
-  3. 400/0.60
-  4. 320/0.80
-  5. 320/0.70
-  6. 320/0.60
-  7. 256/0.80
-  8. 256/0.70
-  9. 256/0.60
-- first <=256KiBを採用。
-- no upscale、duplicate dimensions skip。
-- 256/q0.60でも超える場合は`THUMBNAIL_TOO_LARGE`としてphoto ingestion/exportを失敗させる。
-- thumbnail失敗だけでoriginalをBusinessへcommitしない。normal ingestionではphoto parent updateと必要binary準備前に失敗させる。
-- export regenerationでも同じladderを使用し、backupへ入るactual thumbnail bytesからhash/sizeを計算する。
-- restoreは再生成せずbackup thumbnailをvalidationするだけ。
-- thumbnail quality/dimensionはBusiness contentHashに含めない。
+- **encode/hash/validationはtransaction外で完了させ、準備済みbinaryとmetadataを1回のshort IndexedDB readwrite transactionでlocal canonical stateへcommitする。**
+- transaction前:
+  - source decode/orientation
+  - original candidate encode
+  - original validation + photoHash
+  - thumbnail candidate encode
+  - thumbnail validation + thumbnailHash/size
+  - photoId確定
+  - parentの新しいphoto reference/orderとcontentHash payloadを準備
+- その全準備が成功した後だけlocal commit transactionを開始。
+- transaction内:
+  - original local binary/cache recordを保存
+  - thumbnail canonical local recordを保存
+  - parent Business photo refsを更新
+  - parent contentHash/updatedAtを更新
+  - parent Outbox CREATE/UPDATEをfold/create
+  - 必要なphoto upload pending metadataを保存
+- transaction失敗時は全local canonical変更をrollback。
+- encode途中/validation失敗時はBusiness/Outboxへ変更なし。
+- server original upload / parent Pushはtransaction後のnormal sync schedulerが行う。
+- sync順序は既確定どおりoriginal upload成功後にparent Push。
+- local binary cacheのeviction対象とcanonical pending-upload originalを区別し、未uploadでBusiness参照中の唯一copyをevictしない。
+- thumbnailもBusiness参照に必要なcanonical local representationとして、parent commitと整合するよう保存する。
 
-根拠: thumbnailは表示補助のderived dataなので、originalより強くsize上限を優先してよい。有限9候補ならresource boundが明確で、normal ingestion/export regenerationの両方で同一規則を再利用できる。
+根拠: CPU/codec処理をDB transaction外へ出すことでtransaction timeout/lockを避けつつ、Business reference・Outbox・binary metadataを一括commitすればoffline直後でも参照切れやpartial photo registrationを防げる。
