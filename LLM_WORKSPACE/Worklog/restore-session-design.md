@@ -1101,25 +1101,67 @@ thumbnailは表示補助のderived representationなので、originalよりsize�
 ### 根拠
 server存在確認前にlocal唯一copyをevictすると写真を永久消失させる可能性がある。idempotent uploadを利用してfalse-negative PENDINGを安全側として許容し、false-positive CONFIRMEDを禁止すれば、network/crash境界でもdata lossを避けて単純に収束できる。
 
-## 64. 次の設計判断候補
+## 64. CONFIRMED後のoriginal loss / recovery — 確定
 
-**`PhotoUploadState=CONFIRMED`後にlocal originalがevictされ、その後server blobがmissingになった場合のUI/復旧動作**を確定する必要がある。
+**確定:** `PhotoUploadState=CONFIRMED`後にlocal originalがevictされ、server originalもmissingになった場合は`original missing`状態を明示する。canonical originalを復旧できるsourceがあればそれを優先し、無い場合は「元写真の再登録」「backup restore」に加えて、**残存thumbnail等から新しい代替画像を再生成する操作をユーザー選択肢として許可する**。ただし再生成画像を失われたoriginalと同一identityとして扱わない。
+
+### 自動復旧
+- server `PHOTO_BLOB_NOT_AVAILABLE`検出時、clientはlocal originalの有無を確認する。
+- localに同一`photoId/photoHash` originalが残っていれば`PENDING`へ戻し、同一identityで再uploadする。
+- backup等から同一actual bytes / `photoHash`のcanonical originalを取得できる場合は、通常のbackup/restore validationを通して同一identityを復旧できる。
+- canonical sourceが見つからない場合、自動的にthumbnailをoriginalへ昇格しない。
+
+### canonical sourceが無い場合のユーザー選択肢
+- 元写真を再登録する。
+- backupから復元する。
+- **残存thumbnail等から代替画像を再生成する。**
+- 箱の内部写真など、物理的な再撮影が困難なケースを考慮し、再生成を明示的なrecovery optionとして提供可能とする。
+
+### 再生成を選んだ場合
+- 再生成物は失われたoriginalの復元ではなく、**新しいreplacement photo**として扱う。
+- new `photoId` / new `photoHash`を発行する。
+- parent Businessのphoto referenceをnormal replacementとして更新する。
+- parent `contentHash` / `updatedAt` / Outboxも通常のBusiness updateとして更新する。
+- 旧photoId/photoHashを再生成bytesへ流用しない。
+- thumbnailをupscale/補間しただけの画像でも、actual bytesが異なる以上new identityとする。
+- 将来AI super-resolution / generative restorationを導入する場合も同じくnew replacement identityとし、失われたoriginalの真正な復元とは表示しない。
+- recovery UIでは「元画像そのものではなく、残っている画像から作成した代替画像」であることを明示する。
+- 可能であれば旧photoIdとのrecovery provenanceをruntime/history情報として保持できるが、canonical Business photo identityを偽装しない。
+
+### missing状態
+- thumbnailが利用可能なら一覧/parent表示は継続できる。
+- original表示要求時にはmissing/recovery UIを表示する。
+- missing markerはBusiness contentHash/revisionを変更しないruntime/storage-health state。
+- sync全体を永久停止せず、該当photo dependencyだけblock/retry reasonを明示する。
+- canonical replacementが完了すればmissing markerを解消する。
+
+### 根拠
+thumbnail等から失われたoriginalと同一bytes/photoHashを再構成することはできないためidentityを偽装してはならない。一方、箱内部など再撮影が困難な記録では、残存thumbnailから得られる視覚情報にも実用価値がある。したがって「真正な復元」と「代替画像の再生成」を明確に分離し、後者をnew photo identityのnormal replacementとしてユーザーが選択できる設計がdata integrityと実用性を両立する。
+
+## 65. 次の設計判断候補
+
+**thumbnailから代替画像を再生成する場合、v0.8でどの再生成方式まで標準機能として提供するか**を確定する必要がある。
 
 背景:
-- server GCはcanonical parentから参照されるblobを削除しない設計だが、storage障害/運用不具合等で`PHOTO_BLOB_NOT_AVAILABLE`が起こる可能性は残る。
-- local originalが残っていれば再uploadできるが、CONFIRMED後はcache eviction可能なのでlocal copyも無い場合がある。
-- thumbnailは残っていてもoriginalを復元できる品質/bytes identityではなく、同じphotoHashのoriginalを再生成できない。
-- backupに同じoriginalが存在する可能性はあるが、自動的にユーザーの任意backup fileを検索することはできない。
+- section 64で代替画像再生成をrecovery optionとして許可した。
+- 単純なthumbnailのupscaleはoffline/localで実行でき、元にない情報を積極的に生成しない。
+- AI super-resolution / generative restorationは視認性を改善できる可能性があるが、元に存在しなかったdetailを生成する可能性があり、Vision/LLM機能はv1.0 scope。
+- recovery機能がexternal AI availabilityへ依存するとv0.8のbackup/data recovery要件が複雑になる。
 
 推奨案:
-- **local originalもserver originalも存在しない場合は自動復元を試みず、photoを「original missing」状態として明示し、ユーザーに元写真の再登録またはbackup restoreを案内する。**
-- thumbnailが利用可能なら一覧/parent表示はthumbnailを継続表示し、original表示要求時にmissing状態を示す。
-- missing originalをthumbnailから再生成して同一photoId/photoHashとして扱わない。
-- ユーザーが新しい元写真を登録する場合はnew photoId/new photoHashのnormal replacementとする。
-- 同じbackupからoriginalをrestoreできる場合はbackup/restoreの通常identity/hash validationを通す。
-- server `PHOTO_BLOB_NOT_AVAILABLE`を検出したclientはlocal original有無を確認し、あれば`PENDING`へ戻して再upload、無ければlocal missing marker/stateを記録する。
-- missing markerはBusiness contentHash/revisionを変更しないruntime/storage-health stateとする。
-- sync自体を永久停止せず、該当photo依存parent Pushだけretry/block reasonを明示する。
-- UIでは「写真データが見つかりません。元写真を再登録するか、バックアップから復元してください」等のactionable messageを出す。
+- **v0.8ではlocal deterministic replacementとしてthumbnailをそのままcanonical photo pipelineへ入力してnew photoとして登録できる機能までを標準とし、AIによるsuper-resolution/generative restorationはv1.0以降の任意機能に分離する。**
+- v0.8 recovery:
+  - remaining thumbnailをsource imageとして扱う。
+  - no-upscaleを基本とし、そのthumbnail dimensionsのままcanonical original WebPとしてnew photoId/photoHashを生成する。
+  - normal photo validation/thumbnail generation/atomic commitを通す。
+  - 「低解像度の代替画像」であることをUIで明示する。
+- 画像を大きく見せるためのUI表示scaleは可能だが、canonical bytesを単純upscaleして情報量が増えたように扱わない。
+- v1.0+ AI recoveryを追加する場合:
+  - explicit user action。
+  - generated/restoredであることを明示。
+  - new photoId/photoHash。
+  - original recoveryとは呼ばない。
+  - provider失敗でもv0.8 local recovery optionを失わない。
+- backup restoreで真正originalを後から取得できた場合のreplacement方針は別途決定する。
 
-根拠: thumbnailからoriginal bytesを再構成することはできず、photoHash identityを偽装すべきではない。復元可能なcanonical sourceが存在しない場合はdata lossを隠さず、Business identityを保ったまま明示的な修復操作へ誘導する方が安全。
+根拠: v0.8のdata recoveryをAI/network/providerへ依存させず、残っている実データを最大限保持できる。AI生成detailは有用でも真正性が異なるため、Vision/LLMを含むv1.0側で明示的なoptional recoveryとして扱う方がscopeとdata integrityを保ちやすい。
