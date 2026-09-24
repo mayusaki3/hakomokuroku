@@ -1355,28 +1355,56 @@ Undo実行時のcurrent photo arrayに対して以下の順で挿入位置を決
 ### 根拠
 indexだけではgrace中の追加・削除・並べ替えで位置の意味が変わる。隣接photo identityをanchorにすれば、parent全体のlockやsnapshot rollbackを使わず、削除前の位置を可能な範囲で復元できる。また、Undo後の別編集を消さないことを保証できる。
 
-## 74. 次の設計判断候補
+## 74. 連続photo削除のUndo queue — 確定
 
-**複数photoを短時間に連続削除した場合のUndo UI/state**を確定する必要がある。
+**確定:** 各photo delete operationを独立したephemeral Undo entryとして10秒間保持する。UIは複数Snackbarを積まず、1つのUndo surfaceへ集約し、直近の未expire entryからLIFOで1件ずつUndoする。
+
+### queue
+- deleteごとに独立entry。
+- 各entryは自身のdelete commit時点から10秒でexpire。
+- 新しいdeleteによって既存entryのexpiryを延長しない。
+- parentを跨いだdeleteも同じlocal ephemeral queueで扱ってよい。
+- app終了/reload/crashを跨ぐqueue保持は保証しない。
+- Business/sync/backup対象外。
+- 固定最大件数は設けず、10秒expiryで自然にboundedとする。
+
+### UI
+- surfaceは1つに集約する。
+- 例: 「写真を削除しました（3件） / 元に戻す」。
+- 件数は現在Undo可能な未expire entry数。
+- 「元に戻す」は最も新しい未expire entryを1件だけUndoする。
+- さらにUndoしたい場合は再度操作し、次に新しいentryを戻す。
+- expired/invalid entryはskip/removeし、次の有効entryへ進めてよい。
+
+### Undo / cleanup
+- 各entryはsection 73のposition anchor ruleをcurrent Business stateへ独立適用。
+- 1件のUndo失敗で他entryをrollback/deleteしない。
+- expireしたentryに対応するphoto binaryは、現在もunreferencedならcleanup可能。
+- queue entryの存在だけを理由に10秒を超えてbinaryを保持しない。
+- cleanupとexpiry raceはidempotentに扱う。
+
+### 根拠
+各deleteをnormal Business operationのまま維持しつつ、短時間の連続誤削除を救済できる。LIFOは直近操作を戻す期待と一致し、単一surfaceならmobile UIも複雑化しにくい。
+
+## 75. 次の設計判断候補
+
+**photo削除Undoの10秒grace中にsyncが走ることを許可するか**を確定する必要がある。
 
 背景:
-- 各photo削除には10秒graceとposition anchorがある。
-- 連続削除時に「最後の1件だけUndo」にすると、それ以前の誤削除を10秒以内でも救済できない。
-- 逆にparent全体を一括rollbackするとnormal Business update方式と合わない。
-- 複数Snackbarを積み重ねるとmobile UIが煩雑になりやすい。
+- section 72/74ではdelete自体を即時normal Business updateとしてcommitする。
+- したがってOutbox DELETE相当のparent updateが10秒内にserverへPushされる可能性がある。
+- その後Undoすると、serverにはdelete updateの後にrestore-reference updateがPushされる。
+- syncを10秒止めればnetwork churnは減るが、Undo UIというpresentation concernがsync schedulerへ影響する。
+- sync conflictが間に入る可能性もある。
 
 推奨案:
-- **各photo delete operationを独立したUndo entryとして最大10秒保持し、UIは1つのSnackbar/Undo surfaceで直近entryを順にUndoできるようにする。**
-- entryごとに独立した10秒expiryを持つ。
-- 新しい削除が来ても既存entryのexpiryを延長しない。
-- UIは例として「写真を削除しました（3件） / 元に戻す」と集約表示可能。
-- 「元に戻す」は最も新しい未expire entryを1件だけUndoする。
-- 連続タップすれば残っているentryを新しい順にUndo可能。
-- 各Undoはsection 73のanchor ruleでcurrent stateへ独立適用。
-- expireしたentryのbinaryはunreferencedならcleanup可能。
-- parentを跨いだ削除でも同じlocal ephemeral queueを利用可能。
-- app終了/reload/crashでqueue保持は保証しない。
-- queueはBusiness/sync/backup対象外。
-- UI上の最大保持件数は固定せず、10秒expiryにより自然にboundedとする。
+- **Undo grace中でも通常syncを止めない。**
+- delete commit後のOutboxは通常どおりPush対象。
+- Undoされた場合はcurrent Outbox folding ruleに従って新しいparent updateを生成/foldする。
+- delete updateがまだ未送信なら、fold結果としてserverに中間delete状態を送らずに済む場合がある。
+- delete updateが既にserver APPLIEDなら、Undoは次のnormal updateとしてphoto referenceを戻す。
+- sync conflictが発生した場合、Undoはlocal current stateへのnormal editとして扱い、既確定のSyncConflict規則に従う。
+- Undo entryはserver revision/baseRevisionを独自に保持せず、実行時のcurrent local sync stateを使う。
+- sync成功/失敗を理由に10秒Undo timerを延長しない。
 
-根拠: 各deleteをnormal Business operationのまま維持しながら、連続誤操作も救済できる。複数Snackbarを並べずmobile UIを単純にでき、Undo順序をLIFOにすると直近操作を戻す一般的な期待にも合う。
+根拠: Undoのためにsync schedulerを停止するとUIの一時状態がprotocol correctnessへ入り込み複雑になる。既存のOutbox folding/idempotent photo upload/conflict rulesで中間状態を安全に処理できるため、syncとUndoを独立させる方が単純。
