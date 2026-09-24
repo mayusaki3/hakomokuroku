@@ -1213,26 +1213,54 @@ v0.8のdata recoveryをAI/network/providerに依存させず、残存する実�
 ### 根拠
 真正originalが見つかった場合の目的は失われた写真の復旧であり、replacementはその間の代替物である。確認付きの単純置換に限定すれば、photo ownership、10枚上限、backup/export、GCを複雑化せず、ユーザーの意図も明確に確認できる。
 
-## 68. 次の設計判断候補
+## 68. recovery provenance retention — 確定
 
-**missing original / replacement recovery provenanceをどの期間保持するか**を確定する必要がある。
+**確定:** recovery provenanceは対応するreplacement photoがBusiness parentからactive参照されている間は保持し、replacementがactiveでなくなった時点で削除可能とする。
+
+### 最小metadata
+- replacement `photoId`。
+- old missing `photoId`。
+- old `photoHash`。
+- parent entity type / parent id。
+- provenance作成時刻。
+- 必要ならrecovery種別（thumbnail-derived / AI-generated等）。
+- binary、thumbnail、Business snapshotは保持しない。
+
+### retention
+- active replacementが存在する限りtime-based expiryしない。
+- 真正originalへの確認付き置換完了時はprovenance削除可能。
+- replacementを通常操作で削除した場合も削除可能。
+- replacementを別photoへ通常置換した場合も削除可能。
+- app startup/maintenanceでparent referenceとの整合を確認し、orphan provenanceをcleanupしてよい。
+
+### boundary
+- local-only recovery/history metadata。
+- backup/export対象外。
+- server sync対象外。
+- Business contentHash/revision対象外。
+- RestoreHistoryの最大20件retentionとは独立。
+- provenanceが失われてもBusiness/photo canonical stateは壊れない。失われるのは後日真正originalをspecial recovery candidateとして自動関連付けする能力だけ。
+
+### 根拠
+provenanceの実用目的はactive recovery replacementと旧originalの対応付けであるため、replacement lifetimeに合わせるのが最も単純である。小さいmetadataでも不要な永久履歴は避け、Business/sync/backupへ新たな依存を持ち込まない。
+
+## 69. 次の設計判断候補
+
+**photo recovery provenanceのparent変更（Item移動など）への追従方法**を確定する必要がある。
 
 背景:
-- provenanceは旧`photoId/photoHash`とreplacement `photoId`の対応を後日真正original発見時に利用する。
-- replacement後すぐに消すと、後日のbackup restoreで元写真候補を自動認識できない。
-- 永久保持するとlocal metadataが蓄積するが、binaryを持たない小さい履歴なので容量影響は限定的。
-- RestoreHistoryは最大20件だが、photo recovery provenanceはrestore以外のmissing recoveryでも発生し得るため同じretentionにすると意味が異なる。
+- provenanceにはparent type/idを持つ案だが、Item自体はBox間を移動できる。
+- photo ownershipのparentはItemそのものなので、ItemのBox移動ではparent entity idは変わらない。
+- 一方、将来photoを別Business parentへ移す機能を追加する場合、provenanceのparent情報がstaleになる可能性がある。
+- v0.8ではphotoの独立move機能を設ける必要性は低い。
 
 推奨案:
-- **recovery provenanceはreplacementがactive parentから参照されている間は必ず保持し、replacementが外れた時点で削除可能とする。**
-- keyはreplacement `photoId`を中心にold `photoId/photoHash`、parent type/id、createdAt程度の最小情報。
-- binary/snapshot/thumbnailをprovenanceへ保存しない。
-- active replacementが存在する限り期限切れにしない。
-- 真正originalへの置換完了時はprovenanceを削除してよい。
-- replacementを通常操作で削除/別写真へ置換した場合も削除してよい。
-- app startup/maintenanceでparent referenceを確認し、orphan provenanceをcleanup可能。
-- backup/export対象外、sync対象外、Business contentHash対象外。
-- RestoreHistory最大20件とは独立。
-- provenanceが失われてもBusiness/photo自体は壊れず、後日の真正original candidateをspecial recoveryとして自動関連付けできなくなるだけ。
+- **v0.8ではphotoをBusiness parent間で直接moveする機能を提供せず、photo ownershipは登録されたparent entityに固定する。**
+- ItemのBox移動はItem.idが変わらないため、そのItem所有photo provenanceへの変更不要。
+- Box/Item/BoxLocationのphotoを別parentへ移したい場合は、v0.8では新parentへnew photoとして登録し、旧parent側を削除するnormal operationとする。
+- recovery replacementも同じ。
+- provenanceのparent type/idはreplacement作成時から不変。
+- parent自体が削除された場合、replacement参照も消えるためprovenance cleanup対象。
+- 将来direct photo moveを追加する場合は、new photoIdを発行するかprovenance atomic updateを含む新仕様として定義する。
 
-根拠: provenanceの唯一の実用目的はactive recovery replacementと旧originalを後から対応付けることなので、replacementのlifetimeに合わせるのが最も単純で、不要な永久履歴も避けられる。
+根拠: v0.8でdirect photo moveを許す実用上の必要性は低く、ownership/provenance/backup/syncを複雑化する。Itemの箱移動という主要ユースケースはItem identityが維持されるため、この制約でも影響しない。
