@@ -1489,24 +1489,57 @@ Undo不能になったentryをUI表示やbinary retentionのためだけに残�
 ### 根拠
 Restore conflictのstale判定は既にBusiness contentHashへ統一されている。photo Undo専用の連携を追加するとRestoreSessionと通常Business編集の双方向依存が増える。contentHash-based final revalidationへ統一すれば、photo以外の通常編集も同じ規則で処理できる。
 
-## 79. 次の設計判断候補
+## 79. Restore APPLYINGとphoto Undo binary cleanupの分離 — 確定
 
-**Restore APPLYINGがphoto Undo grace中のunreferenced binaryを必要とする場合のcleanup競合**を確定する必要がある。
+**確定:** Restore APPLYINGはphoto Undo用ephemeral binaryを入力sourceとして利用しない。Restore correctnessをUndo grace/cleanup timingへ依存させない。
+
+### USE_BACKUP
+- Restoreでbackup側photoを採用するために必要なoriginal/thumbnailは、PREPARINGで完全検証済みのRestoreSession stagingから取得する。
+- APPLYINGで必要なbinary promotionはstaging→canonical storageとして行う。
+- Undo queueに残るlocal unreferenced binaryを代替sourceとして利用しない。
+- staging側binary不足/不整合はRestore errorであり、Undo binaryが偶然残っていても補完しない。
+
+### KEEP_EXISTING / UNCHANGED
+- current canonical Businessを採用/維持するため、新しいbackup binary promotionを要求しない。
+- current Businessが参照しているcanonical original/thumbnailは通常のphoto/cache/upload-state規則で保護する。
+- この保護はUndo queue retentionとは独立。
+
+### conflict snapshot / stale
+- Restore conflict existingSnapshotにはoriginal/thumbnail binary本体を格納しない。
+- Business/photo identity metadataおよび必要なhash/reference情報だけを保持する。
+- photo delete/Undo等でcurrent refsが変化した場合、APPLYING前contentHash revalidationでstaleを検出する。
+
+### cleanup race
+- photo deleteでunreferencedとなったbinaryはsection 72/74の10秒Undo grace終了後cleanup可能。
+- RestoreSessionの存在だけを理由にそのephemeral binary retentionを延長しない。
+- cleanupとRestore APPLYINGが並行しても、USE_BACKUPに必要なbinaryはstagingへ閉じているためRestore correctnessへ影響しない。
+- canonical referenced binaryのcleanup禁止規則は従来どおり適用する。
+
+### 根拠
+Restoreの入力を検証済みstagingへ閉じれば、Undoという短期UI機能のlifecycleをrestore transactionへ持ち込まずに済む。これによりcleanup timing、app interruption、Undo expiryがRestore correctnessへ影響しない。
+
+## 80. 次の設計判断候補
+
+**RestoreSession staging binaryをAPPLYING後いつ削除するか**を、canonical promotion確認との関係まで具体化する必要がある。
 
 背景:
-- photo delete後のoriginal/thumbnailは10秒Undo grace終了までlocalに保持する。
-- RestoreSession stagingはbackup内binaryを独立保持するため、通常はUndo用binaryへ依存しない。
-- ただしRestoreがKEEP_EXISTING/current Business側のphotoを参照する場合や、同時cleanupが走る場合、canonical/cache binary lifecycleとの境界を明確にしておく必要がある。
-- Business correctnessをephemeral Undo retentionへ依存させるべきではない。
+- 既確定ではCOMPLETED後にcanonical originalsをverifyしてからstaging cleanupする。
+- APPLYING transactionはBusiness/Outbox/reference changesと`appliedAt`をatomic commitする。
+- IndexedDBで大きなBlob copy/promotionを同じtransactionへ大量に含めるとtransaction時間/失敗リスクが増える。
+- 一方、Business commit後に必要binaryがcanonical storageへ存在しない状態は作れない。
 
 推奨案:
-- **Restore APPLYINGはphoto Undo用ephemeral binaryを入力sourceとして利用しない。**
-- USE_BACKUPに必要なbinaryはRestoreSession stagingからpromoteする。
-- KEEP_EXISTING/UNCHANGEDはcurrent canonical Businessを変更しないため、binaryを新規promoteする必要はない。
-- current Businessが参照するcanonical originalは既確定のcache/upload-state rulesで保護し、Undo queueとは独立する。
-- photo deleteによりunreferencedとなったbinaryはUndo grace終了後cleanup可能で、RestoreSessionがそれを理由に保持延長しない。
-- Restore conflict existingSnapshotにはbinary本体を格納せず、Business/photo identity metadataのみを保持する。
-- APPLYING前revalidationでcurrent Business photo refsが変化していればcontentHash mismatchとしてstale処理する。
-- cleanupとRestore APPLYINGが競合しても、Restoreが必要なbackup binaryはstagingにあるためcorrectnessへ影響しない。
+- **APPLYING開始前に、最終apply snapshotで必要と確定したUSE_BACKUP/new entity photo binaryをstagingからcanonical photo storageへ「pre-promote」し、その存在/hashを確認してからBusiness atomic commitへ進む。**
+- pre-promoteされたbinaryはBusinessからまだ参照されないため、APPLYING commit前はtemporary protected stateとして扱う。
+- same photoId+same hashがcanonicalに既存なら再copyせずreuse。
+- same photoId+different hashはPHOTO_ID_COLLISIONとしてAPPLYINGへ進まない。
+- pre-promotion完了後にBusiness/Outbox/reference/contentHash/`appliedAt`をshort atomic transactionでcommit。
+- Business transaction abort時、pre-promoted unreferenced binaryはcleanup対象だが、retryable RestoreSessionが再利用してよい。
+- commit成功後、canonical referencesとbinary photoId/hashをverifyする。
+- verify成功後RestoreSessionをCOMPLETEDへ収束し、stagingと不要なpre-promoted orphanをidempotently cleanup。
+- crash recovery:
+  - `APPLYING + appliedAt != null`: Business commit済み。canonical binary verify→COMPLETED→cleanup。
+  - `APPLYING + appliedAt == null`: Business未commit。pre-promoted binaryがあってもsafe retry/reuse。
+- stagingはCOMPLETED statusを書いただけでは先に削除せず、canonical binary verification成功をcleanup gateとする。
 
-根拠: Restoreの入力をstagingへ閉じ、Undoの短期binary retentionと分離すれば、cleanup timingがRestore correctnessへ影響しない。ephemeral UI機能をrestore transactionのhidden dependencyにしないための境界として明確である。
+根拠: 大きなBlob copyとBusiness/Outbox atomic commitを分離してtransactionを短くしつつ、Business referenceがcanonical binaryより先に確定する状態を防げる。pre-promoted orphanはBusinessから未参照なので、crash/retry時にも安全に識別・再利用・cleanupできる。
