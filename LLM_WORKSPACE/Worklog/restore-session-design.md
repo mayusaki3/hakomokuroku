@@ -1163,28 +1163,57 @@ thumbnail等から失われたoriginalと同一bytes/photoHashを再構成する
 ### 根拠
 v0.8のdata recoveryをAI/network/providerに依存させず、残存する実データを最大限そのまま保存できる。AI restorationは再撮影困難時に有用だが、元画像に存在しなかったdetailを生成し得るため、Vision/LLMを含むv1.0側の明示的optional recoveryとして分離する。
 
-## 66. 次の設計判断候補
+## 66. replacement後に真正originalが見つかった場合 — 確定
 
-**低解像度replacementを作成した後、後日backup等から真正originalが見つかった場合の復旧方針**を確定する必要がある。
+**確定:** 低解像度/生成replacement作成後にbackup等から旧`photoId/photoHash`と一致する真正originalが見つかっても、自動的にactive parentへ復帰させない。systemは対応関係を検出して「元写真を復元する」選択肢を提示し、active photo selectionはユーザーが決定する。
+
+### recovery provenance
+- replacement作成時に旧missing photoとの対応をlocal recovery/history metadataとして保持する。
+- 少なくともold `photoId` / old `photoHash`とnew replacement `photoId`の対応を判定できる情報を持つ。
+- provenance metadataはBusiness payload/contentHash/revisionへ含めない。
+- provenanceはoriginal identityを証明するものではなく、recovery workflow上の対応情報として扱う。
+
+### 真正original候補の検出
+- backup restore PREPARING等で旧`photoId/photoHash`に一致するactual original bytesをvalidationできた場合にのみ真正original candidateとする。
+- 現在parentにその旧photoから作られたrecovery replacementが存在する場合、special recovery candidateとしてユーザーへ提示する。
+- updatedAt、解像度、file size等から自動winnerを決定しない。
+
+### ユーザーが「元写真を復元」を選択
+- parent active photo referenceを旧canonical `photoId/photoHash`へ戻す。
+- parent `contentHash` / `updatedAt` / Outboxをnormal Business updateとして更新する。
+- truly matching original binaryをcanonical storageへpromoteする。
+- replacement photoを自動削除しない。
+- replacementも保持するか、parentから外して削除対象にするかはユーザー選択とする。
+
+### ユーザーがreplacement維持を選択
+- active parent referenceは変更しない。
+- backup staging内の真正originalをactive canonical storageへ不要に追加しない。
+- restore/session cleanup時にstaging originalをcleanup可能。
+- 選択結果はそのrestore/recovery sessionにのみ適用し、将来別backupで再発見した場合の永久抑止にはしない。
+
+### 根拠
+真正originalは高品質でも、replacement作成後の現在Business状態を無断で巻き戻すべきではない。identity/hash一致で真正original候補を厳密に判定し、そのうえでactive selectionをユーザーに委ねることで、data integrityと既確定restore conflict policyの双方を維持できる。
+
+## 67. 次の設計判断候補
+
+**元写真へ復帰するとき、現在のreplacementを「保持」する場合のphoto ownership rule**を確定する必要がある。
 
 背景:
-- section 65ではmissing旧photoをthumbnail由来new photoへreplacementするため、parentのactive referenceはnew photoIdへ変わる。
-- 後日、backup等から旧`photoId/photoHash`と一致する真正originalが見つかる可能性がある。
-- active parentには既にreplacement photoが存在するため、単純に旧photoを自動復帰するとユーザーがreplacement後に行った判断を覆す可能性がある。
-- 一方、真正originalの方が高品質であり、ユーザーが戻したい可能性は高い。
+- 既確定ruleは`1 photoId = exactly 1 Business parent`であり、同じparent内でも同一photoId重複は禁止。
+- 元写真復帰後にreplacementも保持したい場合、同じparentのphoto arrayへ旧originalとreplacementを別photoIdとして並べることはownership rule上可能。
+- ただし「保持」が単にstorageへ孤立保存する意味だとorphan binaryを増やし、既確定のorphan inventory/GC方針と衝突する。
+- replacementをparentに残す場合は写真枚数上限0–10にも影響する。
 
 推奨案:
-- **真正originalを発見しても自動的にactive parentへ戻さず、ユーザーへ「元写真を復元する」選択肢を提示する。**
-- recovery provenanceとしてreplacement作成時に`replacesMissingPhotoId` / old `photoHash`相当のlocal recovery metadataを保持し、後から真正originalとの対応を判定できるようにする。
-- backup restore PREPARINGで旧photoId/hashが見つかり、現在parentにそのrecovery replacementがある場合はspecial recovery candidateとして表示する。
-- userが真正original復帰を選択:
-  - parent active referenceを旧canonical photoId/photoHashへ戻す。
-  - replacement photoは自動削除せず、同時に保持するか削除するかをユーザー選択にする。
-  - parent contentHash/updatedAt/Outboxはnormal Business update。
-- userが現在replacement維持を選択:
-  - active reference変更なし。
-  - 真正originalを不要にcanonical active storageへ追加しない。backup stagingからcleanup可能。
-- 自動winnerをupdatedAt/quality/dimensionsで決めない。
-- provenance metadataはBusiness identity/hashへ混ぜずlocal recovery/history用途とする。
+- **replacementを保持する場合は同じBusiness parentの通常photoとして残し、orphanのcanonical photoとしては保持しない。**
+- 「元写真を復元」時の選択肢:
+  - A: 元写真に置き換える — replacement referenceを外し、旧originalを同じarray positionへ入れる。
+  - B: 元写真を追加してreplacementも残す — replacementを現在位置に残し、旧originalをその直前へ追加する。
+- Bはparentの10枚上限に従う。既に10枚ならBを選べず、別photoを外す/削除してから実行する。
+- Aで外れたreplacement binaryは通常のunreferenced photo GC/cache cleanup対象。
+- Bではoriginal/replacement双方が異なるphotoIdとして同じparentに所有される。
+- provenance/historyは残せるが、Business上は両方とも通常photo。
+- backup/exportはactive parentが参照する両方を通常どおり含める。
+- AI replacementの場合も同じownership rule。
 
-根拠: 真正originalは品質面で有利でも、replacement作成後の現在状態を無断で巻き戻すべきではない。旧identityとの対応だけsystemが提示し、active photo selectionはユーザーに委ねる方がrestore conflict policyとも整合する。
+根拠: orphan canonical storageという例外を作らず、既存のparent ownership・10枚上限・backup/export・GC規則をそのまま適用できる。
