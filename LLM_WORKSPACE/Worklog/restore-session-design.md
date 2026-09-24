@@ -1244,23 +1244,42 @@ v0.8のdata recoveryをAI/network/providerに依存させず、残存する実�
 ### 根拠
 provenanceの実用目的はactive recovery replacementと旧originalの対応付けであるため、replacement lifetimeに合わせるのが最も単純である。小さいmetadataでも不要な永久履歴は避け、Business/sync/backupへ新たな依存を持ち込まない。
 
-## 69. 次の設計判断候補
+## 69. photo ownership / parent間direct move — 確定
 
-**photo recovery provenanceのparent変更（Item移動など）への追従方法**を確定する必要がある。
+**確定:** v0.8ではphotoをBox / Item / BoxLocationなどのBusiness parent間で直接moveする機能を提供しない。photo ownershipは登録時のparent entityに固定する。
+
+- Itemを別Boxへ移動してもItem.idは維持されるため、Item所有photoのparent identityは変化しない。
+- ItemのBox移動ではphoto/recovery provenance更新不要。
+- photoを別Business parentで利用したい場合は、新parentへ**new photoとして登録**し、必要なら旧parent側photoを削除する。
+- new parent側はnew `photoId` / corresponding `photoHash`を持つnormal photo registration。
+- 同じactual image bytesを再利用してもphotoIdは共有しない。既確定どおりphotoHash一致は許容する。
+- recovery replacementも同じownership rule。
+- provenanceのparent type/idはreplacement作成時から不変。
+- parent削除でreplacement referenceが消えた場合、そのprovenanceはcleanup対象。
+- 将来direct photo moveを追加する場合は、ownership/provenance/sync/backup atomicityを含む新仕様として定義する。
+
+### 根拠
+v0.8でdirect photo moveを許す必要性は低く、photo ownership・recovery provenance・backup・syncの例外を増やす。主要な「Itemを別の箱へ移す」操作ではItem identity自体が維持されるため、photo ownership固定でも実用上の制約にならない。
+
+## 70. 次の設計判断候補
+
+**同じ端末で同一source photoを複数parentへ登録するとき、encode済みbinaryを処理中だけ再利用するか**を確定する必要がある。
 
 背景:
-- provenanceにはparent type/idを持つ案だが、Item自体はBox間を移動できる。
-- photo ownershipのparentはItemそのものなので、ItemのBox移動ではparent entity idは変わらない。
-- 一方、将来photoを別Business parentへ移す機能を追加する場合、provenanceのparent情報がstaleになる可能性がある。
-- v0.8ではphotoの独立move機能を設ける必要性は低い。
+- section 69では別parentへ登録するとnew photoIdを発行するが、同じactual image bytesならphotoHashが同一でもよい。
+- 同一sourceを複数parentへ連続登録する場合、毎回decode/encodeするとCPU負荷が増える。
+- 一方、photo identityはparentごとに独立しており、persistent dedup/shared blobを導入するとownership/GC/server storage semanticsが複雑になる。
+- 既確定方針は「no dedup、same image can repeat with different IDs」。
 
 推奨案:
-- **v0.8ではphotoをBusiness parent間で直接moveする機能を提供せず、photo ownershipは登録されたparent entityに固定する。**
-- ItemのBox移動はItem.idが変わらないため、そのItem所有photo provenanceへの変更不要。
-- Box/Item/BoxLocationのphotoを別parentへ移したい場合は、v0.8では新parentへnew photoとして登録し、旧parent側を削除するnormal operationとする。
-- recovery replacementも同じ。
-- provenanceのparent type/idはreplacement作成時から不変。
-- parent自体が削除された場合、replacement参照も消えるためprovenance cleanup対象。
-- 将来direct photo moveを追加する場合は、new photoIdを発行するかprovenance atomic updateを含む新仕様として定義する。
+- **persistent dedupは行わないが、単一user action/batch registration処理中に限り、validation済みencode resultをmemory/tempで再利用してよい。**
+- parentごとにnew `photoId`。
+- actual original bytesを再利用する場合は同じ`photoHash`になってよい。
+- thumbnail bytes/hashも同じでよい。
+- local/server canonical recordsはphotoId単位で独立。
+- delete/GC/upload stateもphotoId単位。
+- process終了後に共有tempを破棄し、persistent content-addressed shared blob storeはv0.8で導入しない。
+- 1つのparent登録transaction failureが他parentのcanonical commitをrollbackしない。batch全体atomicityは要求しない。
+- userが明示的に複数parentへ同じ写真を登録するUIを持たない場合でも、内部実装上このoptimizationを許容するだけで必須ではない。
 
-根拠: v0.8でdirect photo moveを許す実用上の必要性は低く、ownership/provenance/backup/syncを複雑化する。Itemの箱移動という主要ユースケースはItem identityが維持されるため、この制約でも影響しない。
+根拠: no-dedupという単純なcanonical modelを維持しながら、同一操作中の不要なcodec処理だけ削減できる。optimizationを仕様上許可するが、correctnessは再利用の有無に依存しない。
