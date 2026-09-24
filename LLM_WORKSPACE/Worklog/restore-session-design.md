@@ -1327,26 +1327,56 @@ parent referenceを唯一のownership authorityにすると、network raceやcra
 ### 根拠
 短時間のUndoは日常的な誤操作を低コストで救済できる。一方、Business commit自体を遅延したりpersistent undo logを導入するとsync/restoreとの整合が複雑になる。削除とUndoをそれぞれnormal Business updateにすることで既存のOutbox/sync規則をそのまま利用できる。
 
-## 73. 次の設計判断候補
+## 73. photo Undo中のconcurrent parent editと復元位置 — 確定
 
-**10秒Undo中に同じparentへ別の編集が入った場合のphoto挿入位置**を確定する必要がある。
+**確定:** 10秒Undo grace中もparentの通常編集をlockしない。Undoでは対象photoだけを戻し、削除後に行われた他の編集を巻き戻さない。
+
+### ephemeral position anchor
+削除時にUndo用ephemeral stateとして次を保持してよい。
+- original index。
+- `previousPhotoId?`。
+- `nextPhotoId?`。
+- section 72で定義したphotoId/photoHash等の最小情報。
+
+### Undo insertion
+Undo実行時のcurrent photo arrayに対して以下の順で挿入位置を決定する。
+
+1. previous/nextの両方が存在し、current arrayでもpreviousがnextより前なら、可能な限りその間へ挿入する。
+2. previousのみ存在する場合、その直後へ挿入する。
+3. nextのみ存在する場合、その直前へ挿入する。
+4. どちらも利用できない場合、保存したoriginal indexを`0..current length`へclampして挿入する。
+
+- previous/next間に削除後追加されたphotoがある場合、それらを巻き戻さず、previous直後を基本挿入位置とする。
+- current arrayの他photo順序をUndoによって変更しない。
+- Undo対象photoIdが既に同じparentに存在する場合、duplicate referenceを生成しない。Business integrityを優先し、Undoはno-op/失敗としてUIへ通知する。
+- parent削除などで対象parent自体が存在しない場合もUndo不能。
+- Undo成功は新しいnormal Business updateであり、current stateからcontentHash/updatedAt/Outboxを生成する。
+
+### 根拠
+indexだけではgrace中の追加・削除・並べ替えで位置の意味が変わる。隣接photo identityをanchorにすれば、parent全体のlockやsnapshot rollbackを使わず、削除前の位置を可能な範囲で復元できる。また、Undo後の別編集を消さないことを保証できる。
+
+## 74. 次の設計判断候補
+
+**複数photoを短時間に連続削除した場合のUndo UI/state**を確定する必要がある。
 
 背景:
-- Undoは削除前のarray positionを保持する。
-- grace中にもphoto追加・削除・並べ替えなどのnormal editを許すと、元のindexが別の意味になる場合がある。
-- Undoのためにparent全体をlockすると日常操作を不必要に止める。
-- parent snapshot全体を巻き戻すと、Undo後に行った別編集を失うため不可。
+- 各photo削除には10秒graceとposition anchorがある。
+- 連続削除時に「最後の1件だけUndo」にすると、それ以前の誤削除を10秒以内でも救済できない。
+- 逆にparent全体を一括rollbackするとnormal Business update方式と合わない。
+- 複数Snackbarを積み重ねるとmobile UIが煩雑になりやすい。
 
 推奨案:
-- **parentをlockせず、Undo対象photoだけを戻す。削除前の隣接photo identityをephemeral stateに保持し、可能ならその位置関係を復元する。**
-- ephemeral stateに削除前の`previousPhotoId?` / `nextPhotoId?`を保持する。
-- Undo時:
-  1. previousとnextの両方が存在し、現在もその順ならその間へ挿入。
-  2. previousのみ存在ならその直後。
-  3. nextのみ存在ならその直前。
-  4. どちらも存在しなければ、保存したoriginal indexを現在array長へclampして挿入。
-- 他のphoto追加/削除/並べ替えを巻き戻さない。
-- Undo対象photoが既に同じparentに存在する場合はduplicate referenceを作らずUndoを終了/失敗扱いとして整合を優先。
-- 10秒中の通常編集は制限しない。
+- **各photo delete operationを独立したUndo entryとして最大10秒保持し、UIは1つのSnackbar/Undo surfaceで直近entryを順にUndoできるようにする。**
+- entryごとに独立した10秒expiryを持つ。
+- 新しい削除が来ても既存entryのexpiryを延長しない。
+- UIは例として「写真を削除しました（3件） / 元に戻す」と集約表示可能。
+- 「元に戻す」は最も新しい未expire entryを1件だけUndoする。
+- 連続タップすれば残っているentryを新しい順にUndo可能。
+- 各Undoはsection 73のanchor ruleでcurrent stateへ独立適用。
+- expireしたentryのbinaryはunreferencedならcleanup可能。
+- parentを跨いだ削除でも同じlocal ephemeral queueを利用可能。
+- app終了/reload/crashでqueue保持は保証しない。
+- queueはBusiness/sync/backup対象外。
+- UI上の最大保持件数は固定せず、10秒expiryにより自然にboundedとする。
 
-根拠: indexだけより隣接photo identityの方が並び替えや追加に強く、parent全体のlock/snapshot rollbackを避けながら削除前の位置を可能な範囲で再現できる。
+根拠: 各deleteをnormal Business operationのまま維持しながら、連続誤操作も救済できる。複数Snackbarを並べずmobile UIを単純にでき、Undo順序をLIFOにすると直近操作を戻す一般的な期待にも合う。
