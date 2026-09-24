@@ -1194,26 +1194,45 @@ v0.8のdata recoveryをAI/network/providerに依存させず、残存する実�
 ### 根拠
 真正originalは高品質でも、replacement作成後の現在Business状態を無断で巻き戻すべきではない。identity/hash一致で真正original候補を厳密に判定し、そのうえでactive selectionをユーザーに委ねることで、data integrityと既確定restore conflict policyの双方を維持できる。
 
-## 67. 次の設計判断候補
+## 67. 元写真復帰時のreplacement扱い — 確定
 
-**元写真へ復帰するとき、現在のreplacementを「保持」する場合のphoto ownership rule**を確定する必要がある。
+**確定:** 真正originalを復帰する場合は、ユーザー確認後に現在のrecovery replacementを元写真へ**置き換えるだけ**とする。originalとreplacementを同時保持する選択肢は設けない。
+
+- systemが真正original candidateを検出しただけでは変更しない。
+- ユーザーへ元写真へ戻す確認を表示する。
+- 承認時、replacement photo referenceを外し、旧canonical `photoId/photoHash`を同じphoto array positionへ戻す。
+- parent内の写真順序は置換位置を維持する。
+- parent `contentHash` / `updatedAt` / Outboxはnormal Business updateとして更新する。
+- validated original binaryをcanonical storageへpromoteする。
+- 外れたreplacementはBusiness parentから参照されないため、通常のunreferenced photo GC/cache cleanup対象とする。
+- replacementをorphan canonical photoとして保持しない。
+- 「両方残す」選択肢はv0.8では提供しない。
+- AI-generated replacementも同じrule。
+- provenance/historyは必要な範囲でlocal recovery/history情報として残してよいが、replacement binaryの保持理由にはしない。
+
+### 根拠
+真正originalが見つかった場合の目的は失われた写真の復旧であり、replacementはその間の代替物である。確認付きの単純置換に限定すれば、photo ownership、10枚上限、backup/export、GCを複雑化せず、ユーザーの意図も明確に確認できる。
+
+## 68. 次の設計判断候補
+
+**missing original / replacement recovery provenanceをどの期間保持するか**を確定する必要がある。
 
 背景:
-- 既確定ruleは`1 photoId = exactly 1 Business parent`であり、同じparent内でも同一photoId重複は禁止。
-- 元写真復帰後にreplacementも保持したい場合、同じparentのphoto arrayへ旧originalとreplacementを別photoIdとして並べることはownership rule上可能。
-- ただし「保持」が単にstorageへ孤立保存する意味だとorphan binaryを増やし、既確定のorphan inventory/GC方針と衝突する。
-- replacementをparentに残す場合は写真枚数上限0–10にも影響する。
+- provenanceは旧`photoId/photoHash`とreplacement `photoId`の対応を後日真正original発見時に利用する。
+- replacement後すぐに消すと、後日のbackup restoreで元写真候補を自動認識できない。
+- 永久保持するとlocal metadataが蓄積するが、binaryを持たない小さい履歴なので容量影響は限定的。
+- RestoreHistoryは最大20件だが、photo recovery provenanceはrestore以外のmissing recoveryでも発生し得るため同じretentionにすると意味が異なる。
 
 推奨案:
-- **replacementを保持する場合は同じBusiness parentの通常photoとして残し、orphanのcanonical photoとしては保持しない。**
-- 「元写真を復元」時の選択肢:
-  - A: 元写真に置き換える — replacement referenceを外し、旧originalを同じarray positionへ入れる。
-  - B: 元写真を追加してreplacementも残す — replacementを現在位置に残し、旧originalをその直前へ追加する。
-- Bはparentの10枚上限に従う。既に10枚ならBを選べず、別photoを外す/削除してから実行する。
-- Aで外れたreplacement binaryは通常のunreferenced photo GC/cache cleanup対象。
-- Bではoriginal/replacement双方が異なるphotoIdとして同じparentに所有される。
-- provenance/historyは残せるが、Business上は両方とも通常photo。
-- backup/exportはactive parentが参照する両方を通常どおり含める。
-- AI replacementの場合も同じownership rule。
+- **recovery provenanceはreplacementがactive parentから参照されている間は必ず保持し、replacementが外れた時点で削除可能とする。**
+- keyはreplacement `photoId`を中心にold `photoId/photoHash`、parent type/id、createdAt程度の最小情報。
+- binary/snapshot/thumbnailをprovenanceへ保存しない。
+- active replacementが存在する限り期限切れにしない。
+- 真正originalへの置換完了時はprovenanceを削除してよい。
+- replacementを通常操作で削除/別写真へ置換した場合も削除してよい。
+- app startup/maintenanceでparent referenceを確認し、orphan provenanceをcleanup可能。
+- backup/export対象外、sync対象外、Business contentHash対象外。
+- RestoreHistory最大20件とは独立。
+- provenanceが失われてもBusiness/photo自体は壊れず、後日の真正original candidateをspecial recoveryとして自動関連付けできなくなるだけ。
 
-根拠: orphan canonical storageという例外を作らず、既存のparent ownership・10枚上限・backup/export・GC規則をそのまま適用できる。
+根拠: provenanceの唯一の実用目的はactive recovery replacementと旧originalを後から対応付けることなので、replacementのlifetimeに合わせるのが最も単純で、不要な永久履歴も避けられる。
