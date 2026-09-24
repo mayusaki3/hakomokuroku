@@ -1518,28 +1518,79 @@ Restore conflictのstale判定は既にBusiness contentHashへ統一されてい
 ### 根拠
 Restoreの入力を検証済みstagingへ閉じれば、Undoという短期UI機能のlifecycleをrestore transactionへ持ち込まずに済む。これによりcleanup timing、app interruption、Undo expiryがRestore correctnessへ影響しない。
 
-## 80. 次の設計判断候補
+## 80. RestoreSession staging binary pre-promotion / cleanup — 確定
 
-**RestoreSession staging binaryをAPPLYING後いつ削除するか**を、canonical promotion確認との関係まで具体化する必要がある。
+**確定:** APPLYING開始前に、最終apply snapshotで必要なUSE_BACKUP/new entity photo binaryを検証済みstagingからcanonical photo storageへpre-promoteし、canonical存在/hashを確認してからBusiness atomic commitへ進む。staging cleanupはBusiness commit後のcanonical binary verification成功をgateとする。
+
+### pre-promotion
+- final summary完了かつstale/unresolved conflictがないことを確認後、最終apply snapshotを固定する。
+- そのsnapshotで最終的に参照されるUSE_BACKUP/new entity photoだけをpre-promote対象とする。
+- original/thumbnailともstagingで既にPREPARING validation済みであることを前提とする。
+- canonical storageへ書き込んだ後、photoId/hash/必要size等を再確認する。
+- same photoId + same hashがcanonicalに存在する場合は再copyせずreuse可能。
+- same photoId + different hashはPHOTO_ID_COLLISIONとしてBusiness commitへ進まない。
+- pre-promoted binaryはまだBusinessから参照されないため、commit前はRestoreSessionに紐づくtemporary protected orphanとして扱う。
+
+### Business atomic commit
+pre-promotion完了後、短いIndexedDB readwrite transactionで少なくとも次をatomic commitする。
+- Business entity changes。
+- photo references/order。
+- parent contentHash。
+- required reference fixes。
+- Outbox create/update。
+- RestoreSession `appliedAt`。
+
+- Blob copyそのものをこのBusiness transactionへ大量に含めない。
+- transaction abort時はBusiness/Outbox/appliedAtの変更を一切残さない。
+
+### abort / retry
+- Business transaction abort時、pre-promoted binaryはunreferencedのまま残り得る。
+- retryable RestoreSessionではsame photoId/hashを検証して再利用してよい。
+- session cancel/nonretryable terminationが可能なstateなら、不要なpre-promoted orphanはcleanup対象。
+- ordinary GCがactive RestoreSession用pre-promoted binaryを誤削除しないようtemporary protectionを持つ。
+
+### commit後 verification / cleanup
+- `appliedAt != null`となった後、final Business refsが必要なcanonical original/thumbnailをphotoId/hashどおり参照できることをverifyする。
+- verification成功後にRestoreSessionをCOMPLETEDへ収束させる。
+- その後stagingおよび不要なpre-promoted orphanをidempotently cleanupする。
+- COMPLETED statusを書いただけではstagingを先に削除しない。canonical verification成功がcleanup gate。
+- cleanup failureはRestore Business commit失敗とは扱わず、後続maintenanceでretry可能。
+
+### crash recovery
+- `APPLYING + appliedAt != null`: Business commit済み。再apply禁止。canonical binary verification → COMPLETED convergence → cleanup。
+- `APPLYING + appliedAt == null`: Business未commit。既存pre-promoted binaryを検証し、safe retry/reuse可能。
+- crash時にstaging/pre-promoted binaryが残ることを許容し、Business correctnessよりcleanupを優先しない。
+
+### 根拠
+大きなBlob copyをBusiness/Outbox atomic transactionから分離するとtransactionを短くできる。一方、pre-promotionをBusiness commitより先に完了させることで、canonical Business referenceだけが確定してbinaryが存在しない状態を防げる。appliedAtとBusiness commitを同一transactionに置く既確定規則とも整合し、crash後もcommit済み/未commitを一意に判定できる。
+
+## 81. 次の設計判断候補
+
+**pre-promoted binaryをordinary photo cache/GCから保護するtemporary protection recordの形**を確定する必要がある。
 
 背景:
-- 既確定ではCOMPLETED後にcanonical originalsをverifyしてからstaging cleanupする。
-- APPLYING transactionはBusiness/Outbox/reference changesと`appliedAt`をatomic commitする。
-- IndexedDBで大きなBlob copy/promotionを同じtransactionへ大量に含めるとtransaction時間/失敗リスクが増える。
-- 一方、Business commit後に必要binaryがcanonical storageへ存在しない状態は作れない。
+- section 80ではBusiness commit前のpre-promoted binaryはまだcanonical Businessから参照されない。
+- 通常のorphan cleanupだけを見ると削除対象に見える。
+- RestoreSession stagingとは別storageへ書き込まれたため、active RestoreSessionとの関連を明示する必要がある。
+- protection自体をBusiness/syncへ混ぜる必要はない。
 
 推奨案:
-- **APPLYING開始前に、最終apply snapshotで必要と確定したUSE_BACKUP/new entity photo binaryをstagingからcanonical photo storageへ「pre-promote」し、その存在/hashを確認してからBusiness atomic commitへ進む。**
-- pre-promoteされたbinaryはBusinessからまだ参照されないため、APPLYING commit前はtemporary protected stateとして扱う。
-- same photoId+same hashがcanonicalに既存なら再copyせずreuse。
-- same photoId+different hashはPHOTO_ID_COLLISIONとしてAPPLYINGへ進まない。
-- pre-promotion完了後にBusiness/Outbox/reference/contentHash/`appliedAt`をshort atomic transactionでcommit。
-- Business transaction abort時、pre-promoted unreferenced binaryはcleanup対象だが、retryable RestoreSessionが再利用してよい。
-- commit成功後、canonical referencesとbinary photoId/hashをverifyする。
-- verify成功後RestoreSessionをCOMPLETEDへ収束し、stagingと不要なpre-promoted orphanをidempotently cleanup。
-- crash recovery:
-  - `APPLYING + appliedAt != null`: Business commit済み。canonical binary verify→COMPLETED→cleanup。
-  - `APPLYING + appliedAt == null`: Business未commit。pre-promoted binaryがあってもsafe retry/reuse。
-- stagingはCOMPLETED statusを書いただけでは先に削除せず、canonical binary verification成功をcleanup gateとする。
+- local-only system record `RestorePromotedPhoto` を持つ。
+- keyは `[restoreSessionId, photoId]`。
+- 最小field:
+  - restoreSessionId
+  - photoId
+  - photoHash
+  - promotedAt
+- thumbnailも同じphotoIdのcanonical pairとして保護し、別recordを増やさない。
+- pre-promotion binary writeとprotection record作成は可能なら同じlocal storage transaction。
+- ordinary orphan/cache cleanupはactive/retryable RestoreSessionに紐づくprotection recordがあるphotoIdを削除しない。
+- Business commit後verification成功時にprotectionを解除し、参照済みbinaryは通常canonical lifecycleへ移行。
+- Businessに最終参照されなかったpre-promoted binaryはprotection解除後orphan cleanup。
+- startup:
+  - active/retryable sessionに属するrecordは維持。
+  - COMPLETED/CANCELLED/nonretryable terminated sessionのrecordはcanonical refsを確認後cleanup。
+  - session自体が存在しないorphan protection recordもcanonical refs確認後cleanup。
+- backup/export/sync/contentHash対象外。
 
-根拠: 大きなBlob copyとBusiness/Outbox atomic commitを分離してtransactionを短くしつつ、Business referenceがcanonical binaryより先に確定する状態を防げる。pre-promoted orphanはBusinessから未参照なので、crash/retry時にも安全に識別・再利用・cleanupできる。
+根拠: protectionを小さなlocal system metadataへ限定すれば、ordinary GCとのraceを防ぎながらBusiness modelを汚さない。session idとphoto idの組だけでcrash recovery/cleanupの所属も追跡できる。
