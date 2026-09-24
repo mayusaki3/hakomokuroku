@@ -1464,25 +1464,49 @@ Undo不能になったentryをUI表示やbinary retentionのためだけに残�
 ### 根拠
 期限内にuserが明示的にUndoしたにもかかわらず、内部lock待ち時間だけで失敗させるのはUI semanticsとして不自然である。一方、lock取得後にcurrent Business stateを再検証することで、Restore APPLYING後のstateを古いUndo snapshotで無条件に上書きすることを防げる。
 
-## 78. 次の設計判断候補
+## 78. RestoreSession RESOLVING中のphoto editとstale detection — 確定
 
-**RestoreSession RESOLVING中のphoto Undoが、保存済みrestore conflictの`existingContentHash`をstaleにする場合の扱い**を確定する必要がある。
+**確定:** RESOLVING中のphoto delete/UndoからRestoreSession conflict stateを直接更新しない。photo操作はnormal Business updateとして完了させ、Restore側の既確定contentHash-based stale detectionをauthoritativeとする。
+
+### photo側
+- delete/Undoは通常どおりparent Businessを更新する。
+- RestoreSession id / conflict idをphoto Undo entryへ保持しない。
+- 保存済みrestore conflictのexistingSnapshot / existingContentHash / resolutionをphoto操作から書き換えない。
+- RestoreSession内部stateへの双方向dependencyを作らない。
+
+### Restore側
+- conflictを再表示/再評価する時、またはfinal summary / APPLYING前revalidationでcurrent Business contentHashを比較する。
+- saved existingContentHashとcurrent hashが異なれば、既確定どおりそのconflictだけstale化する。
+- stale化時はresolutionをinvalidateし、existing snapshot/hashをcurrent stateへrefreshして再判断を要求する。
+- current Businessがbackup snapshotと一致した場合はauto UNCHANGEDへ収束可能。
+- final summary / APPLYING前revalidationがcorrectness上の最終gate。
+
+### optional early UI update
+- Business change notification等を利用してRestore UIが早期revalidationすることは許可する。
+- ただし早期notification/revalidationはoptimization/UI responsivenessであり、correctness条件ではない。
+- notification欠落時でもfinal revalidationで必ず検出できなければならない。
+
+### 根拠
+Restore conflictのstale判定は既にBusiness contentHashへ統一されている。photo Undo専用の連携を追加するとRestoreSessionと通常Business編集の双方向依存が増える。contentHash-based final revalidationへ統一すれば、photo以外の通常編集も同じ規則で処理できる。
+
+## 79. 次の設計判断候補
+
+**Restore APPLYINGがphoto Undo grace中のunreferenced binaryを必要とする場合のcleanup競合**を確定する必要がある。
 
 背景:
-- RESOLVING中はnormal Business editを許可する既確定仕様。
-- photo delete/Undoはいずれもnormal Business updateなのでparent contentHashが変化する。
-- restore conflictは保存時のexistingContentHashを持ち、APPLYING前にcurrent hashとの差を再検証してstale化する設計。
-- Undoのたびにrestore UIへ即時stale通知を反映するか、最終revalidation時だけ検出するかで実装複雑度が変わる。
+- photo delete後のoriginal/thumbnailは10秒Undo grace終了までlocalに保持する。
+- RestoreSession stagingはbackup内binaryを独立保持するため、通常はUndo用binaryへ依存しない。
+- ただしRestoreがKEEP_EXISTING/current Business側のphotoを参照する場合や、同時cleanupが走る場合、canonical/cache binary lifecycleとの境界を明確にしておく必要がある。
+- Business correctnessをephemeral Undo retentionへ依存させるべきではない。
 
 推奨案:
-- **photo delete/Undo側からRestoreSession conflictを直接更新しない。既存のcontentHash-based stale detectionへ完全に委ねる。**
-- RESOLVING中のdelete/Undoは通常Business updateとして完了させる。
-- 保存済みconflictのexistingSnapshot/existingContentHash/resolutionをその場で書き換えない。
-- Restore UIが該当conflictを再表示・再評価する時、またはfinal summary/APPLYING前revalidation時にcurrent contentHashと比較する。
-- mismatchなら既確定どおりそのconflictだけstale化し、resolutionをinvalidate、existing snapshot/hashをrefreshして再判断を要求する。
-- current Businessがbackup snapshotと一致した場合は既確定どおりauto UNCHANGED。
-- photo Undo queueはRestoreSession id/conflict idを保持しない。
-- RestoreSession側もUndo ephemeral stateを参照しない。
-- optional UIとしてBusiness change notificationを受けて早期revalidationしてもよいが、correctness要件にはしない。
+- **Restore APPLYINGはphoto Undo用ephemeral binaryを入力sourceとして利用しない。**
+- USE_BACKUPに必要なbinaryはRestoreSession stagingからpromoteする。
+- KEEP_EXISTING/UNCHANGEDはcurrent canonical Businessを変更しないため、binaryを新規promoteする必要はない。
+- current Businessが参照するcanonical originalは既確定のcache/upload-state rulesで保護し、Undo queueとは独立する。
+- photo deleteによりunreferencedとなったbinaryはUndo grace終了後cleanup可能で、RestoreSessionがそれを理由に保持延長しない。
+- Restore conflict existingSnapshotにはbinary本体を格納せず、Business/photo identity metadataのみを保持する。
+- APPLYING前revalidationでcurrent Business photo refsが変化していればcontentHash mismatchとしてstale処理する。
+- cleanupとRestore APPLYINGが競合しても、Restoreが必要なbackup binaryはstagingにあるためcorrectnessへ影響しない。
 
-根拠: restore stale判定は既にBusiness contentHashを唯一の検出機構として設計済みであり、photo UndoからRestoreSession内部stateを直接操作すると双方向依存が生じる。最終revalidationをauthoritativeにすれば、通常編集・photo操作・将来の別編集も同じ仕組みで扱える。
+根拠: Restoreの入力をstagingへ閉じ、Undoの短期binary retentionと分離すれば、cleanup timingがRestore correctnessへ影響しない。ephemeral UI機能をrestore transactionのhidden dependencyにしないための境界として明確である。
