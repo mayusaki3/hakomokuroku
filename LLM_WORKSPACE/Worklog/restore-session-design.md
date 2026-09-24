@@ -1386,25 +1386,55 @@ indexだけではgrace中の追加・削除・並べ替えで位置の意味が�
 ### 根拠
 各deleteをnormal Business operationのまま維持しつつ、短時間の連続誤削除を救済できる。LIFOは直近操作を戻す期待と一致し、単一surfaceならmobile UIも複雑化しにくい。
 
-## 75. 次の設計判断候補
+## 75. photo削除Undo grace中のsync — 確定
 
-**photo削除Undoの10秒grace中にsyncが走ることを許可するか**を確定する必要がある。
+**確定:** 10秒のUndo grace中でも通常syncを停止しない。Undoはpresentation上の短期救済であり、sync protocolの待機条件にはしない。
+
+### delete後
+- delete commit後のparent Outbox updateは通常どおりPush対象。
+- Undo entryの存在を理由にsync schedulerをpauseしない。
+- 10秒timerとsync retry/backoffは独立する。
+
+### Push前にUndoされた場合
+- Undoはcurrent Business stateに対するnormal update。
+- 既確定のOutbox folding ruleを適用する。
+- folding結果としてdelete後の中間parent stateをserverへ送らずに済む場合がある。
+- correctnessは中間状態が送信されるかどうかに依存しない。
+
+### deleteがserver APPLIED後にUndoされた場合
+- Undoは次のnormal Business updateとしてphoto referenceを戻す。
+- server側でunreferencedとなったphoto originalがまだ存在する場合は既存photoId/hashを利用できる。
+- server blobが既にGC済みになる時間幅ではないが、一般則としてblob unavailableなら既確定のPHOTO_BLOB_NOT_AVAILABLE/reupload ruleに従う。
+- upload/server responseだけからUndo entryを変更・延長しない。
+
+### conflict
+- sync conflictがgrace中に発生してもUndo timerは延長しない。
+- Undo操作はlocal current stateへのnormal editとして既確定のSyncConflict規則に従う。
+- Undo entryは独自のserver revision/baseRevisionを保持しない。
+- Undo実行時のcurrent local sync stateを利用する。
+
+### 根拠
+Undoの一時UI stateをsync schedulerのprotocol条件にすると、network retry/conflict/offlineとの組合せが増える。既存のOutbox folding、idempotent photo upload、SyncConflict規則でdelete→Undoを通常の連続Business updateとして処理できるため、両者を独立させる方が単純で堅牢。
+
+## 76. 次の設計判断候補
+
+**photo削除Undo中にparent自体が削除された場合のUndo entry処理**を確定する必要がある。
 
 背景:
-- section 72/74ではdelete自体を即時normal Business updateとしてcommitする。
-- したがってOutbox DELETE相当のparent updateが10秒内にserverへPushされる可能性がある。
-- その後Undoすると、serverにはdelete updateの後にrestore-reference updateがPushされる。
-- syncを10秒止めればnetwork churnは減るが、Undo UIというpresentation concernがsync schedulerへ影響する。
-- sync conflictが間に入る可能性もある。
+- section 73ではparent自体が存在しない場合はphoto Undo不能としている。
+- section 74では複数Undo entryをqueue保持する。
+- parent削除後も10秒満了まで無効entryを残すことは可能だが、UI件数やbinary retentionが実際にはUndo不能な項目を示すことになる。
+- Box削除時はItemをUNASSIGNEDへ移す既確定仕様があり、parent entityの種類によって削除時の周辺処理が異なる。
 
 推奨案:
-- **Undo grace中でも通常syncを止めない。**
-- delete commit後のOutboxは通常どおりPush対象。
-- Undoされた場合はcurrent Outbox folding ruleに従って新しいparent updateを生成/foldする。
-- delete updateがまだ未送信なら、fold結果としてserverに中間delete状態を送らずに済む場合がある。
-- delete updateが既にserver APPLIEDなら、Undoは次のnormal updateとしてphoto referenceを戻す。
-- sync conflictが発生した場合、Undoはlocal current stateへのnormal editとして扱い、既確定のSyncConflict規則に従う。
-- Undo entryはserver revision/baseRevisionを独自に保持せず、実行時のcurrent local sync stateを使う。
-- sync成功/失敗を理由に10秒Undo timerを延長しない。
+- **parent削除commit時に、そのparentを対象とする未expire photo Undo entryを即時invalidateしてqueueから除外する。**
+- invalidateされたentryはUIのUndo可能件数に含めない。
+- そのentryだけを理由に保持していたunreferenced original/thumbnailはcleanup可能にする。
+- parent削除操作そのものをphoto Undoで巻き戻さない。
+- parent削除に独自Undoを設ける場合は別仕様とし、photo Undo queueへ混在させない。
+- ItemがBox削除によってUNASSIGNEDへ移動する場合、Item entity自体は削除されないため、そのItemをparentとするphoto Undo entryはinvalidateしない。
+- Box自身のphoto entryはBox削除でinvalidate。
+- BoxLocation parentが削除される場合はそのBoxLocation photo entryをinvalidate。
+- race時はUndo実行時にもparent existenceを再確認し、既に削除済みならfail/invalidateする。
 
-根拠: Undoのためにsync schedulerを停止するとUIの一時状態がprotocol correctnessへ入り込み複雑になる。既存のOutbox folding/idempotent photo upload/conflict rulesで中間状態を安全に処理できるため、syncとUndoを独立させる方が単純。
+根拠: Undo不能になったentryをUIとbinary retentionに残す意味がなく、parent identityの存続を基準にすれば一貫する。ItemのBox移動はparent Itemが存続するため、既確定のownership ruleとも整合する。
