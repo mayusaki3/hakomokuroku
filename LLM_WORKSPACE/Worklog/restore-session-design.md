@@ -1416,25 +1416,46 @@ indexだけではgrace中の追加・削除・並べ替えで位置の意味が�
 ### 根拠
 Undoの一時UI stateをsync schedulerのprotocol条件にすると、network retry/conflict/offlineとの組合せが増える。既存のOutbox folding、idempotent photo upload、SyncConflict規則でdelete→Undoを通常の連続Business updateとして処理できるため、両者を独立させる方が単純で堅牢。
 
-## 76. 次の設計判断候補
+## 76. parent削除時のphoto Undo entry invalidation — 確定
 
-**photo削除Undo中にparent自体が削除された場合のUndo entry処理**を確定する必要がある。
+**確定:** parent削除commit時に、そのparentを対象とする未expire photo Undo entryを即時invalidateし、Undo queueから除外する。
+
+### invalidation
+- invalidateされたentryはUIのUndo可能件数に含めない。
+- そのentryだけを理由に保持していたunreferenced original/thumbnailはcleanup可能。
+- parent削除操作そのものをphoto Undoから巻き戻さない。
+- parent削除にUndoを設ける場合は別仕様とし、photo Undo queueへ混在させない。
+- race対策としてUndo実行時にもparent existenceを再確認し、既に削除済みならfail/invalidateする。
+
+### entity別
+- Box自身をparentとするphoto Undo entryはBox削除でinvalidate。
+- BoxLocation自身をparentとするphoto Undo entryはBoxLocation削除でinvalidate。
+- Item自身が削除された場合、そのItemをparentとするentryをinvalidate。
+- Box削除によってItemが`UNASSIGNED`へ移動する場合、Item entity自体は存続するため、そのItemをparentとするphoto Undo entryは維持する。
+- Itemの通常Box間移動でもItem.idは不変なのでinvalidateしない。
+
+### 根拠
+Undo不能になったentryをUI表示やbinary retentionのためだけに残す意味がない。photo ownershipはparent entity identityに固定されているため、parent identityの存続を基準にinvalid/validを判断すれば一貫する。Box削除時のItem→UNASSIGNEDもItem identityが存続するので例外処理を増やさず扱える。
+
+## 77. 次の設計判断候補
+
+**photo Undo操作とRestoreSession APPLYINGのBusiness write lockが競合した場合、10秒期限をどの時点で判定するか**を確定する必要がある。
 
 背景:
-- section 73ではparent自体が存在しない場合はphoto Undo不能としている。
-- section 74では複数Undo entryをqueue保持する。
-- parent削除後も10秒満了まで無効entryを残すことは可能だが、UI件数やbinary retentionが実際にはUndo不能な項目を示すことになる。
-- Box削除時はItemをUNASSIGNEDへ移す既確定仕様があり、parent entityの種類によって削除時の周辺処理が異なる。
+- RestoreSession APPLYING中は既確定どおりconflicting Business writeをserialize/waitさせる。
+- photo Undoは10秒の短いgraceを持つ。
+- userが9秒時点で「元に戻す」を押しても、APPLYING lock待ちの間に10秒を超える可能性がある。
+- commit時刻だけでexpiry判定すると、期限内に操作したuserのUndoがsystem lockのため失敗する。
 
 推奨案:
-- **parent削除commit時に、そのparentを対象とする未expire photo Undo entryを即時invalidateしてqueueから除外する。**
-- invalidateされたentryはUIのUndo可能件数に含めない。
-- そのentryだけを理由に保持していたunreferenced original/thumbnailはcleanup可能にする。
-- parent削除操作そのものをphoto Undoで巻き戻さない。
-- parent削除に独自Undoを設ける場合は別仕様とし、photo Undo queueへ混在させない。
-- ItemがBox削除によってUNASSIGNEDへ移動する場合、Item entity自体は削除されないため、そのItemをparentとするphoto Undo entryはinvalidateしない。
-- Box自身のphoto entryはBox削除でinvalidate。
-- BoxLocation parentが削除される場合はそのBoxLocation photo entryをinvalidate。
-- race時はUndo実行時にもparent existenceを再確認し、既に削除済みならfail/invalidateする。
+- **Undoの期限判定はuser actionを受理した時点で行い、期限内に受理済みならRestore APPLYING等の内部lock待ちで10秒を超えても、そのUndo attempt自体は有効とする。**
+- Undo button/action handlerでentryが未expireか確認し、validならentryを`CLAIMED`相当のephemeral実行中状態にして二重Undoを防ぐ。
+- その後Business write lock取得を待つ。
+- lock取得後はparent existence、same photoId duplicate、必要binary存在などsection 72/73/76の実行時条件を再検証する。
+- 再検証成功ならnormal Business updateとしてUndo commit。
+- 再検証失敗ならUndo失敗とし、entryを復活させない。
+- user action受理前に10秒を超えていたentryはUndo不可。
+- network/sync lock待ちを理由にtimer自体を延長するわけではなく、その1回のaccepted Undo intentだけを保護する。
+- CLAIMED stateはephemeralで、app終了/reload/crashを跨いで保証しない。
 
-根拠: Undo不能になったentryをUIとbinary retentionに残す意味がなく、parent identityの存続を基準にすれば一貫する。ItemのBox移動はparent Itemが存続するため、既確定のownership ruleとも整合する。
+根拠: userが期限内に明示操作したにもかかわらず内部transaction lockの待ち時間だけで失敗させるのはUI semanticsとして不自然。一方、受理後にもBusiness stateを再検証すれば、Restore APPLYING後の状態を無条件に上書きすることは避けられる。
