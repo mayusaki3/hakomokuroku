@@ -1261,25 +1261,40 @@ provenanceの実用目的はactive recovery replacementと旧originalの対応�
 ### 根拠
 v0.8でdirect photo moveを許す必要性は低く、photo ownership・recovery provenance・backup・syncの例外を増やす。主要な「Itemを別の箱へ移す」操作ではItem identity自体が維持されるため、photo ownership固定でも実用上の制約にならない。
 
-## 70. 次の設計判断候補
+## 70. 複数parent登録optimization — 対象外
 
-**同じ端末で同一source photoを複数parentへ登録するとき、encode済みbinaryを処理中だけ再利用するか**を確定する必要がある。
+**整理:** 同一`photoId`の複数Business parent参照は既確定の`1 photoId = exactly 1 Business parent` ruleにより禁止されている。
+
+section 69でいう「別parentへnew photoとして登録」は、必要時に通常の独立photo registrationを行うという意味であり、同一sourceを複数parentへ一括登録する機能を要求するものではない。
+
+したがって、複数parent登録を前提としたencode result共有/batch optimizationはv0.8の設計対象から外す。persistent dedup/shared photo identityも導入しない。
+
+## 71. 次の設計判断候補
+
+**parentからphotoを削除した時点で、そのphotoがまだ`PENDING/UPLOADING`の場合のlocal binary/upload cleanup**を確定する必要がある。
 
 背景:
-- section 69では別parentへ登録するとnew photoIdを発行するが、同じactual image bytesならphotoHashが同一でもよい。
-- 同一sourceを複数parentへ連続登録する場合、毎回decode/encodeするとCPU負荷が増える。
-- 一方、photo identityはparentごとに独立しており、persistent dedup/shared blobを導入するとownership/GC/server storage semanticsが複雑になる。
-- 既確定方針は「no dedup、same image can repeat with different IDs」。
+- photo ownershipは1 parent固定。
+- parentからphoto referenceが外れれば、そのphotoはBusiness上unreferencedになる。
+- upload開始前なら不要なserver uploadを止められる。
+- `UPLOADING`中はnetwork request cancelとserver commitが競合し、cancelしてもserver側へblobが保存済みの場合がある。
+- server側のunreferenced originalは既確定で30日GC対象。
 
 推奨案:
-- **persistent dedupは行わないが、単一user action/batch registration処理中に限り、validation済みencode resultをmemory/tempで再利用してよい。**
-- parentごとにnew `photoId`。
-- actual original bytesを再利用する場合は同じ`photoHash`になってよい。
-- thumbnail bytes/hashも同じでよい。
-- local/server canonical recordsはphotoId単位で独立。
-- delete/GC/upload stateもphotoId単位。
-- process終了後に共有tempを破棄し、persistent content-addressed shared blob storeはv0.8で導入しない。
-- 1つのparent登録transaction failureが他parentのcanonical commitをrollbackしない。batch全体atomicityは要求しない。
-- userが明示的に複数parentへ同じ写真を登録するUIを持たない場合でも、内部実装上このoptimizationを許容するだけで必須ではない。
+- **photo reference削除をBusiness上のauthoritative eventとし、unreferencedになったphotoのpending uploadは不要扱いにする。**
+- `PENDING`:
+  - upload queue/pending stateを同じlocal Business transactionで削除。
+  - local original/thumbnailはtransaction commit後にcleanup可能。
+- `UPLOADING`:
+  - in-flight requestへbest-effort abortを要求。
+  - local stateでは削除済みphotoとして扱い、responseが後着してもparent referenceを復活させない。
+  - serverにblobが保存済みでもunreferenced blobとして30日GCへ委ねる。
+- `CONFIRMED`:
+  - parent reference削除後、local binaryは通常のunreferenced cleanup対象。
+  - server blobは即時delete APIを要求せず30日GC。
+- photo削除とparent `contentHash` / `updatedAt` / Outbox update / upload pending state解除は、可能な範囲で同一short IndexedDB transaction。
+- binary Blob自体の重いcleanupはcommit後にidempotently実施してよい。
+- crashでorphan local binaryが残った場合はstartup/maintenance cleanupで回収する。
+- upload success responseだけを根拠に削除済みphotoを再作成しない。
 
-根拠: no-dedupという単純なcanonical modelを維持しながら、同一操作中の不要なcodec処理だけ削減できる。optimizationを仕様上許可するが、correctnessは再利用の有無に依存しない。
+根拠: Business parent referenceを唯一のownership authorityにすれば、upload raceのためにphotoを復活させる必要がない。server側は既存のunreferenced GCを利用でき、local transactionも短く保てる。
