@@ -1138,30 +1138,53 @@ server存在確認前にlocal唯一copyをevictすると写真を永久消失さ
 ### 根拠
 thumbnail等から失われたoriginalと同一bytes/photoHashを再構成することはできないためidentityを偽装してはならない。一方、箱内部など再撮影が困難な記録では、残存thumbnailから得られる視覚情報にも実用価値がある。したがって「真正な復元」と「代替画像の再生成」を明確に分離し、後者をnew photo identityのnormal replacementとしてユーザーが選択できる設計がdata integrityと実用性を両立する。
 
-## 65. 次の設計判断候補
+## 65. missing original replacement generation scope — 確定
 
-**thumbnailから代替画像を再生成する場合、v0.8でどの再生成方式まで標準機能として提供するか**を確定する必要がある。
+**確定:** v0.8では残存thumbnailをsourceとしてlocal deterministic replacementを生成し、new photoとして登録できる機能までを標準recoveryとする。AI super-resolution / generative restorationはv1.0以降のoptional recoveryへ分離する。
+
+### v0.8 local recovery
+- remaining thumbnailをsource imageとしてnormal canonical photo pipelineへ入力する。
+- canonical replacement originalはthumbnailの実pixel dimensionsを維持し、情報量を増やす目的のupscaleは行わない。
+- sourceが400px未満でもno-upscale。
+- normal photo validation、thumbnail generation、hash計算、atomic local commitを通す。
+- new `photoId` / new `photoHash`を発行する。
+- parent photo referenceはnormal replacementとして更新する。
+- recovery UIでは「低解像度の代替画像」であり、失われた元写真そのものではないことを明示する。
+- UI表示上の拡大scaleは許可するが、canonical binaryを単純upscaleして情報が復元されたようには扱わない。
+- local recoveryはnetwork/AI/provider availabilityへ依存しない。
+
+### v1.0以降のAI recovery
+- AI super-resolution / generative restorationはexplicit user actionでのみ実行する。
+- outputはnew `photoId` / new `photoHash`のreplacement photo。
+- generated/restored replacementであることを明示し、真正なoriginal recoveryとは呼ばない。
+- provider/network/AI failure時もv0.8 local thumbnail recoveryを利用可能に保つ。
+- AI-generated detailを旧`photoHash`へ関連付けてoriginal identityを偽装しない。
+
+### 根拠
+v0.8のdata recoveryをAI/network/providerに依存させず、残存する実データを最大限そのまま保存できる。AI restorationは再撮影困難時に有用だが、元画像に存在しなかったdetailを生成し得るため、Vision/LLMを含むv1.0側の明示的optional recoveryとして分離する。
+
+## 66. 次の設計判断候補
+
+**低解像度replacementを作成した後、後日backup等から真正originalが見つかった場合の復旧方針**を確定する必要がある。
 
 背景:
-- section 64で代替画像再生成をrecovery optionとして許可した。
-- 単純なthumbnailのupscaleはoffline/localで実行でき、元にない情報を積極的に生成しない。
-- AI super-resolution / generative restorationは視認性を改善できる可能性があるが、元に存在しなかったdetailを生成する可能性があり、Vision/LLM機能はv1.0 scope。
-- recovery機能がexternal AI availabilityへ依存するとv0.8のbackup/data recovery要件が複雑になる。
+- section 65ではmissing旧photoをthumbnail由来new photoへreplacementするため、parentのactive referenceはnew photoIdへ変わる。
+- 後日、backup等から旧`photoId/photoHash`と一致する真正originalが見つかる可能性がある。
+- active parentには既にreplacement photoが存在するため、単純に旧photoを自動復帰するとユーザーがreplacement後に行った判断を覆す可能性がある。
+- 一方、真正originalの方が高品質であり、ユーザーが戻したい可能性は高い。
 
 推奨案:
-- **v0.8ではlocal deterministic replacementとしてthumbnailをそのままcanonical photo pipelineへ入力してnew photoとして登録できる機能までを標準とし、AIによるsuper-resolution/generative restorationはv1.0以降の任意機能に分離する。**
-- v0.8 recovery:
-  - remaining thumbnailをsource imageとして扱う。
-  - no-upscaleを基本とし、そのthumbnail dimensionsのままcanonical original WebPとしてnew photoId/photoHashを生成する。
-  - normal photo validation/thumbnail generation/atomic commitを通す。
-  - 「低解像度の代替画像」であることをUIで明示する。
-- 画像を大きく見せるためのUI表示scaleは可能だが、canonical bytesを単純upscaleして情報量が増えたように扱わない。
-- v1.0+ AI recoveryを追加する場合:
-  - explicit user action。
-  - generated/restoredであることを明示。
-  - new photoId/photoHash。
-  - original recoveryとは呼ばない。
-  - provider失敗でもv0.8 local recovery optionを失わない。
-- backup restoreで真正originalを後から取得できた場合のreplacement方針は別途決定する。
+- **真正originalを発見しても自動的にactive parentへ戻さず、ユーザーへ「元写真を復元する」選択肢を提示する。**
+- recovery provenanceとしてreplacement作成時に`replacesMissingPhotoId` / old `photoHash`相当のlocal recovery metadataを保持し、後から真正originalとの対応を判定できるようにする。
+- backup restore PREPARINGで旧photoId/hashが見つかり、現在parentにそのrecovery replacementがある場合はspecial recovery candidateとして表示する。
+- userが真正original復帰を選択:
+  - parent active referenceを旧canonical photoId/photoHashへ戻す。
+  - replacement photoは自動削除せず、同時に保持するか削除するかをユーザー選択にする。
+  - parent contentHash/updatedAt/Outboxはnormal Business update。
+- userが現在replacement維持を選択:
+  - active reference変更なし。
+  - 真正originalを不要にcanonical active storageへ追加しない。backup stagingからcleanup可能。
+- 自動winnerをupdatedAt/quality/dimensionsで決めない。
+- provenance metadataはBusiness identity/hashへ混ぜずlocal recovery/history用途とする。
 
-根拠: v0.8のdata recoveryをAI/network/providerへ依存させず、残っている実データを最大限保持できる。AI生成detailは有用でも真正性が異なるため、Vision/LLMを含むv1.0側で明示的なoptional recoveryとして扱う方がscopeとdata integrityを保ちやすい。
+根拠: 真正originalは品質面で有利でも、replacement作成後の現在状態を無断で巻き戻すべきではない。旧identityとの対応だけsystemが提示し、active photo selectionはユーザーに委ねる方がrestore conflict policyとも整合する。
