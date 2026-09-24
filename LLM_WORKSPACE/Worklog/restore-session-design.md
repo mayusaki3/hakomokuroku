@@ -1299,29 +1299,54 @@ section 69でいう「別parentへnew photoとして登録」は、必要時に�
 ### 根拠
 parent referenceを唯一のownership authorityにすると、network raceやcrash時にもBusiness stateが一意になる。server側は既存のunreferenced GCを再利用でき、即時remote deleteやupload cancellation成功をBusiness correctness条件にする必要がない。
 
-## 72. 次の設計判断候補
+## 72. photo削除直後のUI Undo — 確定
 
-**photoを削除した直後のUndoをv0.8で提供するか**を確定する必要がある。
+**確定:** v0.8ではphoto削除直後に10秒間のUI Undoを提供する。削除そのものは即時にnormal Business updateとしてcommitし、Undoはそのcommitを取り消す特殊rollbackではなく、新しいnormal Business updateとしてphoto referenceを戻す。
+
+### delete
+- parentからphoto referenceを削除し、parent `contentHash` / `updatedAt` / Outboxをnormal update。
+- 削除前のarray position、photoId、photoHash、およびUndoに必要な最小情報を10秒間のephemeral stateとして保持してよい。
+- local original/thumbnail binaryのphysical cleanupは10秒のgrace終了まで遅延。
+- UIは「写真を削除しました / 元に戻す」を表示する。
+
+### Undo
+- grace内かつ必要binaryがlocalに残っている場合のみ実行可能。
+- same `photoId` / `photoHash`を削除前のarray positionへ戻す。
+- parent `contentHash` / `updatedAt` / Outboxを新しいnormal Business updateとして更新する。
+- server未確認のoriginalは`PENDING`としてupload可能状態へ戻す。
+- 削除前にserver確認済みで、その確認状態を安全に保持できている場合は`CONFIRMED`へ戻してよい。
+- upload競合でserver側に既にsame photoId/hashが存在していても、PENDINGからのretryは既確定のidempotent uploadで収束できる。
+- parent自体の削除などにより安全にreferenceを戻せない場合はUndo失敗を明示する。
+
+### grace終了 / interruption
+- 10秒経過後、unreferenced local original/thumbnailは通常cleanup対象。
+- app終了、reload、crashを跨ぐUndoは保証しない。
+- startup/maintenanceでは残ったorphan binary/ephemeral stateをcleanup可能。
+- Undo専用stateはbackup/export/sync/Business contentHash対象外。
+
+### 根拠
+短時間のUndoは日常的な誤操作を低コストで救済できる。一方、Business commit自体を遅延したりpersistent undo logを導入するとsync/restoreとの整合が複雑になる。削除とUndoをそれぞれnormal Business updateにすることで既存のOutbox/sync規則をそのまま利用できる。
+
+## 73. 次の設計判断候補
+
+**10秒Undo中に同じparentへ別の編集が入った場合のphoto挿入位置**を確定する必要がある。
 
 背景:
-- section 71ではparent reference削除後にlocal binaryをcleanup可能としている。
-- UIで誤操作対策としてUndoを提供するなら、一定期間binary/reference情報を保持する必要がある。
-- 一方、Business削除を即時確定する現在の設計なら、Undo専用のtemporary tombstone/retention stateを追加することになる。
-- backup/restoreによる復旧は可能だが、日常的な誤削除には重い。
+- Undoは削除前のarray positionを保持する。
+- grace中にもphoto追加・削除・並べ替えなどのnormal editを許すと、元のindexが別の意味になる場合がある。
+- Undoのためにparent全体をlockすると日常操作を不必要に止める。
+- parent snapshot全体を巻き戻すと、Undo後に行った別編集を失うため不可。
 
 推奨案:
-- **v0.8ではphoto削除直後に短時間のUI Undoを提供する。ただしBusiness transaction自体は削除をcommitし、Undoは新しいnormal Business updateとしてreferenceを戻す。**
-- local binary cleanupは短いUndo grace期間が終わるまで遅延する。
-- 推奨grace: 10秒。
-- 削除直後にSnackbar等で「写真を削除しました / 元に戻す」を表示。
-- Undo:
-  - grace内でbinaryが残っていることを確認。
-  - same photoId/photoHashを同じarray positionへ戻す。
-  - parent contentHash/updatedAt/Outboxをnormal update。
-  - upload stateは削除前状態を安全に再構成する。server未確認ならPENDING、server確認済みならCONFIRMED。
-- grace経過後にunreferenced local binaryをcleanup。
-- app終了/crashを跨ぐUndoは保証しない。startupではorphan cleanup可能。
-- Undoをsync conflictの特別扱いにせず、通常のBusiness editとして扱う。
-- parent自体がその間に削除/変更されUndo不能なら明示的に失敗する。
+- **parentをlockせず、Undo対象photoだけを戻す。削除前の隣接photo identityをephemeral stateに保持し、可能ならその位置関係を復元する。**
+- ephemeral stateに削除前の`previousPhotoId?` / `nextPhotoId?`を保持する。
+- Undo時:
+  1. previousとnextの両方が存在し、現在もその順ならその間へ挿入。
+  2. previousのみ存在ならその直後。
+  3. nextのみ存在ならその直前。
+  4. どちらも存在しなければ、保存したoriginal indexを現在array長へclampして挿入。
+- 他のphoto追加/削除/並べ替えを巻き戻さない。
+- Undo対象photoが既に同じparentに存在する場合はduplicate referenceを作らずUndoを終了/失敗扱いとして整合を優先。
+- 10秒中の通常編集は制限しない。
 
-根拠: 10秒程度なら誤タップ救済として有効で、persistent restore subsystemを増やさず実装できる。Business履歴を巻き戻す特殊処理ではなくnormal updateとして扱えばsync設計も単純。
+根拠: indexだけより隣接photo identityの方が並び替えや追加に強く、parent全体のlock/snapshot rollbackを避けながら削除前の位置を可能な範囲で再現できる。
