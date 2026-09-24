@@ -1269,32 +1269,59 @@ section 69でいう「別parentへnew photoとして登録」は、必要時に�
 
 したがって、複数parent登録を前提としたencode result共有/batch optimizationはv0.8の設計対象から外す。persistent dedup/shared photo identityも導入しない。
 
-## 71. 次の設計判断候補
+## 71. photo削除時のpending/upload cleanup — 確定
 
-**parentからphotoを削除した時点で、そのphotoがまだ`PENDING/UPLOADING`の場合のlocal binary/upload cleanup**を確定する必要がある。
+**確定:** Business parentからphoto referenceが外れたことをownershipのauthoritative eventとし、unreferencedになったphotoのpending/upload処理は不要扱いにする。upload raceによってphoto referenceを復活させない。
+
+### PENDING
+- photo reference削除と同じlocal Business transactionでupload pending/queue stateを解除する。
+- parent `contentHash` / `updatedAt` / Outboxをnormal Business updateとして更新する。
+- transaction commit後、unreferenced local original/thumbnail binaryをcleanup可能。
+- upload workerはparent referenceが存在しないPENDING photoを送信しない。
+
+### UPLOADING
+- in-flight requestへbest-effort abortを要求する。
+- abort成功/失敗にかかわらずlocal Businessでは削除済みphotoとして扱う。
+- upload success responseが後着してもparent referenceを再作成しない。
+- serverにoriginal blobが保存済みとなった場合はunreferenced blobとして既確定の30日GCへ委ねる。
+- local upload stateは削除済みreferenceに対応する不要stateとしてcleanupする。
+
+### CONFIRMED
+- parent reference削除後、local original/thumbnailは通常のunreferenced cleanup対象。
+- server blobへ即時delete APIを要求せず、unreferenced 30日GCを利用する。
+
+### atomicity / crash recovery
+- photo reference削除、parent contentHash/updatedAt、Outbox update、pending state解除は可能な範囲で同一short IndexedDB transaction。
+- binary Blob cleanupのような重い処理はtransaction commit後にidempotently行ってよい。
+- crashでorphan local binary/stateが残った場合はstartup/maintenanceでparent referenceをauthoritative sourceとしてcleanupする。
+- upload response/stateだけから削除済みBusiness photoを復活させない。
+
+### 根拠
+parent referenceを唯一のownership authorityにすると、network raceやcrash時にもBusiness stateが一意になる。server側は既存のunreferenced GCを再利用でき、即時remote deleteやupload cancellation成功をBusiness correctness条件にする必要がない。
+
+## 72. 次の設計判断候補
+
+**photoを削除した直後のUndoをv0.8で提供するか**を確定する必要がある。
 
 背景:
-- photo ownershipは1 parent固定。
-- parentからphoto referenceが外れれば、そのphotoはBusiness上unreferencedになる。
-- upload開始前なら不要なserver uploadを止められる。
-- `UPLOADING`中はnetwork request cancelとserver commitが競合し、cancelしてもserver側へblobが保存済みの場合がある。
-- server側のunreferenced originalは既確定で30日GC対象。
+- section 71ではparent reference削除後にlocal binaryをcleanup可能としている。
+- UIで誤操作対策としてUndoを提供するなら、一定期間binary/reference情報を保持する必要がある。
+- 一方、Business削除を即時確定する現在の設計なら、Undo専用のtemporary tombstone/retention stateを追加することになる。
+- backup/restoreによる復旧は可能だが、日常的な誤削除には重い。
 
 推奨案:
-- **photo reference削除をBusiness上のauthoritative eventとし、unreferencedになったphotoのpending uploadは不要扱いにする。**
-- `PENDING`:
-  - upload queue/pending stateを同じlocal Business transactionで削除。
-  - local original/thumbnailはtransaction commit後にcleanup可能。
-- `UPLOADING`:
-  - in-flight requestへbest-effort abortを要求。
-  - local stateでは削除済みphotoとして扱い、responseが後着してもparent referenceを復活させない。
-  - serverにblobが保存済みでもunreferenced blobとして30日GCへ委ねる。
-- `CONFIRMED`:
-  - parent reference削除後、local binaryは通常のunreferenced cleanup対象。
-  - server blobは即時delete APIを要求せず30日GC。
-- photo削除とparent `contentHash` / `updatedAt` / Outbox update / upload pending state解除は、可能な範囲で同一short IndexedDB transaction。
-- binary Blob自体の重いcleanupはcommit後にidempotently実施してよい。
-- crashでorphan local binaryが残った場合はstartup/maintenance cleanupで回収する。
-- upload success responseだけを根拠に削除済みphotoを再作成しない。
+- **v0.8ではphoto削除直後に短時間のUI Undoを提供する。ただしBusiness transaction自体は削除をcommitし、Undoは新しいnormal Business updateとしてreferenceを戻す。**
+- local binary cleanupは短いUndo grace期間が終わるまで遅延する。
+- 推奨grace: 10秒。
+- 削除直後にSnackbar等で「写真を削除しました / 元に戻す」を表示。
+- Undo:
+  - grace内でbinaryが残っていることを確認。
+  - same photoId/photoHashを同じarray positionへ戻す。
+  - parent contentHash/updatedAt/Outboxをnormal update。
+  - upload stateは削除前状態を安全に再構成する。server未確認ならPENDING、server確認済みならCONFIRMED。
+- grace経過後にunreferenced local binaryをcleanup。
+- app終了/crashを跨ぐUndoは保証しない。startupではorphan cleanup可能。
+- Undoをsync conflictの特別扱いにせず、通常のBusiness editとして扱う。
+- parent自体がその間に削除/変更されUndo不能なら明示的に失敗する。
 
-根拠: Business parent referenceを唯一のownership authorityにすれば、upload raceのためにphotoを復活させる必要がない。server側は既存のunreferenced GCを利用でき、local transactionも短く保てる。
+根拠: 10秒程度なら誤タップ救済として有効で、persistent restore subsystemを増やさず実装できる。Business履歴を巻き戻す特殊処理ではなくnormal updateとして扱えばsync設計も単純。
