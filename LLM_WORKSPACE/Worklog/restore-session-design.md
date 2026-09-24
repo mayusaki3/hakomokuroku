@@ -1437,25 +1437,52 @@ Undoの一時UI stateをsync schedulerのprotocol条件にすると、network re
 ### 根拠
 Undo不能になったentryをUI表示やbinary retentionのためだけに残す意味がない。photo ownershipはparent entity identityに固定されているため、parent identityの存続を基準にinvalid/validを判断すれば一貫する。Box削除時のItem→UNASSIGNEDもItem identityが存続するので例外処理を増やさず扱える。
 
-## 77. 次の設計判断候補
+## 77. RestoreSession APPLYINGとphoto Undo expiry — 確定
 
-**photo Undo操作とRestoreSession APPLYINGのBusiness write lockが競合した場合、10秒期限をどの時点で判定するか**を確定する必要がある。
+**確定:** photo Undoの10秒期限はuser actionを受理した時点で判定する。期限内に受理済みのUndo attemptは、RestoreSession APPLYING等の内部Business write lock待ちによって10秒を超えても、そのattemptに限り有効とする。
+
+### accept / claim
+- Undo action handlerは受理時にentryのexpiryを確認する。
+- 受理時点で未expireなら、entryを`CLAIMED`相当のephemeral実行中状態へ遷移させて二重Undoを防止する。
+- 受理前にexpire済みならUndo不可。
+- CLAIMEDはtimer延長ではなく、その1回のaccepted Undo intentを表す。
+- CLAIMED stateはephemeralで、app終了/reload/crashを跨ぐ保証はしない。
+
+### lock wait / revalidation
+- accepted UndoはBusiness write lock取得を待ってよい。
+- lock待ち中に元の10秒expiryを超えても、それだけを理由に失敗させない。
+- lock取得後、少なくとも次をcurrent Business stateで再検証する:
+  - parentが存在する。
+  - Undo対象photoIdが既に同じparentに存在しない。
+  - 必要なoriginal/thumbnail binaryが利用可能。
+  - ownership ruleに違反しない。
+  - section 73のposition anchorをcurrent arrayへ安全に適用可能。
+- Restore APPLYING等によって前提が変わり再検証に失敗した場合、Undoは失敗する。
+- 再検証失敗時にexpired entryを復活させない。
+- 成功時はcurrent stateからnormal Business updateとしてcommitする。
+
+### 根拠
+期限内にuserが明示的にUndoしたにもかかわらず、内部lock待ち時間だけで失敗させるのはUI semanticsとして不自然である。一方、lock取得後にcurrent Business stateを再検証することで、Restore APPLYING後のstateを古いUndo snapshotで無条件に上書きすることを防げる。
+
+## 78. 次の設計判断候補
+
+**RestoreSession RESOLVING中のphoto Undoが、保存済みrestore conflictの`existingContentHash`をstaleにする場合の扱い**を確定する必要がある。
 
 背景:
-- RestoreSession APPLYING中は既確定どおりconflicting Business writeをserialize/waitさせる。
-- photo Undoは10秒の短いgraceを持つ。
-- userが9秒時点で「元に戻す」を押しても、APPLYING lock待ちの間に10秒を超える可能性がある。
-- commit時刻だけでexpiry判定すると、期限内に操作したuserのUndoがsystem lockのため失敗する。
+- RESOLVING中はnormal Business editを許可する既確定仕様。
+- photo delete/Undoはいずれもnormal Business updateなのでparent contentHashが変化する。
+- restore conflictは保存時のexistingContentHashを持ち、APPLYING前にcurrent hashとの差を再検証してstale化する設計。
+- Undoのたびにrestore UIへ即時stale通知を反映するか、最終revalidation時だけ検出するかで実装複雑度が変わる。
 
 推奨案:
-- **Undoの期限判定はuser actionを受理した時点で行い、期限内に受理済みならRestore APPLYING等の内部lock待ちで10秒を超えても、そのUndo attempt自体は有効とする。**
-- Undo button/action handlerでentryが未expireか確認し、validならentryを`CLAIMED`相当のephemeral実行中状態にして二重Undoを防ぐ。
-- その後Business write lock取得を待つ。
-- lock取得後はparent existence、same photoId duplicate、必要binary存在などsection 72/73/76の実行時条件を再検証する。
-- 再検証成功ならnormal Business updateとしてUndo commit。
-- 再検証失敗ならUndo失敗とし、entryを復活させない。
-- user action受理前に10秒を超えていたentryはUndo不可。
-- network/sync lock待ちを理由にtimer自体を延長するわけではなく、その1回のaccepted Undo intentだけを保護する。
-- CLAIMED stateはephemeralで、app終了/reload/crashを跨いで保証しない。
+- **photo delete/Undo側からRestoreSession conflictを直接更新しない。既存のcontentHash-based stale detectionへ完全に委ねる。**
+- RESOLVING中のdelete/Undoは通常Business updateとして完了させる。
+- 保存済みconflictのexistingSnapshot/existingContentHash/resolutionをその場で書き換えない。
+- Restore UIが該当conflictを再表示・再評価する時、またはfinal summary/APPLYING前revalidation時にcurrent contentHashと比較する。
+- mismatchなら既確定どおりそのconflictだけstale化し、resolutionをinvalidate、existing snapshot/hashをrefreshして再判断を要求する。
+- current Businessがbackup snapshotと一致した場合は既確定どおりauto UNCHANGED。
+- photo Undo queueはRestoreSession id/conflict idを保持しない。
+- RestoreSession側もUndo ephemeral stateを参照しない。
+- optional UIとしてBusiness change notificationを受けて早期revalidationしてもよいが、correctness要件にはしない。
 
-根拠: userが期限内に明示操作したにもかかわらず内部transaction lockの待ち時間だけで失敗させるのはUI semanticsとして不自然。一方、受理後にもBusiness stateを再検証すれば、Restore APPLYING後の状態を無条件に上書きすることは避けられる。
+根拠: restore stale判定は既にBusiness contentHashを唯一の検出機構として設計済みであり、photo UndoからRestoreSession内部stateを直接操作すると双方向依存が生じる。最終revalidationをauthoritativeにすれば、通常編集・photo操作・将来の別編集も同じ仕組みで扱える。
