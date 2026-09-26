@@ -1850,6 +1850,78 @@ session単位のgeneration比較だけで、background scan中に対象binary集
 ### 根拠
 容量metadataはadvisoryであるため、活発なrestore/storage操作中に正確な瞬間値を得るためのrecount stormを起こす必要はない。generationによるstale検出とsingle pending jobへのcoalescingを組み合わせれば、I/O負荷を抑えつつ最終的に最新状態へ収束できる。
 
-## 91. RestoreSession設計の未決事項棚卸し
+## 91. Restore設計簡略化レビュー — 確定
 
-section 1〜90の確定事項を対象に、v0.8実装前に決定が必須な未決事項、既存section間の矛盾、未定義のfailure/recovery pathが残っていないかを棚卸しする。新しい細目を機械的に追加せず、実装・test case作成をblockする事項だけを次の設計判断候補とする。
+section 1〜90を、機能上の小さな利点に対して実装・test・保守costが過大になっていないか再評価し、以下の簡略化方針を確定する。本sectionと今後の整理結果は、矛盾する旧sectionの記述をsupersedeする。
+
+### 91.1 Restore中の並行Business操作
+
+**確定:** Restoreはonline専用操作とし、Restore開始時にserverでUser単位のRestore lockを取得する。
+
+- Restore実行端末ではRestore開始後から完了/cancelまで通常Business変更操作を禁止する。
+- serverのRestore lock中は、同一Userの他端末からの通常Business Pushを適用しない。
+- offline端末を事前検出・追跡・待機しない。
+- offline端末は再接続後、Restore後のserver revisionに対して通常syncを行う。
+- Restore前のbaseRevisionを持つ変更は、既存のrevision/contentHashによる通常SyncConflictとして処理する。
+- offline端末専用のRestore merge protocolは追加しない。
+- 他端末の未送信OutboxをRestoreが探索・回収しない。
+
+### 91.2 Restore lockの境界
+
+- lockはUser単位とする。
+- lock取得にはserver接続を必須とする。offline Restoreは行わない。
+- Restore結果をserverへ反映し、Restoreによるserver canonical state更新が完了してからlockを解除する。
+- lock解除後の他端末同期は通常sync protocolへ戻す。
+- crash/network lossで永久lockにならないよう、server lockはlease/expiryを持つ。
+- lease更新不能時の安全な中断・再取得・再開詳細は、実装をblockする最小限だけ後続設計で確定する。
+- Restore専用の分散transactionやoffline端末lock protocolは導入しない。
+
+### 91.3 旧並行編集設計の扱い
+
+以下の旧方針は撤回し、本sectionでsupersedeする。
+
+- RESOLVING中にRestore実行端末の通常Business編集を許可する方針。
+- Restore中の通常Business編集を理由とするRestoreConflict stale再判断の複雑な連携。
+- Restore APPLYINGとphoto Undoを並行実行するための専用lock待ち/CLAIMED処理。
+- Restore中のphoto delete/Undoから生じる専用race処理。
+- section 27の「offline中でもRestoreを完了できる」という方針。
+
+contentHash/revisionによる通常SyncConflict自体は維持し、lock外に存在したoffline/他端末変更とのmergeに利用する。
+
+### 91.4 RestoreSession容量表示の簡略化
+
+**確定:** 通常のactive RestoreSession bannerではRestoreSession専用storage使用量を表示しない。
+
+section 85〜90で追加した以下の仕組みは実装対象から外す。
+- `stagingBytes`
+- `promotedBytes`
+- RestoreSession専用storage recount
+- background recount
+- `storageGeneration`
+- stale recount retry/coalescing
+
+storage不足が実際に発生した場合はsection 82のresource safety処理を使用する。`navigator.storage.estimate()`等でorigin全体の参考容量を取得できる場合はerror/diagnostic UIへ表示してよいが、RestoreSession固有占有量を正確に算出しない。
+
+section 83のactive RestoreSession bannerとsection 84の開始日時/経過時間表示は維持する。
+
+### 91.5 維持する安全性機構
+
+簡略化しても以下はdata integrityへ直接寄与するため維持する。
+- RestoreSession / staging。
+- backup integrity/hash validation。
+- Business applyのatomicity。
+- `appliedAt`によるcrash recovery。
+- photo binary pre-promotion。
+- Business commit前のpre-promoted binary protection。
+- Restore完了前のserver canonical反映。
+- lock解除後の通常revision/contentHash SyncConflict。
+
+### 根拠
+
+Restoreは通常の登録・閲覧より低頻度なmaintenance/recovery操作である。Restore中にも同一端末でBusiness編集を継続できる利便性や、bannerにRestore専用storage容量を表示する利便性のために多数のrace/state/recount処理を持つ費用は大きい。
+
+User単位のonline Restore lockにより、Restore中のonline concurrent Pushを一時的に排除できる。lock取得前からofflineだった端末の変更は、lock解除後に既存のrevision/contentHash conflict処理へ自然に流せるため、Restore専用のoffline merge機構を追加せずdata lossを防げる。
+
+## 92. 次の簡略化判断候補
+
+**RestoreHistory（旧section 28〜30）をv0.8に残すか、Restore完了後は重いsessionをcleanupして履歴機能自体を省くか**を再評価する。
