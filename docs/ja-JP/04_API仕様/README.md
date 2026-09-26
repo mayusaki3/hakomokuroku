@@ -7,38 +7,41 @@ document_type: index
 canonical_document: true
 -->
 
-[目次](../README.md) > API仕様 > API仕様 目次
+[目次](../README.md) > API仕様
 
 # API仕様 目次
 
-本書は API仕様群の目次である。
+## 00 ライブラリ
+- [lib/db ローカルDBラッパー](./00_ライブラリ/lib_db_local.md)
+- [server/auth](./00_ライブラリ/server_auth.md)
+- [server/crypto](./00_ライブラリ/server_crypto.md)
 
----
+## 共通仕様
+- [共通仕様](./00_共通仕様.md)
+- [エラー仕様詳細](./10_エラー仕様詳細.md)
+- [セッション仕様](./55_セッション仕様.md)
 
-## ユーザー認証API
+## 01 ユーザー認証API
+- [ログイン](./01_ユーザー認証API/api_auth_login.md)
+- [TOTPログイン](./01_ユーザー認証API/api_auth_login_totp.md)
+- [ログアウト](./01_ユーザー認証API/api_auth_logout.md)
+- [認証状態取得](./01_ユーザー認証API/api_auth_me.md)
+- [ユーザー登録](./01_ユーザー認証API/api_auth_register.md)
+- [トークン一覧取得](./01_ユーザー認証API/api_auth_tokens.md)
+- [トークンラベル更新](./01_ユーザー認証API/api_auth_tokens_label.md)
+- [トークン失効](./01_ユーザー認証API/api_auth_tokens_revoke.md)
+- [全トークン失効](./01_ユーザー認証API/api_auth_tokens_revokeAll.md)
+- [TOTP初期設定](./01_ユーザー認証API/api_auth_totp_setup.md)
+- [TOTP状態取得](./01_ユーザー認証API/api_auth_totp_status.md)
+- [TOTP検証](./01_ユーザー認証API/api_auth_totp_verify.md)
+- [TOTP無効化](./01_ユーザー認証API/api_auth_totp_disable.md)
+- [TOTPリカバリーコード再発行](./01_ユーザー認証API/api_auth_totp_recovery_reissue.md)
 
-- [ログイン（POST /api/auth/login）](./01_ユーザー認証API/api_auth_login.md)
-- [TOTPログイン（POST /api/auth/login/totp）](./01_ユーザー認証API/api_auth_login_totp.md)
-- [ログアウト（POST /api/auth/logout）](./01_ユーザー認証API/api_auth_logout.md)
-- [認証状態取得（GET /api/auth/me）](./01_ユーザー認証API/api_auth_me.md)
-- [ユーザー登録（POST /api/auth/register）](./01_ユーザー認証API/api_auth_register.md)
-- [トークン一覧取得（GET /api/auth/tokens）](./01_ユーザー認証API/api_auth_tokens.md)
-- [トークンラベル更新（PUT /api/auth/tokens/label）](./01_ユーザー認証API/api_auth_tokens_label.md)
-- [トークン失効（DELETE /api/auth/tokens/revoke）](./01_ユーザー認証API/api_auth_tokens_revoke.md)
-- [全トークン失効（POST /api/auth/tokens/revokeAll）](./01_ユーザー認証API/api_auth_tokens_revokeAll.md)
-- [TOTP初期設定（POST /api/auth/totp/setup）](./01_ユーザー認証API/api_auth_totp_setup.md)
-- [TOTP状態取得（GET /api/auth/totp/status）](./01_ユーザー認証API/api_auth_totp_status.md)
-- [TOTP検証（POST /api/auth/totp/verify）](./01_ユーザー認証API/api_auth_totp_verify.md)
-- [TOTP無効化（POST /api/auth/totp/disable）](./01_ユーザー認証API/api_auth_totp_disable.md)
-- [TOTPリカバリーコード再発行（POST /api/auth/totp/recovery/reissue）](./01_ユーザー認証API/api_auth_totp_recovery_reissue.md)
+## 02 設定API
+- [ユーザー設定取得・更新](./02_設定API/api_settings_user.md)
+- [アクティブテーマ取得](./02_設定API/api_settings_theme_active.md)
 
----
+## 03 ユーザー情報API
+- [ユーザーアイコン更新](./03_ユーザー情報API/api_user_icon.md)
 
-## 設定API
-
-- [ユーザー設定取得・更新（GET/PUT /api/settings/user）](./02_設定API/api_settings_user.md)
-- [アクティブテーマ取得（GET /api/settings/theme/active）](./02_設定API/api_settings_theme_active.md)
-
----
-
-[目次](../README.md) > API仕様 > API仕様 目次
+[目次](../README.md) > API仕様
