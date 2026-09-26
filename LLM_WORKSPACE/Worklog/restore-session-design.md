@@ -1772,6 +1772,34 @@ RestoreSessionまたはRestoreSessionに紐づくlocal-only集計metadataとし�
 ### 根拠
 容量metadataはadvisoryであり、正常時に全binaryを定期走査するI/Oコストを負担する必要はない。具体的な不整合可能性が生じた場合だけ実体から再構築すれば、section 86のincremental管理の利点を維持しつつ表示値の自己修復性も確保できる。
 
-## 88. 次の設計判断候補
+## 88. RestoreSession storage recount execution — 確定
 
-**RestoreSessionのstorage容量recountをforegroundで完了待ちするか、backgroundで実行して完了後にbanner表示を更新するか**を確定する必要がある。
+**確定:** storage metadataのrecountが必要な場合はbackgroundで実行し、app起動・通常操作・RestoreSession UI表示をrecount完了待ちでblockしない。完了後にbanner等の容量表示を更新する。
+
+### recount中
+- active RestoreSession banner自体は通常どおり表示する。
+- 容量欄は「計算中…」等のnon-blocking状態表示、または一時省略としてよい。
+- `再開` / `キャンセル`等、当該RestoreSession stateで本来可能な操作を容量recountだけを理由にdisableしない。
+- appの通常Box/Item操作もrecount完了待ちにしない。
+
+### 完了
+- recount成功後、`stagingBytes` / `promotedBytes` metadataを再構築し、banner等を最新値へ更新する。
+- 表示はsection 85どおりadvisoryな概算容量として扱う。
+
+### failure
+- recount失敗時は容量表示を省略してよい。
+- failureだけを理由にRestoreSessionをERRORへ遷移させない。
+- diagnostic情報を保持し、section 87の適切な後続契機でretry可能とする。
+- restore correctnessに必要なbinary/hash/state検証とは独立させる。
+
+### concurrency
+- recount中にstaging/pre-promotion/cleanup等で対象binaryが変化し得る場合、集計結果を無条件に古いsnapshotとして上書きしない。
+- implementationではgeneration/version等によりrecount開始時点から対象集合が変更されたことを検出するか、最終反映時に再整合可能な方法を採用する。
+- stale recount結果は破棄または再実行し、incremental更新を巻き戻さない。
+
+### 根拠
+容量情報はUI用advisory metadataであり、その算出のために利用者操作を待たせる必要はない。background化により大量photoを持つsessionでも起動性能を維持できる。一方、recountと同時にbinary集合が変化するraceを明示的に扱うことで、古い集計値によるmetadata巻き戻しを防ぐ。
+
+## 89. 次の設計判断候補
+
+**background recountとincremental storage metadata更新のraceを防ぐgeneration/versionをどの単位・形式で持つか**を確定する必要がある。
