@@ -1637,29 +1637,38 @@ pre-promoted binaryはBusiness commit前には通常のreference scanだけで�
 ### 根拠
 resumable restoreを保証するにはstaging/protected binaryをcacheと同列にevictできない。storage pressure時にsilent data lossや部分restoreを選ぶより、通常cacheを先に解放し、それでも不足する場合はuserへ明示的な判断を委ねる方がatomicityと予測可能性を維持できる。
 
-## 83. 次の設計判断候補
+## 83. 長期間放置されたactive RestoreSessionの起動時提示 — 確定
 
-**長期間放置されたactive RestoreSessionを起動時にどのように提示するか**を確定する必要がある。
+**確定:** app起動時にactive/retryable RestoreSessionを検出した場合、persistent but non-blocking bannerで利用者へ明示する。通常利用は原則許可し、新しいrestore開始のみ禁止する。ageだけを理由としたautomatic cancel/deleteは行わない。
 
-背景:
-- section 82によりactive/retryable sessionはageだけでautomatic cancelしない。
-- stagingは大容量になり得るため、userがrestore途中であることを忘れるとstorageを占有し続ける。
-- 一方、毎回modalで強制すると通常利用を妨げる。
-- APPLYINGはcancel不可だが、RESOLVING/retryable ERROR等はresume/cancel可能。
+### PREPARING / RESOLVING / retryable ERROR
+- 「復元作業が途中です」等のbannerを表示する。
+- 通常のBox/Item閲覧・編集は既確定規則に従い許可する。
+- `再開`を提示する。
+- cancel可能stateでは`キャンセル`も提示する。
+- storage使用量を取得可能なら併記する。
+- active session中は新規restore file選択/開始をdisableする。
 
-推奨案:
-- **app起動時にactive RestoreSessionを検出したらpersistent but non-blocking bannerを表示し、通常利用を許可する。ただし新しいrestore開始だけは禁止する。**
-- PREPARING/RESOLVING/retryable ERROR:
-  - 「復元作業が途中です」banner。
-  - `再開`と、cancel可能なら`キャンセル`を提示。
-  - storage使用量を取得可能なら併記。
-  - 通常のBox/Item閲覧・編集は既確定どおり許可。
-- APPLYING:
-  - normal editとのwrite serializationが必要なため、recovery/convergenceを自動開始。
-  - UIは「復元処理を完了しています」等の進行状態を表示。
-  - cancelは表示しない。
-- active sessionがある間、新規restore file選択/開始をdisableする。
-- bannerを閉じてもsession自体はcancelしない。必要ならsessionがactiveな限り設定/backup画面等から再表示可能にする。
-- ageに応じたwarning強調は許可するが、ageだけで自動削除しない。
+### APPLYING
+- 起動時にrecovery/convergenceを自動開始する。
+- UIは「復元処理を完了しています」等の進行状態を表示する。
+- cancelは提示しない。
+- write serialization等の制限は既確定APPLYING規則に従う。
 
-根拠: resumabilityを維持しながら通常利用を不必要にblockせず、storage占有をuserから見えない状態にしない。新規restoreだけをsingle-active-session ruleで確実に防止できる。
+### banner dismiss
+- bannerを閉じてもRestoreSession自体はcancel/changeしない。
+- dismissは現在のapp session内だけに有効とし、永続化しない。
+- 次回app起動時にsessionがまだactive/retryableならbannerを再表示する。
+- dismiss後も設定/backup画面等からactive restoreへ戻れる入口を提供する。
+
+### age / storage pressure
+- session ageは経過時間表示やwarning強調に利用してよい。
+- ageだけを理由にautomatic cancel、staging削除、protection解除を行わない。
+- storage pressure時はsection 82を優先し、必要なら通常bannerより強い容量不足UIへ昇格してresume/cancel判断を求める。
+
+### 根拠
+resumabilityを維持しながら通常利用を不必要にblockせず、staging/protected binaryによるstorage占有を利用者から見えない状態にしない。dismissを永続化しないことで、長期間放置されたactive sessionも次回起動時に再認識できる。single-active-session ruleにより新規restoreとの競合も防止する。
+
+## 84. 次の設計判断候補
+
+**RestoreSessionの経過時間表示・warning強調をどの粒度で行うか、または単純に開始日時のみ表示してwarning thresholdを設けないか**を確定する必要がある。
