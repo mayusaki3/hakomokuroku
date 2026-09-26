@@ -1688,6 +1688,30 @@ resumabilityを維持しながら通常利用を不必要にblockせず、stagin
 ### 根拠
 RestoreSessionが長期間activeであることだけでは異常とは判断できない。開始日時と経過時間を提示すれば利用者は放置期間を判断でき、固定thresholdによる恣意的な警告を避けられる。実際にstorage不足やデータ欠損等が発生した場合のみ、その具体的状態に基づいて警告を強める方が予測可能である。
 
-## 85. 次の設計判断候補
+## 85. active RestoreSessionのstorage使用量表示 — 確定
 
-**active RestoreSession bannerに表示するstorage使用量をどのように算出・表現するか**を確定する必要がある。
+**確定:** banner等で表示する「復元データ」容量は、当該RestoreSessionに属するstaging binaryと`RestorePromotedPhoto`で保護されたpre-promoted binaryの概算合計とする。箱目録全体やbrowser origin全体のstorage使用量とは混在させない。
+
+### 算出対象
+- 当該RestoreSessionのstagingに保持されているoriginal/thumbnail binary。
+- 当該RestoreSessionの`RestorePromotedPhoto`で保護され、まだ通常Business lifecycleへ移行していないpre-promoted binary。
+- 同一canonical binaryを複数recordから参照しても二重加算しない。
+- Businessから通常参照されているcanonical photoや通常cache、他session由来データは含めない。
+
+### 表示
+- byte sizeを取得・集計できる場合のみ、「復元データ: 約 1.2 GB」等の概算表示を行う。
+- 表示値はadvisoryとし、厳密な解放可能容量を保証する値として扱わない。
+- 正確または合理的な概算を取得できない場合、推測値を生成せず容量表示自体を省略する。
+- browser/origin全体の使用量を併記する必要がある画面では、「復元データ」と明確に区別して表示する。
+
+### cancelとの関係
+- 表示容量を「キャンセルすると必ずこの容量が空く」と表現しない。
+- cancel後もcanonical参照済みbinary、transaction/DB overhead、browser側のstorage accounting等により同量が即時解放されるとは限らない。
+- cleanup failure時は既確定どおりmaintenance retry対象とする。
+
+### 根拠
+RestoreSession固有の占有量だけを示すことで、利用者が復元途中データの規模を把握できる。一方、origin全体のstorage量を混ぜるとrestore cancelによる解放量と誤認しやすい。取得不能時に推測値を出さないことで、advisory表示の信頼性も維持する。
+
+## 86. 次の設計判断候補
+
+**RestoreSession固有storage使用量の集計値を毎回binaryから再走査するか、session metadataへ保持してincrementalに更新するか**を確定する必要がある。
