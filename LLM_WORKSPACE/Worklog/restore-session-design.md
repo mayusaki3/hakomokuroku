@@ -2070,6 +2070,45 @@ exact schemaはdata model仕様で固定するが、PREPARING/RESOLVING workflow
 ### 根拠
 長期中断再開、persistent conflict、history、storage accountingを廃止した後もRestoreSession全体を永続化すると、schema/state transition/migration/cleanupだけが残る。通常workflowをmemoryへ戻し、不可逆なBusiness apply境界だけdurable markerで保護すれば、crash safetyを維持しながらRestore専用persistent stateを最小化できる。
 
-## 96. 次の簡略化判断候補
+## 96. backup binary stagingの簡略化 — 確定
 
-**backup binaryをPREPARINGで全量local stagingへcopyする必要があるか**を再評価する。長期再開を廃止したため、選択中の`.hkmbackup` fileをoperation中のsourceとして保持し、validation後は必要binaryをAPPLYING直前に直接pre-promoteできれば、Restore専用blob staging自体を削減または廃止できる可能性がある。
+**確定:** v0.8ではbackup内binaryをPREPARING時にRestore専用IndexedDB stagingへ全量copyしない。利用者が選択した`.hkmbackup` ZIP/fileを、そのRestore operation中の直接sourceとして使用する。
+
+### source lifecycle
+- backup選択後、ZIP構造、manifest/schema、checksum、entity/photo reference等を既定ruleでvalidationする。
+- validation/conflict resolution中は選択済みbackup sourceから必要dataを読む。
+- 長期中断再開を行わないため、backup sourceを次回startup用に永続copyしない。
+- sourceへアクセスできなくなり継続不能になった場合、Business apply前ならRestoreをabortし、次回backup選択からやり直す。
+
+### binary apply
+- final apply plan確定後、USE_BACKUP/new entity等で必要となるphoto binaryだけをbackup sourceから読む。
+- 必要binaryはBusiness commit前にcanonical photo storageへpre-promoteする。
+- pre-promotion時にphotoId/hash/size/format等の必要validationを再確認する。
+- 必要binaryのpre-promotionがすべて成功するまでBusiness/Outbox commitへ進まない。
+- pre-promotion失敗時はBusinessを変更せずRestoreを中断できる。
+
+### crash safety
+- pre-promoted binaryはBusiness commit前にはまだorphanになり得るため、最小`RestoreApplyMarker`に関連付けたtemporary protectionで通常GCから保護する。
+- Business/Outbox atomic commit後はcanonical Business referenceがauthoritativeとなる。
+- crash recoveryは`RestoreApplyMarker`とBusiness refsを使ってpre-promoted binaryを保持/cleanupする。
+- full backup staging storeやstaging ownership state machineは使用しない。
+
+### cleanup
+- apply前cancel/abortでは、そのoperationがpre-promoteした未参照binaryだけを安全にcleanupする。
+- apply成功後はtemporary protection/markerをidempotentにcleanupする。
+- cleanup failureはRestore結果をrollbackせず、後続maintenanceで再試行可能とする。
+
+### 旧仕様の扱い
+旧section 3〜7、80〜82、86〜90等にあるRestore専用全量stagingを前提とした記述は本sectionでsupersedeする。
+- backup全量をIndexedDBへ複製しない。
+- staging容量集計を持たない。
+- staging retention/recount/generationを持たない。
+- 長期再開用staging ownershipを持たない。
+- section 80の「Business commit前に必要binaryをcanonical側へpre-promoteする」というintegrity原則は維持する。
+
+### 根拠
+長期中断再開を廃止した後はbackup全量stagingの主目的が失われる。元backupをoperation sourceとして利用し、実際に採用するbinaryだけをcommit直前にpre-promoteすれば、二重storage、容量不足、staging cleanup/state管理を削減しながらBusinessが存在するのにphoto binaryがない状態を防止できる。
+
+## 97. 次の簡略化判断候補
+
+**pre-promoted binary専用のtemporary protection recordを独立modelとして持つ必要があるか**を再評価する。`RestoreApplyMarker`にpre-promoteしたphotoId一覧を直接持たせれば、旧`RestorePromotedPhoto`相当の独立store/modelを削除できる可能性がある。
