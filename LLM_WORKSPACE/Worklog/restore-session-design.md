@@ -2222,6 +2222,42 @@ backup identityは長期再開、履歴照合、同一backup warningを廃止し
 
 長期中断再開を廃止したため、Restore開始時lockを長時間/数日保持する主要riskも除去されている。v0.8では短いmaintenance operationとしてRestore全体をlock内で完結させる方がstate machineとtest caseを少なくできる。
 
-## 100. 次の簡略化判断候補
+## 100. Restore lock中の他端末Business Sync — 確定
 
-**Restore lock中のread/Pullを許可する必要があるか**を再評価する。writeだけをblockすればdata integrity上は十分だが、他端末がRestore前canonical stateをPullした直後にunlock後のRestore結果を再Pullする挙動が発生する。lock中はBusiness sync全体をretryableに停止し、通常のlocal閲覧だけ許可する方がclient/server protocolを単純化できる可能性がある。
+**確定:** v0.8ではUser単位Restore lock中、lock owner以外の端末/sessionについてBusiness PushだけでなくBusiness Pullも一時停止する。端末内のlocal Business閲覧・編集は継続可能とし、local変更は通常どおりOutboxへ蓄積する。
+
+### locked client behavior
+- local閲覧/検索: 許可。
+- local Business作成/編集/削除: 許可。
+- local変更のOutbox記録: 通常どおり行う。
+- Business Pull: 実行しない/ serverからretryable `RESTORE_LOCKED`相当を返す。
+- Business Push: 実行しない/ serverからretryable `RESTORE_LOCKED`相当を返す。
+- lock中の失敗をSyncConflictとして確定しない。
+
+### unlock後
+lock解除後は既定の通常sync sequenceへ戻す。
+
+`Pull → Outbox reapply → Push → Pull`
+
+- Restore結果をまずPullしてlocal canonical viewへ反映する。
+- lock中/offline中に作成されたOutbox変更を再適用する。
+- Push時にbaseRevision mismatchかつcontentHashが異なる場合は通常SyncConflictとする。
+- Restore専用merge/conflict typeは追加しない。
+
+### offline/reconnect
+- lock前からofflineだった端末をserver側で追跡しない。
+- lock中に再接続した場合はBusiness Syncを待機させる。
+- lock解除後に通常syncを実行する。
+- local Business操作を禁止しないため、利用者はRestore中であることを知らない端末でも作業を継続できる。
+
+### sync scope
+- `RESTORE_LOCKED`はBusiness Syncの一時的なserver conditionであり、authentication/session自体を失効させない。
+- Business Sync以外の通信まで一律停止する必要はない。
+- photo/blob upload等、Business canonical stateへ結び付くsync処理のlock中挙動はdata model/sync詳細設計でBusiness Syncと整合するよう定義する。少なくともlock中にRestore前stateをcanonical commitへ進めない。
+
+### 根拠
+Pushのみ停止してPullを許可すると、他端末がRestore直前canonical stateを取り込んだ直後にunlock後のRestore stateを再度Pullする中間状態が発生する。Restoreは短時間maintenance operationであるため、Business Sync全体を一時停止し、unlock後に既存の`Pull → Outbox reapply → Push → Pull`へ戻す方がprotocolとtest caseを単純化できる。
+
+## 101. 次の簡略化判断候補
+
+**Restore lock中のphoto/blob uploadを独立して許可する必要があるか**を再評価する。Business Syncを停止するなら、未参照blobだけ先行uploadする利点は小さい。lock中は通常端末のBusiness関連photo/blob uploadも待機させ、unlock後の通常syncで処理する方が一貫して単純である可能性が高い。
