@@ -2344,6 +2344,60 @@ v0.8では以下を実装しない。
 ### 根拠
 leaseの目的はclient crash/network lossによる永久lock防止である。長期中断再開を廃止したRestoreにownership移譲や自動再取得を追加すると、stale resolutionと二重apply防止のstate machineが再び必要になる。単純renew + ownership loss時abort/commit確認で必要な安全性を満たす。
 
-## 103. 次の簡略化判断候補
+## 103. server Restore apply idempotency — 確定
 
-**APPLYING中のserver commit状態確認を専用persistent Restore Jobとして管理する必要があるか**を再評価する。client側を最小化しても、serverが「このapplyIdはcommit済みか」を答えられなければ通信断時に結果が曖昧になる。専用Job state machineではなく、apply requestを`applyId`でidempotentにし、短期のapply result/idempotency recordだけserverに保持する方式がより単純と考えられる。
+**確定:** v0.8ではserver側にpersistent Restore Job/state machineを持たない。Restore apply requestをclient生成の`applyId`でidempotentにし、commit結果を確認するための短期`RestoreApplyResult`相当recordだけを保持する。
+
+### apply request
+- Restore ownerは有効なUser Restore lock/lockTokenと`applyId`を付けてapply requestを送る。
+- `applyId`はRestore applyごとに一意とする。
+- serverは同一User + applyIdの二重Business適用を行わない。
+- request retryは同じapplyIdを使用する。
+
+### atomic server transaction
+server側では可能な限り以下を同一DB transactionでcommitする。
+- Restore applyによるBusiness entity変更。
+- revision/contentHash/serverUpdatedAt/syncSeq等のcanonical metadata更新。
+- 必要な`SyncChangeLog`追加。
+- `RestoreApplyResult(COMMITTED)`相当のidempotency record作成。
+
+transactionがabortした場合は上記をcommitしない。
+
+### result semantics
+v0.8で必要なpersistent resultは原則次の2状態だけとする。
+- recordなし: server transactionはcommitされていない。
+- `COMMITTED`: server transactionはcommit済み。
+
+長期`PROCESSING`、progress percentage、step state等のRestore Job stateは持たない。
+
+request処理中のin-flight状態は通常のrequest/DB transactionとして扱い、永続workflow stateにしない。
+
+### retry / query
+- clientがapply responseを受け取れなかった場合、同じapplyIdのresultをserverへ照会できる。
+- `COMMITTED`なら成功済みとしてBusiness applyを再実行しない。
+- recordなしで、有効lock下かつ安全にretry可能なら同じapplyIdのrequestを再送してよい。
+- lockが失効しておりrecordなしなら未commitとしてRestoreを終了し、古いresolutionで新しいapplyを自動開始しない。
+- result不明の間は成功/失敗を推測しない。
+
+### idempotent duplicate request
+- 既に`COMMITTED`の同一User + applyIdを受けた場合、serverはBusinessを再適用せず既存resultを返す。
+- applyIdが同じなのにrequest内容が異なる場合はvalidation errorとし、別内容として適用しない。
+- そのためserverは必要最小限のrequest digest/hashをresult recordへ保持してよい。これはbackup fingerprintではなく、同一applyId misuse検出用である。
+
+### retention
+- `RestoreApplyResult`は永久historyではなく、network retry/crash recoveryに必要な短期idempotency record。
+- exact retention期間はdata model/operation設計で決める。
+- retention expiry後のrecordはhistory UIやbackup重複判定には利用しない。
+- client側markerが通常cleanupされるまで十分な期間を確保する。
+
+### photo binary
+- Restore ownerが必要binaryをserverへ先にuploadしていても、Business canonical referenceはこのapply transactionで確定する。
+- transaction未commitのuploaded binaryは既定のserver orphan binary GC対象とする。
+- binary upload自体をRestore Job workflowへ組み込まない。
+
+### 根拠
+通信断時に必要なのは「このapplyIdのBusiness transactionがcommitされたか」の判定であり、Restore全体のpersistent server workflowではない。Business + SyncChangeLog + COMMITTED resultをatomicにcommitすれば、2状態のidempotency recordだけで二重適用と結果不明問題を解決できる。
+
+## 104. 次の簡略化判断候補
+
+**client側`RestoreApplyMarker.appliedAt`を残す必要があるか**を再評価する。server apply結果は`applyId`で確認でき、local Business + Outboxを同一IndexedDB transactionでcommitできるなら、client markerは`applyId + promotedPhotoIds[]`だけでもcrash recovery可能な可能性がある。一方、local transactionがcommit済みかをserver照会なしで即判定できる利点は小さいが明確であるため、複雑性との釣り合いを次に判断する。
