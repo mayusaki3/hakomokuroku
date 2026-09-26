@@ -2026,6 +2026,50 @@ online User Restore lockを導入した状態で長期中断再開を許すと�
 ### 根拠
 長期中断再開を廃止し、Restore中のlocal Business変更と他端末Pushをlockで抑止するため、Conflictを永続workflow stateとして管理する必要がない。operation-local apply planとapply直前の軽量再確認だけで安全性を維持でき、DB schema、migration、cleanup、stale state machineを削除できる。
 
-## 95. 次の簡略化判断候補
+## 95. RestoreSession永続state machineの簡略化 — 確定
 
-**RestoreSession自体をBusiness-facingな永続state machineとして残す必要があるか**を再評価する。長期再開・persistent conflict・history・storage accountingを廃止したため、v0.8では通常Restore operation stateはmemory上に置き、APPLYING/crash recoveryに必要な最小durable `RestoreApplyMarker`等だけを永続化する方式へ縮小できる可能性がある。
+**確定:** v0.8では`RestoreSession`をBusiness-facingな永続workflow state machineとして持たない。通常のRestore operation state（PREPARING / RESOLVING等）はmemory上で管理し、永続化するのはAPPLYING/crash recoveryに必要な最小system markerだけとする。
+
+### operation state
+- backup選択、validation、current Business比較、conflict resolution、summary、apply planは1回のonline Restore operation内でmemory上に保持する。
+- PREPARING / RESOLVINGを永続DB stateとして保存しない。
+- app終了、明示cancel、継続不能なlock loss等でapply前にoperationが終了した場合は、次回backup選択からやり直す。
+- startup時に通常のRestoreSession再開UI/state machineを復元しない。
+
+### durable apply marker
+APPLYINGでcrash/二重適用を防ぐため、local-onlyな最小`RestoreApplyMarker`を持つ。
+
+概念上、少なくとも次を識別できればよい。
+- marker identity。
+- apply対象operationを診断/照合するための必要最小限のidentity/hash。
+- apply開始済みか。
+- Business/Outbox atomic commit済みかを判定できる`appliedAt`相当marker。
+
+exact schemaはdata model仕様で固定するが、PREPARING/RESOLVING workflow情報、Conflict一覧、currentConflictIndex、age、history等を含めない。
+
+### atomic boundary
+- Business changes、必要なreference修正、contentHash、Outbox、commit済みmarkerは可能な限り同一IndexedDB readwrite transactionでcommitする。
+- transaction abortならBusiness/Outbox/commit済みmarkerを残さない。
+- commit済みmarkerがあれば同じapplyを再実行しない。
+- startup/crash recoveryではmarkerを検査し、commit済みなら必要なcanonical binary verification/cleanupへ収束する。
+- 未commit markerだけが残っている場合はBusiness partial applyがないことを確認し、安全にabort/cleanupする。user conflict resolutionの再開は行わない。
+
+### staging / pre-promotion
+- operation中のbackup binary stagingは引き続き利用可能だが、長期再開用の永続RestoreSession ownershipを要求しない。
+- APPLYING前のpre-promoted binaryをcrashから保護するためのtemporary protectionは維持する。
+- protection recordはRestoreApplyMarker等の最小apply identityへ関連付ける。
+- apply前cancel時はstaging/pre-promoted temporary dataをcleanupする。
+- crash後はmarkerとcanonical Business refsを基準にidempotent cleanupする。
+
+### 旧仕様の扱い
+旧section 3〜7および関連sectionで定義したpersistent `RestoreSession`、status state machine、active session数、createdAt/updatedAt、再開用staging ownership等は本sectionでsupersedeする。
+- `PREPARING / RESOLVING / APPLYING / COMPLETED / CANCELLED / ERROR`を永続session statusとして管理しない。
+- active RestoreSession最大1件というlocal persistent ruleも不要。
+- 同時Restore防止は現在operation/UIとserver User Restore lockで行う。
+
+### 根拠
+長期中断再開、persistent conflict、history、storage accountingを廃止した後もRestoreSession全体を永続化すると、schema/state transition/migration/cleanupだけが残る。通常workflowをmemoryへ戻し、不可逆なBusiness apply境界だけdurable markerで保護すれば、crash safetyを維持しながらRestore専用persistent stateを最小化できる。
+
+## 96. 次の簡略化判断候補
+
+**backup binaryをPREPARINGで全量local stagingへcopyする必要があるか**を再評価する。長期再開を廃止したため、選択中の`.hkmbackup` fileをoperation中のsourceとして保持し、validation後は必要binaryをAPPLYING直前に直接pre-promoteできれば、Restore専用blob staging自体を削減または廃止できる可能性がある。
