@@ -1957,6 +1957,45 @@ User単位のonline Restore lockにより、Restore中のonline concurrent Push�
 ### 根拠
 RestoreHistoryはrestore correctnessやdata recoveryに必要ではなく、履歴model、retention、fingerprint、重複warning、cleanup順序を追加する。低頻度のRestore機能に対して得られる利点が小さいためv0.8から外し、完了後は再開用stateをcleanupする単純なlifecycleとする。
 
-## 93. 次の簡略化判断候補
+## 93. Restoreの長期中断・再開機能 — 確定
 
-**Restoreの「中断して後日RESOLVINGから再開」機能自体を維持するか**を再評価する。online Restore lock方式へ変更したため、長期間の中断再開を許す場合はlock leaseとの関係を定義する必要がある。v0.8では「画面内で競合解決し、離脱時はcancelして次回最初から」とすればRestoreSession/staging lifecycleをさらに大幅に簡略化できる可能性がある。
+**確定:** v0.8では、利用者がRestoreを中断してapp終了・画面離脱後に後日RESOLVINGの途中から再開する機能を提供しない。Restoreは1回のonline operationとして完了またはcancelする。
+
+### user-facing lifecycle
+- backup選択後にRestoreを開始し、PREPARING → RESOLVING → APPLYING → completionまで同一operationとして進める。
+- RESOLVING中に利用者がRestore画面から明示的に離脱/中止する場合はcancelとして扱う。
+- cancel後に再開する場合はbackup選択から新しいRestoreを最初から実行する。
+- conflict resolutionの途中結果を「後日再開用」として永続保持しない。
+- startup時に「途中のRestoreを再開しますか」という通常UXは提供しない。
+
+### temporary interruption
+- 一時的なnetwork断、browser/PWAの短時間suspension等について、operationが生存しており安全に継続可能なら短時間のreconnect/lease renewalを許可する。
+- 短時間回復を「長期中断再開」機能へ拡張しない。
+- server Restore lock leaseを維持/再確認できず安全に継続できない場合は、Business apply前ならoperationをabort/cancelし、次回最初からやり直す。
+- offlineのままRestoreを継続・完了しない。
+
+### crash / APPLYING safety
+- user-facing resumabilityを廃止しても、crash後にpartial applyや二重applyを防ぐための最小限のdurable markerは維持する。
+- `appliedAt`等、Business commit済み/未commitを判定するために必要なstateは保持する。
+- APPLYING中のcrash後は利用者に競合解決の続きをさせるのではなく、commit状態を機械的に判定して安全にcompletion/cleanupへ収束させるか、未commitならabort可能な状態へ戻す。
+- pre-promoted binary protection等、crash safetyに必要なtemporary system stateは維持する。
+
+### staging / conflict persistence
+- stagingはRestore operation中の検証・apply sourceとして使用してよい。
+- stagingを「翌日再開」のため長期間保持する必要はない。
+- RESOLVINGのuser choiceはoperation中に保持するが、通常のapp restart後再開を目的とした永続性は要求しない。
+- cancel/abort可能な未commit operation終了時はstaging/conflict temporary dataをcleanupする。
+
+### 旧仕様の扱い
+旧section 3〜5、7、83〜84等にある「active/retryable RestoreSessionを長期間保持し、startup bannerから再開する」利用者向け仕様は本sectionでsupersedeする。
+- active RestoreSession startup bannerは不要。
+- RestoreSession age表示も不要。
+- 長期間放置sessionのUI管理も不要。
+- ただしcrash recovery用system stateのstartup検査は維持する。
+
+### 根拠
+online User Restore lockを導入した状態で長期中断再開を許すと、lock lease、他端末待機、staging retention、startup UXを追加で管理する必要がある。Restoreは低頻度操作であり、途中判断を後日再開できる利点より複雑性が大きい。短時間の通信回復とcrash-safe commit判定だけを残せば、data integrityを維持しつつlifecycleを大幅に単純化できる。
+
+## 94. 次の簡略化判断候補
+
+**RestoreConflictを全件事前生成・保持する方式を維持するか**を再評価する。長期中断再開を廃止したため、v0.8ではcurrent stateとbackupをその場で比較し、差異のあるentityだけ順次UIで判断してmemory上にresolutionを保持し、最終apply planを作る方式へ簡略化できる可能性がある。
