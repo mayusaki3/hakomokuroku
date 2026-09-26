@@ -1800,6 +1800,31 @@ RestoreSessionまたはRestoreSessionに紐づくlocal-only集計metadataとし�
 ### 根拠
 容量情報はUI用advisory metadataであり、その算出のために利用者操作を待たせる必要はない。background化により大量photoを持つsessionでも起動性能を維持できる。一方、recountと同時にbinary集合が変化するraceを明示的に扱うことで、古い集計値によるmetadata巻き戻しを防ぐ。
 
-## 89. 次の設計判断候補
+## 89. background recountのstorageGeneration — 確定
 
-**background recountとincremental storage metadata更新のraceを防ぐgeneration/versionをどの単位・形式で持つか**を確定する必要がある。
+**確定:** background recountとincremental storage metadata更新のraceを防ぐため、RestoreSession単位のlocal-only単調増加整数 `storageGeneration` を持つ。
+
+### update
+- 当該RestoreSessionに属するstaging binary集合または`RestorePromotedPhoto`対象集合が変化する操作ごとに`storageGeneration`をincrementする。
+- incrementalな`stagingBytes` / `promotedBytes`更新とgeneration更新は、可能なら同一transactionに含める。
+- `storageGeneration`はBusiness dataではなく、backup/export/sync/contentHash対象外。
+
+### recount
+- recount開始時に現在の`storageGeneration`を`startGeneration`として記録する。
+- binary実体を走査して集計する。
+- 集計結果反映直前に現在の`storageGeneration`を再確認する。
+- `currentGeneration == startGeneration`の場合のみrecount結果をmetadataへ反映する。
+- 異なる場合、結果はstaleとして破棄し、必要ならbackground recountを再scheduleする。
+- stale結果で最新incremental metadataを巻き戻さない。
+
+### overflow / invalid state
+- implementation上十分広い整数型を使用する。
+- overflowまたは不正値を検出した場合はmetadataを疑義状態として扱い、安全にgenerationを再初期化した上でrecount可能とする。
+- generation値そのものをrestore correctness判定には使用しない。
+
+### 根拠
+session単位のgeneration比較だけで、background scan中に対象binary集合が変化したraceを低コストに検出できる。個々のbinaryへversionを持たせる必要がなく、storage容量metadataというlocal advisory情報の整合性管理として十分である。
+
+## 90. 次の設計判断候補
+
+**storageGenerationが変化し続けてbackground recountが連続してstaleになる場合のretry/coalescing方針**を確定する必要がある。
