@@ -1609,26 +1609,57 @@ key:
 ### 根拠
 pre-promoted binaryはBusiness commit前には通常のreference scanだけではorphanに見える。session/photo単位の小さなlocal protection metadataを置けば、ordinary GCとのraceを防ぎつつBusiness modelやsync protocolへrestore固有stateを持ち込まずに済む。crash後も所属sessionを明確に追跡できる。
 
-## 82. 次の設計判断候補
+## 82. Restore staging / protected binaryのstorage pressure — 確定
 
-**RestoreSession staging / pre-promoted binaryが長期間残った場合のstorage pressure対応**を確定する必要がある。
+**確定:** active/retryable RestoreSessionのstagingおよび`RestorePromotedPhoto`で保護されたbinaryはautomatic evictionしない。storage不足時はresume/retry可能性とrestore atomicityを優先し、必要ならuserへ明示的なresume/cancel判断を要求する。
+
+### eviction priority
+- PREPARING時に`navigator.storage.estimate()`等でadvisory capacity checkを行い、actual staging writeをauthoritativeとする既確定規則を維持する。
+- active/retryable RestoreSessionのstaging/protected binaryは通常cache LRUより強く保護する。
+- storage pressure時は、まず通常規則でevict可能なunreferenced/referenced-confirmed original cache等をcleanupする。
+- restore staging/protected binaryを容量確保のためsilent deleteしない。
+- completed Businessが参照するcanonical binaryは通常photo lifecycleの保護規則に従う。
+
+### user action
+- 通常cache cleanup後も容量不足なら、UIでactive restoreがstorageを使用していることを明示する。
+- 可能な範囲でrestore使用量/必要容量/available storageを表示する。
+- cancel可能stateではuserの明示cancelによりstaging/protectionをcleanupして容量を解放できる。
+- cancelによってBusinessへ未commitのrestore内容を部分適用しない。
+- APPLYINGは既確定どおりcancel不可。recovery/convergenceを優先する。
+- automatic timeout/ageによるrestore session cancelは行わない。
+
+### external eviction / loss detection
+- browser/OS等app外の強制evictionによりstaging/protected binary欠損を検出した場合、欠損を推測・thumbnailから再生成・別binaryで代替してrestoreを続行しない。
+- `appliedAt == null`でBusiness未適用なら安全なERRORへ遷移し、retryに必要な完全stagingを再構築できない場合はuserへcancel/new restoreを要求する。
+- `appliedAt != null`の場合はBusiness commit済みなので再applyしない。canonical referenced binaryを検証し、欠損があれば通常のphoto recovery/storage-health問題として扱い、Restore commitを巻き戻さない。
+- storage loss detectionとBusiness commit状態を混同しない。
+
+### 根拠
+resumable restoreを保証するにはstaging/protected binaryをcacheと同列にevictできない。storage pressure時にsilent data lossや部分restoreを選ぶより、通常cacheを先に解放し、それでも不足する場合はuserへ明示的な判断を委ねる方がatomicityと予測可能性を維持できる。
+
+## 83. 次の設計判断候補
+
+**長期間放置されたactive RestoreSessionを起動時にどのように提示するか**を確定する必要がある。
 
 背景:
-- active/retryable RestoreSessionはrestartを跨いで保持できる。
-- stagingにはbackup original/thumbnailが含まれるため容量が大きくなり得る。
-- `RestorePromotedPhoto`対象binaryもactive/retryable session中はGC保護される。
-- storage pressureを理由にこれらを無断削除すると、resume/retry可能という既確定仕様を破る。
-- 一方、端末storage不足時に通常利用まで阻害する可能性がある。
+- section 82によりactive/retryable sessionはageだけでautomatic cancelしない。
+- stagingは大容量になり得るため、userがrestore途中であることを忘れるとstorageを占有し続ける。
+- 一方、毎回modalで強制すると通常利用を妨げる。
+- APPLYINGはcancel不可だが、RESOLVING/retryable ERROR等はresume/cancel可能。
 
 推奨案:
-- **active/retryable RestoreSessionのstaging/protected binaryをautomatic evictionしない。storage不足時はユーザーにrestoreの再開またはキャンセルを要求する。**
-- PREPARING時のquota validationで可能な限り事前検出する。
-- active session中にstorage pressureとなってもstaging/protected binaryはcache LRUより優先して保護する。
-- 通常cacheのevictable originalを先にcleanupする。
-- それでも不足する場合、restore sessionを自動cancel/deleteせず、UIで「復元作業が保存領域を使用している」ことと容量情報を表示する。
-- userがcancel可能なstate（PREPARING/RESOLVING/retryable ERROR等）なら、明示cancelでstaging/protectionをcleanupして容量を解放できる。
-- APPLYING中はcancel不可という既確定規則を維持し、recovery/convergenceを優先する。
-- browser/OSによる強制evictionなどapp外の消失を検出した場合は、sessionを安全にERRORへ遷移しBusiness未適用を確認する。欠損binaryを推測・再生成してrestoreを続行しない。
-- completed Businessのcanonical referenced binary保護規則は通常photo lifecycleに従う。
+- **app起動時にactive RestoreSessionを検出したらpersistent but non-blocking bannerを表示し、通常利用を許可する。ただし新しいrestore開始だけは禁止する。**
+- PREPARING/RESOLVING/retryable ERROR:
+  - 「復元作業が途中です」banner。
+  - `再開`と、cancel可能なら`キャンセル`を提示。
+  - storage使用量を取得可能なら併記。
+  - 通常のBox/Item閲覧・編集は既確定どおり許可。
+- APPLYING:
+  - normal editとのwrite serializationが必要なため、recovery/convergenceを自動開始。
+  - UIは「復元処理を完了しています」等の進行状態を表示。
+  - cancelは表示しない。
+- active sessionがある間、新規restore file選択/開始をdisableする。
+- bannerを閉じてもsession自体はcancelしない。必要ならsessionがactiveな限り設定/backup画面等から再表示可能にする。
+- ageに応じたwarning強調は許可するが、ageだけで自動削除しない。
 
-根拠: resumable restoreを保証するにはstagingをcacheと同列にevictできない。容量不足時にsilent data lossを選ぶより、ユーザーへ明示的なcancel/retry判断を委ねる方がrestore atomicityと予測可能性を維持できる。
+根拠: resumabilityを維持しながら通常利用を不必要にblockせず、storage占有をuserから見えない状態にしない。新規restoreだけをsingle-active-session ruleで確実に防止できる。
