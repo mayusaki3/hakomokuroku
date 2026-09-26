@@ -2109,6 +2109,42 @@ exact schemaはdata model仕様で固定するが、PREPARING/RESOLVING workflow
 ### 根拠
 長期中断再開を廃止した後はbackup全量stagingの主目的が失われる。元backupをoperation sourceとして利用し、実際に採用するbinaryだけをcommit直前にpre-promoteすれば、二重storage、容量不足、staging cleanup/state管理を削減しながらBusinessが存在するのにphoto binaryがない状態を防止できる。
 
-## 97. 次の簡略化判断候補
+## 97. pre-promoted binary protection modelの統合 — 確定
 
-**pre-promoted binary専用のtemporary protection recordを独立modelとして持つ必要があるか**を再評価する。`RestoreApplyMarker`にpre-promoteしたphotoId一覧を直接持たせれば、旧`RestorePromotedPhoto`相当の独立store/modelを削除できる可能性がある。
+**確定:** v0.8では`RestorePromotedPhoto`等の独立store/modelを持たない。Restore apply中にpre-promoteしたphotoIdは、最小`RestoreApplyMarker`へ直接記録して保護・cleanup対象を識別する。
+
+### RestoreApplyMarker
+conceptual fieldは以下を基本とする。
+- `applyId`
+- backup/apply対象を照合するための必要最小限のidentity/hash
+- `promotedPhotoIds[]`
+- Business/Outbox commit済みを示す`appliedAt`相当
+
+exact field名/type/size制約はdata model設計で確定する。
+
+### pre-promotion tracking
+- photoをcanonical storageへpre-promoteした後、そのphotoIdをmarkerへ記録する。
+- markerに記録された未参照photoはRestore apply中のtemporary protected binaryとして通常GC対象から除外する。
+- Business commit後はBusiness photo referenceをauthoritativeとする。
+- apply成功後はmarkerをcleanupする。
+- apply前abort/crashではmarkerのphotoId一覧とcurrent Business refsを照合し、そのoperationが追加した未参照binaryだけをidempotentにcleanupする。
+
+### consistency
+- pre-promote済みなのにmarkerへ未記録となるwindowを最小化する。
+- canonical photo writeとmarker更新を同一transaction/storage atomicityで扱えない場合でも、orphan binaryは通常のunreferenced binary GCで最終回収可能とし、data lossより一時orphanを優先する。
+- marker記録済みだがbinary write未完了/不存在の場合は、そのphotoをBusiness commit可能なbinaryとして数えない。
+- Business commit前にapply planで必要な全binaryの存在/validationを確認する。
+
+### independent modelを持たない
+以下は実装しない。
+- `RestorePromotedPhoto` table/store。
+- photoごとのRestore protection record lifecycle。
+- RestoreSessionとの1:N protection relation。
+- protection record専用retention/recount。
+
+### 根拠
+長期再開と全量stagingを廃止したため、pre-promoted photoの用途は「現在のapplyがcommitするまでGCから保護し、abort時にcleanup候補を識別する」だけである。1つのapply markerへphotoId集合を保持すれば目的を満たし、独立modelのschema/index/cleanup整合性を追加する必要がない。
+
+## 98. 次の簡略化判断候補
+
+**RestoreApplyMarkerにbackup identity/hashをどこまで持つ必要があるか**を再評価する。長期再開や同一backup履歴判定を行わないため、crash recoveryが「このapplyのcommit有無」と「pre-promoted photo集合」を判断できれば十分であり、backup fingerprintや詳細manifest identityまで永続化する必要はない可能性が高い。
