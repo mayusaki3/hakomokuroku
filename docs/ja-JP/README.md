@@ -7,83 +7,40 @@ document_type: index
 canonical_document: true
 -->
 
-[目次](./README.md) > docs/ja-JP > docs/ja-JP 目次
+[目次](./README.md) > docs/ja-JP
 
-# docs/ja-JP 目次
+# 箱目録 日本語ドキュメント
 
-本書は、`docs/ja-JP` 配下の日本語ドキュメント群の入口となる目次である。
+`docs/ja-JP` の正本目次。番号は文書カテゴリの順序を表し、同一階層で重複させない。
 
----
+## フォルダ構成
 
-## API仕様
+| 番号 | フォルダ | 役割 |
+|---|---|---|
+| 00 | [はじめに](./00_はじめに/) | プロジェクト概要・文書の読み方 |
+| 01 | [開発ガイド](./01_開発ガイド/) | 開発フロー・規約・Lint/Format |
+| 02 | [アーキテクチャ](./02_アーキテクチャ/) | 全体構成・DB・認証等 |
+| 03 | [テスト方針](./03_テスト方針/) | テスト戦略・UT/API/E2E方針 |
+| 04 | [API仕様](./04_API仕様/README.md) | API・ライブラリ仕様 |
+| 05 | [テストケース集](./05_テストケース集/README.md) | API・ライブラリのテストケース |
+| 06 | [ロードマップ](./06_ロードマップ/) | 開発・再確認ロードマップ |
+| 07 | [HLDocS検証](./07_HLDocS検証/README.md) | HLDocS validator仕様・検証 |
 
-### ユーザー認証API
+## API仕様の分類
 
-- [ログイン（POST /api/auth/login）](./04_API仕様/01_ユーザー認証API/api_auth_login.md)
-- [TOTPログイン（POST /api/auth/login/totp）](./04_API仕様/01_ユーザー認証API/api_auth_login_totp.md)
-- [ログアウト（POST /api/auth/logout）](./04_API仕様/01_ユーザー認証API/api_auth_logout.md)
-- [認証状態取得（GET /api/auth/me）](./04_API仕様/01_ユーザー認証API/api_auth_me.md)
-- [ユーザー登録（POST /api/auth/register）](./04_API仕様/01_ユーザー認証API/api_auth_register.md)
-- [トークン一覧取得（GET /api/auth/tokens）](./04_API仕様/01_ユーザー認証API/api_auth_tokens.md)
-- [トークンラベル更新（PUT /api/auth/tokens/label）](./04_API仕様/01_ユーザー認証API/api_auth_tokens_label.md)
-- [トークン失効（DELETE /api/auth/tokens/revoke）](./04_API仕様/01_ユーザー認証API/api_auth_tokens_revoke.md)
-- [全トークン失効（POST /api/auth/tokens/revokeAll）](./04_API仕様/01_ユーザー認証API/api_auth_tokens_revokeAll.md)
-- [TOTP初期設定（POST /api/auth/totp/setup）](./04_API仕様/01_ユーザー認証API/api_auth_totp_setup.md)
-- [TOTP状態取得（GET /api/auth/totp/status）](./04_API仕様/01_ユーザー認証API/api_auth_totp_status.md)
-- [TOTP検証（POST /api/auth/totp/verify）](./04_API仕様/01_ユーザー認証API/api_auth_totp_verify.md)
-- [TOTP無効化（POST /api/auth/totp/disable）](./04_API仕様/01_ユーザー認証API/api_auth_totp_disable.md)
-- [TOTPリカバリーコード再発行（POST /api/auth/totp/recovery/reissue）](./04_API仕様/01_ユーザー認証API/api_auth_totp_recovery_reissue.md)
+- `00_ライブラリ`: 共通ライブラリ
+- `01_ユーザー認証API`: 認証/TOTP/token
+- `02_設定API`: ユーザー設定・テーマ設定
+- `03_ユーザー情報API`: ユーザー情報固有API
 
-### 設定API
+テストケース集は原則としてAPI仕様と同じ分類番号を使用する。
 
-- [ユーザー設定取得・更新（GET/PUT /api/settings/user）](./04_API仕様/02_設定API/api_settings_user.md)
-- [アクティブテーマ取得（GET /api/settings/theme/active）](./04_API仕様/02_設定API/api_settings_theme_active.md)
+## 文書管理
 
----
+- この `README.md` を `docs/ja-JP` の正本目次とする。
+- `目次.md` は旧リンク互換用。新規リンクでは使用しない。
+- 作業途中の設計判断は `LLM_WORKSPACE/Worklog` に置き、確定後に `docs` へ反映する。
+- 同一APIの正本仕様を複数フォルダへ重複配置しない。
+- Git履歴で参照できる旧仕様を `docs` 内へ複製保存しない。
 
-## テストケース集
-
-### ユーザー認証API
-
-- [ログイン テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_login_testcases.md)
-- [TOTPログイン テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_login_totp_testcases.md)
-- [トークン一覧取得 テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_tokens_testcases.md)
-- [トークンラベル更新 テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_tokens_label_testcases.md)
-- [トークン失効 テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_tokens_revoke_testcases.md)
-- [全トークン失効 テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_tokens_revokeAll_testcases.md)
-- [TOTP検証 テストケース](./05_テストケース集/01_ユーザー認証API/api_auth_totp_verify_testcases.md)
-
-### 設定API
-
-- [ユーザー設定 テストケース](./05_テストケース集/02_設定API/api_settings_user_testcases.md)
-- [アクティブテーマ取得 テストケース](./05_テストケース集/02_設定API/api_settings_theme_active_testcases.md)
-
----
-
-## 現在の同期状態
-
-| 対象 | 状態 |
-|---|---|
-| route ↔ Vitest | 同期済み |
-| spec ↔ testspec | 同期済み |
-| Traceability | 整理中 |
-| HLDocS 正規化 | 継続中 |
-
----
-
-## ローカル検証
-
-```bash
-pnpm -C apps/web exec vitest --run
-```
-
-現時点:
-
-```text
-Test Files  22 passed (22)
-Tests      218 passed (218)
-```
-
----
-
-[目次](./README.md) > docs/ja-JP > docs/ja-JP 目次
+[目次](./README.md) > docs/ja-JP
