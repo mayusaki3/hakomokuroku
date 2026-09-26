@@ -1564,33 +1564,71 @@ pre-promotion完了後、短いIndexedDB readwrite transactionで少なくとも
 ### 根拠
 大きなBlob copyをBusiness/Outbox atomic transactionから分離するとtransactionを短くできる。一方、pre-promotionをBusiness commitより先に完了させることで、canonical Business referenceだけが確定してbinaryが存在しない状態を防げる。appliedAtとBusiness commitを同一transactionに置く既確定規則とも整合し、crash後もcommit済み/未commitを一意に判定できる。
 
-## 81. 次の設計判断候補
+## 81. Restore pre-promoted binary temporary protection — 確定
 
-**pre-promoted binaryをordinary photo cache/GCから保護するtemporary protection recordの形**を確定する必要がある。
+**確定:** Business commit前にcanonical photo storageへpre-promoteしたbinaryをordinary orphan/cache cleanupから保護するため、local-only system record `RestorePromotedPhoto` を持つ。
 
-背景:
-- section 80ではBusiness commit前のpre-promoted binaryはまだcanonical Businessから参照されない。
-- 通常のorphan cleanupだけを見ると削除対象に見える。
-- RestoreSession stagingとは別storageへ書き込まれたため、active RestoreSessionとの関連を明示する必要がある。
-- protection自体をBusiness/syncへ混ぜる必要はない。
+### record
+key:
+- `[restoreSessionId, photoId]`
 
-推奨案:
-- local-only system record `RestorePromotedPhoto` を持つ。
-- keyは `[restoreSessionId, photoId]`。
-- 最小field:
-  - restoreSessionId
-  - photoId
-  - photoHash
-  - promotedAt
-- thumbnailも同じphotoIdのcanonical pairとして保護し、別recordを増やさない。
-- pre-promotion binary writeとprotection record作成は可能なら同じlocal storage transaction。
-- ordinary orphan/cache cleanupはactive/retryable RestoreSessionに紐づくprotection recordがあるphotoIdを削除しない。
-- Business commit後verification成功時にprotectionを解除し、参照済みbinaryは通常canonical lifecycleへ移行。
-- Businessに最終参照されなかったpre-promoted binaryはprotection解除後orphan cleanup。
-- startup:
-  - active/retryable sessionに属するrecordは維持。
-  - COMPLETED/CANCELLED/nonretryable terminated sessionのrecordはcanonical refsを確認後cleanup。
-  - session自体が存在しないorphan protection recordもcanonical refs確認後cleanup。
+最小field:
+- `restoreSessionId`
+- `photoId`
+- `photoHash`
+- `promotedAt`
+
+- original/thumbnailは同一photoIdのcanonical pairとして1 recordで保護する。
+- protection metadata自体はBusiness entityではない。
 - backup/export/sync/contentHash対象外。
 
-根拠: protectionを小さなlocal system metadataへ限定すれば、ordinary GCとのraceを防ぎながらBusiness modelを汚さない。session idとphoto idの組だけでcrash recovery/cleanupの所属も追跡できる。
+### creation
+- pre-promotion binary writeと`RestorePromotedPhoto`作成は、利用storage構成で可能なら同一local transactionにする。
+- protectionが成立する前にordinary cleanupがbinaryを削除できるwindowを作らない。
+- same session/photoId/hashの既存recordはidempotently reuse可能。
+- same photoIdでhash不一致の場合はPHOTO_ID_COLLISION等の既定errorとしてBusiness commitへ進まない。
+
+### GC / cache protection
+- ordinary orphan/cache cleanupは、active/retryable RestoreSessionに属する有効なprotection recordのphotoIdを削除しない。
+- protection中binaryはBusiness未参照でもtemporary protected orphanとして扱う。
+- protectionはcache LRU対象から除外する。
+
+### commit後
+- Business commit後、section 80のcanonical binary verificationが成功したらprotectionを解除する。
+- final Businessから参照されているbinaryは通常canonical lifecycleへ移行する。
+- final Businessに参照されなかったpre-promoted binaryはprotection解除後orphan cleanup対象。
+- cleanup failureはBusiness restore failureにしない。
+
+### startup / recovery
+- active/retryable RestoreSessionに属するrecordは維持する。
+- `APPLYING + appliedAt == null`ではpre-promoted binaryを検証してretry/reuse可能。
+- `APPLYING + appliedAt != null`では再applyせずcanonical verification後にprotection解除/COMPLETED convergenceへ進む。
+- COMPLETED/CANCELLED/nonretryable terminated sessionのrecordはcanonical Business refsを確認してから解除/cleanupする。
+- session自体が存在しないorphan protection recordもcanonical refsを確認し、参照中binaryを削除せずprotection metadataだけ整理するか、unreferenced binaryとともにcleanupする。
+
+### 根拠
+pre-promoted binaryはBusiness commit前には通常のreference scanだけではorphanに見える。session/photo単位の小さなlocal protection metadataを置けば、ordinary GCとのraceを防ぎつつBusiness modelやsync protocolへrestore固有stateを持ち込まずに済む。crash後も所属sessionを明確に追跡できる。
+
+## 82. 次の設計判断候補
+
+**RestoreSession staging / pre-promoted binaryが長期間残った場合のstorage pressure対応**を確定する必要がある。
+
+背景:
+- active/retryable RestoreSessionはrestartを跨いで保持できる。
+- stagingにはbackup original/thumbnailが含まれるため容量が大きくなり得る。
+- `RestorePromotedPhoto`対象binaryもactive/retryable session中はGC保護される。
+- storage pressureを理由にこれらを無断削除すると、resume/retry可能という既確定仕様を破る。
+- 一方、端末storage不足時に通常利用まで阻害する可能性がある。
+
+推奨案:
+- **active/retryable RestoreSessionのstaging/protected binaryをautomatic evictionしない。storage不足時はユーザーにrestoreの再開またはキャンセルを要求する。**
+- PREPARING時のquota validationで可能な限り事前検出する。
+- active session中にstorage pressureとなってもstaging/protected binaryはcache LRUより優先して保護する。
+- 通常cacheのevictable originalを先にcleanupする。
+- それでも不足する場合、restore sessionを自動cancel/deleteせず、UIで「復元作業が保存領域を使用している」ことと容量情報を表示する。
+- userがcancel可能なstate（PREPARING/RESOLVING/retryable ERROR等）なら、明示cancelでstaging/protectionをcleanupして容量を解放できる。
+- APPLYING中はcancel不可という既確定規則を維持し、recovery/convergenceを優先する。
+- browser/OSによる強制evictionなどapp外の消失を検出した場合は、sessionを安全にERRORへ遷移しBusiness未適用を確認する。欠損binaryを推測・再生成してrestoreを続行しない。
+- completed Businessのcanonical referenced binary保護規則は通常photo lifecycleに従う。
+
+根拠: resumable restoreを保証するにはstagingをcacheと同列にevictできない。容量不足時にsilent data lossを選ぶより、ユーザーへ明示的なcancel/retry判断を委ねる方がrestore atomicityと予測可能性を維持できる。
