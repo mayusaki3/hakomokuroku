@@ -2297,6 +2297,53 @@ exactなblob upload位置/確認protocolはsync詳細設計で固定するが、
 ### 根拠
 Business Syncを停止している間にblobだけ先行uploadする利点は小さく、server orphan管理、upload state、lock例外testを増やす。通常端末のBusiness関連通信をまとめて待機させ、unlock後に既存sync flowへ戻す方が一貫して単純である。
 
-## 102. 次の簡略化判断候補
+## 102. Restore lock lease protocolの最小化 — 確定
 
-**Restore lock leaseのclient-side renewal state machineをどこまで作るか**を再評価する。長期中断再開を廃止しているため、複雑な再取得/ownership handoffは不要である。短いleaseをserverで発行し、Restore operation中だけ単純にrenewし、renew/ownership確認に失敗したらapply前はabort、apply中はserver側commit状態確認へ収束する最小protocolが適切と考えられる。
+**確定:** v0.8のRestore lockはserver発行の短時間leaseとし、Restore operation中にlock ownerが単純renewする。複雑なlock再取得、ownership handoff、別sessionへの継続移譲は実装しない。
+
+### acquisition
+- Restore開始時にserverへUser単位Restore lockを要求する。
+- serverはlock ownerを識別できるopaqueな`lockToken`相当とlease expiryを返す。
+- exact lease時間/renew intervalは実装・test設計時に固定するが、client crash/network loss後に永久lockを残さない長さとする。
+- 同一Userの有効lockが既にある場合、新規lock取得は拒否する。
+
+### renewal
+- Restore operationがactiveな間だけownerがleaseをrenewする。
+- renew requestは現在のlock ownershipをserver側で検証する。
+- renew成功時だけoperationを継続可能とする。
+- backgroundで無期限にrenewし続ける仕組みは持たない。
+- user-facing長期pause/resumeのためにleaseを保持しない。
+
+### ownership loss before apply
+- validation/RESOLVING/final confirmation等、Business apply開始前にrenew失敗またはownership喪失を確認した場合はRestoreをabortする。
+- memory上のconflict resolution/apply planを再利用しない。
+- lock再取得後に途中から自動再開しない。
+- 利用者が再実行する場合はbackup選択/validationから新しいRestoreとして開始する。
+
+### failure during applying
+- APPLYING開始後にnetwork/renew responseを失った場合、clientは同じapplyを推測で再送/再実行しない。
+- server側でRestore apply/commit結果を確認できるprotocolへ収束させる。
+- server commit済みならcompletion/cleanupへ進む。
+- server未commitでlockも失効していることが確認できればlocal temporary apply stateを安全にcleanupし、Restore未完了として終了する。
+- commit状態が確認できない間は成功/失敗を推測しない。
+
+### no handoff / reacquire
+v0.8では以下を実装しない。
+- expired lockのtransparent reacquire。
+- old lockTokenからnew lockTokenへのownership migration。
+- browser/tab/device間のRestore ownership handoff。
+- 別sessionが途中のRestoreを継続するprotocol。
+- lease失効後のold conflict resolution再利用。
+
+### release
+- normal completion/cancelではownerが明示releaseを試みる。
+- release requestを送れない場合でもlease expiryで最終的に解放される。
+- serverはexpired leaseをactive lockとして扱わない。
+- release失敗だけを理由にBusiness commitをrollbackしない。
+
+### 根拠
+leaseの目的はclient crash/network lossによる永久lock防止である。長期中断再開を廃止したRestoreにownership移譲や自動再取得を追加すると、stale resolutionと二重apply防止のstate machineが再び必要になる。単純renew + ownership loss時abort/commit確認で必要な安全性を満たす。
+
+## 103. 次の簡略化判断候補
+
+**APPLYING中のserver commit状態確認を専用persistent Restore Jobとして管理する必要があるか**を再評価する。client側を最小化しても、serverが「このapplyIdはcommit済みか」を答えられなければ通信断時に結果が曖昧になる。専用Job state machineではなく、apply requestを`applyId`でidempotentにし、短期のapply result/idempotency recordだけserverに保持する方式がより単純と考えられる。
