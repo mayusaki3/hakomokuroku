@@ -1744,6 +1744,34 @@ RestoreSessionまたはRestoreSessionに紐づくlocal-only集計metadataとし�
 ### 根拠
 大量photoを含むrestoreで起動ごとの全binary走査を避けながら、crashや非atomic storage操作で集計値がずれても実体から復旧できる。集計値をcorrectness判定から分離することで、容量表示最適化がrestore atomicityへ影響しない。
 
-## 87. 次の設計判断候補
+## 87. RestoreSession storage metadata recount trigger — 確定
 
-**RestoreSession storage metadataのrecountをいつ自動実行するか（疑義検出時のみか、一定契機でも定期的に検証するか）**を確定する必要がある。
+**確定:** RestoreSession storage metadataの自動recountは疑義を検出した場合のみ実行し、起動ごと・日次等の定期recountは行わない。
+
+### recount trigger
+少なくとも次の場合はrecount対象とする。
+- `stagingBytes` / `promotedBytes` metadataが欠損している。
+- 負値、overflow、その他schema上あり得ない値を検出した。
+- crash recoveryでbinary操作とmetadata更新の整合性を保証できない。
+- storage/schema migration後に旧集計値の正当性を保証できない。
+- binary操作成功後にmetadata更新失敗等、transaction不成立/部分成功が判明した。
+- diagnostic/consistency checkで実体との不整合を具体的に検出した。
+
+### normal operation
+- app起動ごとの全binary recountは行わない。
+- 日次・週次等のtime-based periodic recountは行わない。
+- metadataが正常で疑義がない限りincremental値をそのままUI表示に使用する。
+
+### recount中 / failure
+- recountはstorage容量表示の再構築処理であり、restore correctness判定そのものではない。
+- recount中はsection 85どおり容量表示を一時的に省略してよい。
+- recount failureだけを理由にRestoreSessionをERRORへ遷移させない。
+- restore処理に必要なbinary/hash/state検証は既確定規則に従い独立して行う。
+- recount failureはdiagnostic情報として保持し、後続の適切な契機でretry可能とする。
+
+### 根拠
+容量metadataはadvisoryであり、正常時に全binaryを定期走査するI/Oコストを負担する必要はない。具体的な不整合可能性が生じた場合だけ実体から再構築すれば、section 86のincremental管理の利点を維持しつつ表示値の自己修復性も確保できる。
+
+## 88. 次の設計判断候補
+
+**RestoreSessionのstorage容量recountをforegroundで完了待ちするか、backgroundで実行して完了後にbanner表示を更新するか**を確定する必要がある。
