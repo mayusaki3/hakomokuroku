@@ -1712,6 +1712,38 @@ RestoreSessionが長期間activeであることだけでは異常とは判断で
 ### 根拠
 RestoreSession固有の占有量だけを示すことで、利用者が復元途中データの規模を把握できる。一方、origin全体のstorage量を混ぜるとrestore cancelによる解放量と誤認しやすい。取得不能時に推測値を出さないことで、advisory表示の信頼性も維持する。
 
-## 86. 次の設計判断候補
+## 86. RestoreSession storage使用量のincremental metadata — 確定
 
-**RestoreSession固有storage使用量の集計値を毎回binaryから再走査するか、session metadataへ保持してincrementalに更新するか**を確定する必要がある。
+**確定:** RestoreSession固有のstorage使用量はlocal-only metadataとしてincrementalに管理し、値が欠損・不整合・疑わしい場合にbinary実体からrecountして再構築可能とする。
+
+### metadata
+RestoreSessionまたはRestoreSessionに紐づくlocal-only集計metadataとして、少なくとも次を保持可能とする。
+- `stagingBytes`
+- `promotedBytes`
+
+表示上のrestore使用量は原則として両者の合計を用いる。
+
+### update
+- staging binaryの追加/削除時に`stagingBytes`を更新する。
+- pre-promotion/protection追加・解除・cleanup時に`promotedBytes`を更新する。
+- 同一binaryを二重加算しない。
+- binary操作と集計更新は、利用storage構成で可能なら同一transactionに含める。
+- transaction境界を共有できない場合は、binary実体を正としmetadataは後からreconcile可能とする。
+
+### recount / recovery
+- metadata欠損、負値、不可能な値、migration後、crash recovery等で信頼できない場合は、当該RestoreSessionに属するbinary実体を走査してrecountする。
+- recount結果でmetadataを再構築する。
+- 通常のapp起動/banner表示ごとに全binary scanを必須としない。
+- recount中に容量表示が確定できない場合はsection 85どおり表示を省略してよい。
+
+### authority
+- `stagingBytes` / `promotedBytes`はUI・diagnostic用のadvisory metadataである。
+- restore completeness、hash validation、APPLYING可否、cleanup可否、binary存在判定のauthorityには使用しない。
+- restore correctnessは常に実際のrecords/binary/hash/state等の既確定情報から判定する。
+
+### 根拠
+大量photoを含むrestoreで起動ごとの全binary走査を避けながら、crashや非atomic storage操作で集計値がずれても実体から復旧できる。集計値をcorrectness判定から分離することで、容量表示最適化がrestore atomicityへ影響しない。
+
+## 87. 次の設計判断候補
+
+**RestoreSession storage metadataのrecountをいつ自動実行するか（疑義検出時のみか、一定契機でも定期的に検証するか）**を確定する必要がある。
