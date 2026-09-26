@@ -1,6 +1,6 @@
 # 箱目録 作業 SavePoint
 
-更新: 2026-09-15
+更新: 2026-09-26
 対象: `mayusaki3/hakomokuroku`
 ブランチ: `develop`
 
@@ -16,7 +16,9 @@
 - `LLM_WORKSPACE/Worklog/restore-session-design.md`
 
 ## 2. 現在位置
-**全体アーキテクチャ / データモデル / 同期設計の最終確定中。**
+**全体アーキテクチャ / データモデル / 同期 / backup・restore設計の最終確定中。**
+
+backup/restore詳細設計は `LLM_WORKSPACE/Worklog/restore-session-design.md` section 82まで確定済み。次はsection 83から再開する。
 
 ## 3. 主要確定事項
 
@@ -90,25 +92,31 @@
 - Box削除時子Item→UNASSIGNED、Location削除時子Box→UNASSIGNED
 - parent DELETE + child correctionはserver 1 transaction
 
-### backup/restore競合・中断再開
-**確定:** restore競合判断は永続`RestoreSession`で管理し、中断・再開可能にする。
+### backup/restore・中断再開
+詳細正本: `LLM_WORKSPACE/Worklog/restore-session-design.md`
 
-- 同一Box.id + Box.codeでbusiness content同一ならUNCHANGED相当
-- 内容差異は`KEEP_EXISTING / USE_BACKUP`を利用者が選択し、`updatedAt`で自動勝者を決めない
-- `USE_BACKUP`は通常local business update + Outboxとして扱い、backup側sync metadataは持ち込まない
-- restore開始時に必要なbackup内容をIndexedDB stagingへコピーし、元ファイル再指定なしで再開可能
-- `RESOLVING`中は各resolutionを即時永続化し、Businessへ部分適用しない
-- 中断はsession/staging/判断を保持、キャンセルはAPPLYING前ならBusinessを変更せず破棄可能
-- 全判断完了後のみ`APPLYING`へ進む
-- `RESOLVING`中も通常の箱目録操作を許可する
-- RestoreConflict作成時にexisting側`contentHash`を保存し、APPLYING直前に現在Business contentHashと比較する
-- hash不一致ならその競合だけstaleとして既存resolutionを無効化し、最新existing vs backupで再判断する
-- stale対象以外の判断済みresolutionは維持する
-- stale化後にexistingとbackupが同内容ならUNCHANGED相当で自動解決可能
-- stale判定は`updatedAt`ではなくbusiness contentHashで行う
-- stale競合が残る間はAPPLYINGへ進まない
+同ファイルsection 1〜82を確定済みとして扱う。特に直近では以下を確定した。
+- 正式backup schemaは `schema="hakomokuroku-backup", version=1`。開発中の旧実装値は互換対象外
+- self-contained `.hkmbackup` ZIP、manifest/checksums/original/thumbnailを保持
+- RestoreSessionはPREPARING/RESOLVING/APPLYING/COMPLETED/CANCELLED/ERRORで永続・再開可能
+- APPLYINGのBusiness/Outbox/appliedAtはatomic commitし、crash後はappliedAtで再apply可否を判定
+- photo original/thumbnailのcanonical WebP規則、size/dimension/chunk/metadata/animation制約を確定
+- normal photo ingestionのoriginal/thumbnail fallback ladderを確定
+- PhotoUploadState=PENDING/UPLOADING/CONFIRMEDを確定
+- missing originalはthumbnail由来low-resolution replacementをnew photoId/hashで生成可能。v1.0+ AI recoveryもnew identity
+- 真正original再発見時は利用者確認後にreplacementと置換のみ。keep-bothは行わない
+- recovery provenanceはactive replacement lifetimeに合わせたlocal-only metadata
+- `1 photoId = exactly 1 Business parent`。parent間direct photo moveはv0.8対象外
+- photo削除後10秒Undo。各delete独立entry、LIFO、通常Business updateとしてdelete/Undoを扱う
+- Undo grace中もsyncを停止しない。parent削除時は該当Undo entryをinvalidate
+- Restore APPLYING lock待ちでは期限内に受理したUndo intentを保護し、lock取得後current stateを再検証
+- RESOLVING中のphoto editはRestore conflictを直接更新せずcontentHash stale detectionへ委ねる
+- Restore APPLYINGはUndo用ephemeral binaryへ依存しない
+- Restoreで必要なUSE_BACKUP/new entity binaryはstagingからcanonical storageへpre-promoteしてからBusiness atomic commit
+- pre-promoted binaryはlocal-only `RestorePromotedPhoto` でordinary GCからtemporary protection
+- active/retryable RestoreSessionのstaging/protected binaryはstorage pressureでもautomatic evictionしない。通常cache cleanup後も不足なら利用者へresume/cancel判断を求める
 
-詳細: `LLM_WORKSPACE/Worklog/restore-session-design.md`
+詳細・根拠・edge caseは必ず上記Worklog本文を参照する。
 
 ## 4. 現行実装との差異
 - Prisma sync metadata/composite user identity不足、current Push ownership risk、Pull timestamp基準
@@ -142,15 +150,20 @@
 13. v1.0完成・受入
 
 ## 6. 次のアクション
-次の判断点: **RestoreSessionの`APPLYING`中の原子性と中断可能範囲を確定する。**
+次の判断点: **section 83 — 長期間放置されたactive RestoreSessionを起動時にどのように提示するか。**
 
 推奨案:
-- `RESOLVING`までは自由に中断可能
-- stale再検証が全件通った後、適用対象を確定snapshotとして固定して`APPLYING`へ遷移
-- `APPLYING`ではBusiness / Outbox / 必要な参照修正を可能な範囲で1 IndexedDB transactionにまとめる
-- transaction成功後のみ`COMPLETED`
-- transaction失敗時はBusiness変更をrollbackし、RestoreSessionを`ERROR`または再試行可能状態に残す
-- `APPLYING`中の利用者による手動中断は提供しない
+- app起動時にactive RestoreSessionを検出したらpersistent but non-blocking bannerを表示
+- PREPARING / RESOLVING / retryable ERRORでは通常利用を許可し、`再開`とcancel可能なら`キャンセル`を提示
+- storage使用量を取得可能なら併記
+- APPLYINGではcancel不可。recovery/convergenceを自動開始し進行状態を表示
+- active session中は新規restore開始のみ禁止
+- bannerを閉じてもsessionはcancelしない
+- ageに応じたwarning強調は可。ただしageだけでautomatic cancel/deleteしない
+
+根拠: resumabilityと通常利用を両立しつつ、大容量stagingが利用者から見えないまま残り続けることを防ぐ。single-active-session ruleも維持できる。
+
+**新しいチャットでは、まずdevelopの最新 `restore-session-design.md` と本SavePointを取得してcanonical stateを確認し、section 83の判断から再開する。アプリケーションコードはまだ変更しない。**
 
 ## 7. HLDocS運用上の注意
 HLDocS v0.7.0は再構成中。HLDocS仕様の不整合は箱目録作業のブロッカーにせず、必要に応じてフィードバック候補として記録する。
