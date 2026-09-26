@@ -1922,6 +1922,41 @@ Restoreは通常の登録・閲覧より低頻度なmaintenance/recovery操作�
 
 User単位のonline Restore lockにより、Restore中のonline concurrent Pushを一時的に排除できる。lock取得前からofflineだった端末の変更は、lock解除後に既存のrevision/contentHash conflict処理へ自然に流せるため、Restore専用のoffline merge機構を追加せずdata lossを防げる。
 
-## 92. 次の簡略化判断候補
+## 92. RestoreHistoryの簡略化 — 確定
 
-**RestoreHistory（旧section 28〜30）をv0.8に残すか、Restore完了後は重いsessionをcleanupして履歴機能自体を省くか**を再評価する。
+**確定:** v0.8ではRestoreHistory機能を持たない。Restore完了/取消/終了可能な失敗後は、再開に不要となったRestoreSession関連dataをidempotentにcleanupし、過去restoreの専用履歴recordを永続保存しない。
+
+### 廃止するもの
+旧section 28〜30で定義した以下はv0.8実装対象から外し、本sectionでsupersedeする。
+- `RestoreHistory` store/model。
+- 直近20件のrestore履歴保持。
+- `backupFingerprint`の履歴保存。
+- 過去restoreとのfingerprint照合。
+- 「以前復元したbackupと同じ可能性があります」等の履歴由来warning。
+- RestoreHistory全消去UI。
+- history retention/rotation処理。
+
+### completion / cleanup
+- COMPLETED後は、Business/server canonical反映と必要なbinary verificationが完了していることを確認してから、staging、RestoreConflict、temporary protection等の再開用dataをidempotentにcleanupする。
+- CANCELLEDではBusinessへ未commitであることを確認して再開用dataをcleanupする。
+- non-retryable failureも安全に終了可能な状態なら同様にcleanupする。
+- cleanup failureだけを理由にRestore結果を失敗へ戻さず、後続maintenance/startup等で再試行可能とする。
+- active/retryable RestoreSessionは再開のためcleanupしない。
+
+### same backup again
+- 同じbackupを後から再度選択することは禁止しない。
+- 過去履歴を使った重複判定は行わない。
+- 毎回current Business/server stateを基準に通常のPREPARING/merge/Restore処理を最初から行う。
+- current stateとbackupが同一なら既存のUNCHANGED判定で不要なwriteを避ける。
+- 過去resolution/stagingは再利用しない。
+
+### diagnostic
+- v0.8で過去restore専用historyを持たないことと、通常のapplication/server logやerror diagnosticを持つことは別である。
+- restore correctnessに不要なbackup内容・conflict snapshot・写真binaryを診断目的だけで保持しない。
+
+### 根拠
+RestoreHistoryはrestore correctnessやdata recoveryに必要ではなく、履歴model、retention、fingerprint、重複warning、cleanup順序を追加する。低頻度のRestore機能に対して得られる利点が小さいためv0.8から外し、完了後は再開用stateをcleanupする単純なlifecycleとする。
+
+## 93. 次の簡略化判断候補
+
+**Restoreの「中断して後日RESOLVINGから再開」機能自体を維持するか**を再評価する。online Restore lock方式へ変更したため、長期間の中断再開を許す場合はlock leaseとの関係を定義する必要がある。v0.8では「画面内で競合解決し、離脱時はcancelして次回最初から」とすればRestoreSession/staging lifecycleをさらに大幅に簡略化できる可能性がある。
