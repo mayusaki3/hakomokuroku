@@ -1669,6 +1669,25 @@ resumable restoreを保証するにはstaging/protected binaryをcacheと同列�
 ### 根拠
 resumabilityを維持しながら通常利用を不必要にblockせず、staging/protected binaryによるstorage占有を利用者から見えない状態にしない。dismissを永続化しないことで、長期間放置されたactive sessionも次回起動時に再認識できる。single-active-session ruleにより新規restoreとの競合も防止する。
 
-## 84. 次の設計判断候補
+## 84. RestoreSession age表示 / warning threshold — 確定
 
-**RestoreSessionの経過時間表示・warning強調をどの粒度で行うか、または単純に開始日時のみ表示してwarning thresholdを設けないか**を確定する必要がある。
+**確定:** active/retryable RestoreSessionのbannerでは開始日時と経過時間を表示可能とするが、session ageだけを根拠とした固定warning thresholdは設けない。
+
+### 表示
+- RestoreSessionの開始日時を表示する。
+- 利用者が放置期間を把握しやすいよう、「6日前」等の経過時間を併記してよい。
+- storage使用量を取得可能な場合はsection 83どおり併記する。
+- 経過時間表示はinformationalであり、session stateやcleanup eligibilityを変更しない。
+
+### warning
+- 「3日超過」「30日超過」等、ageだけによるwarning level変更は行わない。
+- ageだけを理由にautomatic cancel、staging削除、protection解除、新たな操作制限を行わない。
+- storage pressure、binary欠損、retryable ERROR等の実際の状態変化がある場合は、それぞれの既確定規則に従って警告を強める。
+- 表示上の経過時間が長くても、それ自体を異常状態とは扱わない。
+
+### 根拠
+RestoreSessionが長期間activeであることだけでは異常とは判断できない。開始日時と経過時間を提示すれば利用者は放置期間を判断でき、固定thresholdによる恣意的な警告を避けられる。実際にstorage不足やデータ欠損等が発生した場合のみ、その具体的状態に基づいて警告を強める方が予測可能である。
+
+## 85. 次の設計判断候補
+
+**active RestoreSession bannerに表示するstorage使用量をどのように算出・表現するか**を確定する必要がある。
