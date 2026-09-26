@@ -2398,6 +2398,41 @@ request処理中のin-flight状態は通常のrequest/DB transactionとして扱
 ### 根拠
 通信断時に必要なのは「このapplyIdのBusiness transactionがcommitされたか」の判定であり、Restore全体のpersistent server workflowではない。Business + SyncChangeLog + COMMITTED resultをatomicにcommitすれば、2状態のidempotency recordだけで二重適用と結果不明問題を解決できる。
 
-## 104. 次の簡略化判断候補
+## 104. client RestoreApplyMarker.appliedAt — 確定
 
-**client側`RestoreApplyMarker.appliedAt`を残す必要があるか**を再評価する。server apply結果は`applyId`で確認でき、local Business + Outboxを同一IndexedDB transactionでcommitできるなら、client markerは`applyId + promotedPhotoIds[]`だけでもcrash recovery可能な可能性がある。一方、local transactionがcommit済みかをserver照会なしで即判定できる利点は小さいが明確であるため、複雑性との釣り合いを次に判断する。
+**確定:** v0.8ではclient側`RestoreApplyMarker.appliedAt`を維持する。`appliedAt`はlocal Business + Outboxのatomic commit済み判定だけを担い、追加workflow stateとして拡張しない。
+
+### marker
+client側の最小`RestoreApplyMarker`は概念上次の3要素を維持する。
+- `applyId`
+- `promotedPhotoIds[]`
+- `appliedAt`
+
+### atomic commit
+- Restoreによるlocal Business changes、必要なOutbox、`appliedAt`設定を同一IndexedDB readwrite transactionでcommitする。
+- transaction abort時はBusiness/Outbox/`appliedAt`のいずれもcommitしない。
+- `appliedAt == null`ならlocal Business atomic commit前。
+- `appliedAt != null`ならlocal Business atomic commit済み。
+- timestamp値自体をconflict orderingやserver winner判定には使わない。
+
+### crash recovery
+- markerなし: pending local Restore applyなし。
+- markerあり + `appliedAt == null`: local Business apply未commitとして、pre-promoted binary cleanupへ収束できる。
+- markerあり + `appliedAt != null`: local Businessを再applyせず、server`RestoreApplyResult`を`applyId`で確認し、server commit/cleanupへ収束する。
+- `appliedAt`からbackup内容やresolutionを再構成しない。
+
+### why retained
+`appliedAt`を削除すると、crash後にlocal Businessがcommit済みかをBusiness内容やserver resultから間接推定する必要がある。同一IndexedDB transactionへ1 fieldを書くだけでlocal commit boundaryを直接判定できるため、実装costに対する安全性・診断性の利点が十分大きい。
+
+### non-goals
+- PREPARING/RESOLVING/APPLYING等のstatus enumへ拡張しない。
+- progress管理に使わない。
+- Restore historyに使わない。
+- long-term audit timestampとして保持しない。
+- cleanup完了後はmarkerごと削除する。
+
+## 105. 次の簡略化判断候補
+
+ここまででRestore専用workflow stateは十分に縮小された。次は個別機構の削減ではなく、**section 1〜104に残るsuperseded旧記述をcanonical designから物理的に整理するか**を判断する。
+
+推奨は、確定済みの簡略化内容を基準に`restore-session-design.md`を再構成し、旧RestoreSession/RestoreHistory/persistent Conflict/full staging/storage accounting等の撤回済み仕様を本文から除去することである。履歴はGitで参照できるため、canonical document内に矛盾する旧仕様を残す利点は小さい。
