@@ -1996,6 +1996,36 @@ RestoreHistoryはrestore correctnessやdata recoveryに必要ではなく、履�
 ### 根拠
 online User Restore lockを導入した状態で長期中断再開を許すと、lock lease、他端末待機、staging retention、startup UXを追加で管理する必要がある。Restoreは低頻度操作であり、途中判断を後日再開できる利点より複雑性が大きい。短時間の通信回復とcrash-safe commit判定だけを残せば、data integrityを維持しつつlifecycleを大幅に単純化できる。
 
-## 94. 次の簡略化判断候補
+## 94. RestoreConflict永続modelの簡略化 — 確定
 
-**RestoreConflictを全件事前生成・保持する方式を維持するか**を再評価する。長期中断再開を廃止したため、v0.8ではcurrent stateとbackupをその場で比較し、差異のあるentityだけ順次UIで判断してmemory上にresolutionを保持し、最終apply planを作る方式へ簡略化できる可能性がある。
+**確定:** v0.8では`RestoreConflict`をIndexedDB等へ永続保存する専用model/storeを持たない。Restore operation中にcurrent Businessとbackup snapshotを比較し、差異のあるentityだけ利用者へ提示し、resolutionはそのoperationのmemory上で保持する。
+
+### conflict evaluation
+- backup entityごとにcurrent Businessを比較する。
+- currentに同一identityがなければ既確定のvalidation後auto-add候補とする。
+- business contentが同一ならUNCHANGED。
+- business contentが異なる場合のみ`KEEP_EXISTING / USE_BACKUP`を利用者へ提示する。
+- resolutionはoperation memory上のapply planへ保持する。
+- 全Conflictを事前にpersistent record化することを要求しない。
+
+### apply plan
+- 利用者判断とauto-add/UNCHANGED結果から最終apply planを構築する。
+- apply planは長期再開用dataではなく、そのRestore operationの一時state。
+- app終了・明示cancel・継続不能なlock loss等でoperationが終了した場合、apply planを後日再開用に保持しない。
+- 次回Restoreはbackup/current stateを再比較して最初からplanを作る。
+
+### final safety check
+- Restore実行端末の通常Business editは禁止され、server側はUser Restore lock中の通常Business Pushを適用しないため、RESOLVING中の通常stale発生源を原則排除する。
+- それでもapply直前に、apply plan作成時に比較したcurrent entityが想定どおりであることを必要最小限に再確認する。
+- 想定外の変更を検出した場合、古いresolutionを無条件適用せず、そのentityを再比較/再判断するか、安全にoperationをabortする。
+- persistent `stale` flagやRestoreConflict snapshot更新protocolは持たない。
+
+### 旧仕様の扱い
+旧section 4および関連sectionで定義したpersistent `RestoreConflict` record、`currentConflictIndex`、resolution即時永続化、stale flag管理、startup後のresolution再開は本sectionでsupersedeする。
+
+### 根拠
+長期中断再開を廃止し、Restore中のlocal Business変更と他端末Pushをlockで抑止するため、Conflictを永続workflow stateとして管理する必要がない。operation-local apply planとapply直前の軽量再確認だけで安全性を維持でき、DB schema、migration、cleanup、stale state machineを削除できる。
+
+## 95. 次の簡略化判断候補
+
+**RestoreSession自体をBusiness-facingな永続state machineとして残す必要があるか**を再評価する。長期再開・persistent conflict・history・storage accountingを廃止したため、v0.8では通常Restore operation stateはmemory上に置き、APPLYING/crash recoveryに必要な最小durable `RestoreApplyMarker`等だけを永続化する方式へ縮小できる可能性がある。
