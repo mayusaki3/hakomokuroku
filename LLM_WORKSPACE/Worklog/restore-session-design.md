@@ -1825,6 +1825,31 @@ RestoreSessionまたはRestoreSessionに紐づくlocal-only集計metadataとし�
 ### 根拠
 session単位のgeneration比較だけで、background scan中に対象binary集合が変化したraceを低コストに検出できる。個々のbinaryへversionを持たせる必要がなく、storage容量metadataというlocal advisory情報の整合性管理として十分である。
 
-## 90. 次の設計判断候補
+## 90. background recount retry / coalescing — 確定
 
-**storageGenerationが変化し続けてbackground recountが連続してstaleになる場合のretry/coalescing方針**を確定する必要がある。
+**確定:** background recount中に`storageGeneration`が変化して結果がstaleになった場合、即時・無制限にrecountを連続実行せず、変更をcoalesceして最新状態に対する再recountを1件だけscheduleする。
+
+### stale時
+- recount結果はsection 89どおり反映せず破棄する。
+- 既に再recountがpending/runningなら追加jobを積まない。
+- pendingがなければbackground再recountを1件scheduleする。
+- binary集合の変更が続く間は複数要求を1件へcoalesceする。
+
+### retry timing
+- restore処理や通常操作をblockしない。
+- activeなbinary更新が落ち着いた後に実行できるよう、短いdebounce/yieldを許可する。
+- 固定間隔で永久retryするtimerは持たない。
+- app/session lifecycleでbackground jobが中断された場合、次回section 87の疑義検出契機で再開可能とする。
+
+### repeated stale
+- repeated staleはRestoreSession ERRORへ遷移させる理由にしない。
+- 容量表示は「計算中…」または省略のままでよい。
+- restore correctnessに必要な処理をrecountより優先する。
+- binary集合が安定した後のrecount成功でmetadataを収束させる。
+
+### 根拠
+容量metadataはadvisoryであるため、活発なrestore/storage操作中に正確な瞬間値を得るためのrecount stormを起こす必要はない。generationによるstale検出とsingle pending jobへのcoalescingを組み合わせれば、I/O負荷を抑えつつ最終的に最新状態へ収束できる。
+
+## 91. RestoreSession設計の未決事項棚卸し
+
+section 1〜90の確定事項を対象に、v0.8実装前に決定が必須な未決事項、既存section間の矛盾、未定義のfailure/recovery pathが残っていないかを棚卸しする。新しい細目を機械的に追加せず、実装・test case作成をblockする事項だけを次の設計判断候補とする。
