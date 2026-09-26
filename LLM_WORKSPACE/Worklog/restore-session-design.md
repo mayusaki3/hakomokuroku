@@ -2258,6 +2258,45 @@ lock解除後は既定の通常sync sequenceへ戻す。
 ### 根拠
 Pushのみ停止してPullを許可すると、他端末がRestore直前canonical stateを取り込んだ直後にunlock後のRestore stateを再度Pullする中間状態が発生する。Restoreは短時間maintenance operationであるため、Business Sync全体を一時停止し、unlock後に既存の`Pull → Outbox reapply → Push → Pull`へ戻す方がprotocolとtest caseを単純化できる。
 
-## 101. 次の簡略化判断候補
+## 101. Restore lock中のphoto/blob upload — 確定
 
-**Restore lock中のphoto/blob uploadを独立して許可する必要があるか**を再評価する。Business Syncを停止するなら、未参照blobだけ先行uploadする利点は小さい。lock中は通常端末のBusiness関連photo/blob uploadも待機させ、unlock後の通常syncで処理する方が一貫して単純である可能性が高い。
+**確定:** v0.8ではUser単位Restore lock中、lock owner以外の端末/sessionからの通常Business関連photo/blob uploadもBusiness Pull/Pushと同様に一時停止する。Restore operation自身によるbackup binary反映だけをlock ownerとして許可する。
+
+### non-owner clients
+Restore lock中の通常端末では以下を待機させる。
+- Business Pull。
+- Business Push。
+- original photo/blob upload。
+- thumbnail upload/derived binary sync。
+- Business entityへのphoto reference確定を伴うserver処理。
+
+localでの写真追加・編集は通常どおり許可し、local Blob/Business/Outboxへ保持する。lock中であることを理由にlocal変更を破棄しない。
+
+serverがlock中のupload requestを受けた場合はretryable `RESTORE_LOCKED`相当として扱い、permanent upload failureやSyncConflictへ変換しない。
+
+### restore owner exception
+Restore実行端末/sessionはlock ownerとして、Restore applyに必要なbackup photo binaryをserverへ反映できる。
+
+- Restore apply planで採用されるbinaryだけを対象とする。
+- binary validation/hash確認を行う。
+- server Business canonical反映に必要なbinaryが揃う前にRestore完了扱いにしない。
+- Restore owner権限を通常Business upload bypassとして再利用しない。
+
+### unlock後
+通常端末は既定sync flowへ戻る。
+
+`Pull → Outbox reapply → required blob upload → Push → Pull`
+
+exactなblob upload位置/確認protocolはsync詳細設計で固定するが、Restore lock中だけの特別な先行upload pathは持たない。
+
+### orphan handling
+- lock中にserverへ通常端末の未参照blobを先行作成しないため、Restore lock由来のserver orphan blobを増やさない。
+- localで作成済みbinaryは通常local retention/GC ruleに従う。
+- Restore ownerがapply途中でuploadしたbinaryのcleanup/protectionはRestore apply/crash safety ruleに従う。
+
+### 根拠
+Business Syncを停止している間にblobだけ先行uploadする利点は小さく、server orphan管理、upload state、lock例外testを増やす。通常端末のBusiness関連通信をまとめて待機させ、unlock後に既存sync flowへ戻す方が一貫して単純である。
+
+## 102. 次の簡略化判断候補
+
+**Restore lock leaseのclient-side renewal state machineをどこまで作るか**を再評価する。長期中断再開を廃止しているため、複雑な再取得/ownership handoffは不要である。短いleaseをserverで発行し、Restore operation中だけ単純にrenewし、renew/ownership確認に失敗したらapply前はabort、apply中はserver側commit状態確認へ収束する最小protocolが適切と考えられる。
