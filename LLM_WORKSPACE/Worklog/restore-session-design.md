@@ -2187,6 +2187,41 @@ app/crash後にこれらを復元してRestoreを続行しない。
 
 backup identityは長期再開、履歴照合、同一backup warningを廃止した後のcrash recoveryには不要である。durable markerへ用途のない情報を残すとschema/migration/privacy/cleanup対象が増えるため、不可逆なapply境界の安全性に必要な情報だけを保持する。
 
-## 99. 次の簡略化判断候補
+## 99. Restore lock取得timing — 確定
 
-**Restore lockをRestore開始から保持する必要があるか**を再評価する。長期再開はなくなったが、backup validationや利用者のConflict判断中まで他端末のPushを止めると、利用者が画面を見ている時間だけ他端末を待たせる。lockを最終apply直前だけ取得すると待機時間は短くなる一方、lock取得後にcurrent stateを再比較する必要がある。どちらが全体として単純かを次に決める。
+**確定:** v0.8ではUser単位Restore lockを最終apply直前ではなく、Restore operation開始時に取得する。lock取得後にbackup validation、current state比較、Conflict判断、apply、server canonical反映までを行い、完了後にlockを解除する。
+
+### lock acquisition
+- Restore開始にはonline server接続を必須とする。
+- backupをRestore対象として処理開始する前にUser単位Restore lockを取得する。
+- lock取得に失敗した場合はRestore operationを開始しない。
+- 同一Userで既にRestore lockが存在する場合、別Restoreを並行開始しない。
+
+### while locked
+- 同一Userの他session/deviceからの通常Business Pushは適用せず、retryable `RESTORE_LOCKED`相当として後で再試行させる。
+- offline deviceは特別管理しない。再接続がlock中なら同様に待機/再試行し、unlock後は通常syncへ戻る。
+- read/Pullは原則許可するが、Restore途中stateをcanonicalとして公開しない。server canonical更新はapplyの確定boundaryで行う。
+- Restore実行端末自身も通常Business editを行わず、Restore operationだけを進める。
+
+### conflict stability
+- current stateとの比較と利用者の`KEEP_EXISTING / USE_BACKUP`判断はlock取得後に行う。
+- Conflict判断中に他端末Pushでserver canonical stateが変化しないため、apply直前の通常stale Conflict再評価protocolを持たない。
+- lock ownership/lease喪失等、前提が崩れた場合は古いresolutionを適用せずRestoreをabortする。
+- lock喪失後に同じmemory上resolutionを使って自動再開しない。次回Restoreは最初から行う。
+
+### unlock boundary
+- RestoreによるBusiness結果がserver canonicalへ正常に反映されたことを確認してからlockを解除する。
+- server反映前にunlockしない。
+- cancel/abortではRestoreによるBusiness commitがないこと、または必要なcrash recovery状態へ収束したことを確認した上でlockをreleaseする。
+- client crash/network loss時の永久lock防止にはlease/expiryを使用する。
+
+### why not apply-time lock
+最終apply直前だけlockを取得すると、backup/current比較後からlock取得までに他端末Pushが入り得る。その場合、
+`比較 → user resolution → lock → 再比較 → stale判定 → 再resolution`
+が必要となり、廃止したpersistent/stale Conflict処理を別形態で再導入することになる。
+
+長期中断再開を廃止したため、Restore開始時lockを長時間/数日保持する主要riskも除去されている。v0.8では短いmaintenance operationとしてRestore全体をlock内で完結させる方がstate machineとtest caseを少なくできる。
+
+## 100. 次の簡略化判断候補
+
+**Restore lock中のread/Pullを許可する必要があるか**を再評価する。writeだけをblockすればdata integrity上は十分だが、他端末がRestore前canonical stateをPullした直後にunlock後のRestore結果を再Pullする挙動が発生する。lock中はBusiness sync全体をretryableに停止し、通常のlocal閲覧だけ許可する方がclient/server protocolを単純化できる可能性がある。
