@@ -2145,6 +2145,48 @@ exact field名/type/size制約はdata model設計で確定する。
 ### 根拠
 長期再開と全量stagingを廃止したため、pre-promoted photoの用途は「現在のapplyがcommitするまでGCから保護し、abort時にcleanup候補を識別する」だけである。1つのapply markerへphotoId集合を保持すれば目的を満たし、独立modelのschema/index/cleanup整合性を追加する必要がない。
 
-## 98. 次の簡略化判断候補
+## 98. RestoreApplyMarkerの最小化 — 確定
 
-**RestoreApplyMarkerにbackup identity/hashをどこまで持つ必要があるか**を再評価する。長期再開や同一backup履歴判定を行わないため、crash recoveryが「このapplyのcommit有無」と「pre-promoted photo集合」を判断できれば十分であり、backup fingerprintや詳細manifest identityまで永続化する必要はない可能性が高い。
+**確定:** v0.8の`RestoreApplyMarker`にはbackup fingerprint、manifest identity、backup file identity等を永続保存しない。markerの責務を「Business applyのcommit有無判定」と「pre-promoted photoのcleanup/protection対象識別」に限定する。
+
+### minimal marker
+
+conceptual schemaは次を基本とする。
+
+- `applyId`: local apply operationを識別する一意ID。
+- `promotedPhotoIds[]`: このapplyでcanonical storageへpre-promoteし、commit前にtemporary protectionするphotoId集合。
+- `appliedAt`: Business/Outbox atomic commitが完了したことを示す値。未commitは`null`。
+
+exact storage representation/typeはdata model設計で確定する。
+
+### memory-only backup information
+
+以下はRestore operation中のみmemory上に保持し、crash recovery目的では永続化しない。
+
+- backup filename。
+- backup fingerprint。
+- manifest hash/identity。
+- backup作成日時等の表示情報。
+- conflict resolution内容。
+- apply plan詳細。
+
+app/crash後にこれらを復元してRestoreを続行しない。
+
+### crash recovery
+
+- markerなし: pending Restore applyなし。
+- markerあり + `appliedAt == null`: Business applyは未commitとして扱い、current Business refsを確認しながら`promotedPhotoIds[]`の未参照binaryをcleanupしてmarkerを削除する。
+- markerあり + `appliedAt != null`: Business apply済みとして再applyせず、Business refsをauthoritativeとしてtemporary protection/不要binaryをcleanupしmarkerを削除する。
+- markerだけからbackup内容やuser resolutionを再構成しない。
+
+### atomicity prerequisite
+
+`appliedAt`はBusiness changes + Outboxと同一atomic transactionで確定できることを前提とする。これを保証できないstorage構成になった場合は、marker fieldを増やして曖昧さを補うのではなく、apply transaction boundary自体を再設計する。
+
+### 根拠
+
+backup identityは長期再開、履歴照合、同一backup warningを廃止した後のcrash recoveryには不要である。durable markerへ用途のない情報を残すとschema/migration/privacy/cleanup対象が増えるため、不可逆なapply境界の安全性に必要な情報だけを保持する。
+
+## 99. 次の簡略化判断候補
+
+**Restore lockをRestore開始から保持する必要があるか**を再評価する。長期再開はなくなったが、backup validationや利用者のConflict判断中まで他端末のPushを止めると、利用者が画面を見ている時間だけ他端末を待たせる。lockを最終apply直前だけ取得すると待機時間は短くなる一方、lock取得後にcurrent stateを再比較する必要がある。どちらが全体として単純かを次に決める。
