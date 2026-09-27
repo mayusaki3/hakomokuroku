@@ -44,7 +44,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] Push/Pull API request/response/error code詳細
 - [x] blob uploadを含む通常sync = Pull→Outbox reapply→photo server-ready→Business Push→final Pull
 - [x] SyncConflict = KEEP_SERVER / USE_LOCAL、stale時再選択、最新Outboxをlocal候補
-- [ ] Full Resync paging/staging採用境界の最終schema
+- [x] Full Resync = immutable server snapshot / keyset paging / staging / atomic adopt
 - [x] Restore lock中の `RESTORE_LOCKED` = Push/Pull request-level 409 retryable
 
 ## 5. Box.code / Device
