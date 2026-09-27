@@ -80,7 +80,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] normal ingestion/upload/retry = immutable original identity + PENDING/UPLOADING/CONFIRMED + retry metadata
 - [x] server photo API = status/original/thumbnail/confirm + idempotent validation
 - [x] local/server photo GC = referenced originals保全 + thumbnail cache + unreferenced 30日GC
-- [ ] photo削除10秒Undo仕様を通常Business設計へ統合
+- [x] photo削除10秒Undo = delete即Business commit / Undoは新Business update / Sync非停止
 
 ## 8. Backup / Restore
 - [x] self-contained `.hkmbackup` ZIP + manifest/checksums/original/thumbnail
