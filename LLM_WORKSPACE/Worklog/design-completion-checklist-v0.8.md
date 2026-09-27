@@ -46,8 +46,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] SyncConflict = KEEP_SERVER / USE_LOCAL、stale時再選択、最新Outboxをlocal候補
 - [x] Full Resync = immutable server snapshot / keyset paging / staging / atomic adopt
 - [x] Restore lock中の `RESTORE_LOCKED` = Push/Pull request-level 409 retryable
-- [x] Box parent Sync = server current graphでcycle/reference/XOR検証、競合端末によるcycleはREJECTEDでOutbox保持
-- [x] Conflict USE_LOCALでもBox graphを再検証し、違反はRESOLUTION_REJECTED
+- [x] Box parent cycle = local時点で不正なら保存前validation / 別端末先行変更でSync時に初めて不成立ならSyncConflictで利用者確認
+- [x] Conflict解決時もcurrent Box graphを再検証し、成立不能なUSE_LOCALは強制適用せず収納先変更またはKEEP_SERVERを利用者選択
 
 ## 5. Box.code / Device
 - [x] `BX-<DevicePrefix 4><LocalSequence 4>`
