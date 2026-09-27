@@ -123,6 +123,7 @@ Box:
 - `tags[]`
 - `note`
 - 参照先BoxLocationの `name`
+- 親Box chainの `code` / `name`（例: 小箱 → 大箱）
 
 Item:
 - `name`
@@ -131,6 +132,7 @@ Item:
 - 所属Boxの `code`
 - 所属Boxの `name`
 - 所属BoxLocationの `name`
+- 所属Boxの親Box chainの `code` / `name`
 
 BoxLocation:
 - `name`
