@@ -112,7 +112,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] offline local編集 + reconnect sync基本方針
 - [x] PWA install/update/cache = optional install / versioned app shell / safe-boundary update / IndexedDB preservation
 - [x] Service Worker = navigation network-first / versioned assets cache-first / Business API network-only / atomic install + old-version fallback
-- [ ] auth session expiry中のoffline操作と再認証後sync
+- [x] auth expiry = bound User local編集継続 / server操作停止 / same-User reauth後normal Sync / cross-user禁止
 - [ ] User切替時の `hk-local-v2-<User.id>` lifecycle
 - [ ] storage quota/eviction時の通常data保護方針
 
