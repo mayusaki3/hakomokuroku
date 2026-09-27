@@ -105,7 +105,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] QR payload = canonical Box.codeのみ
 - [x] QR lookup = canonical validation + local-first + normal Sync retry + offline non-authoritative not-found
 - [x] Search = local Business / defined fields / NFC case-insensitive substring / multi-token AND / offline-capable
-- [ ] 24mm tape label layout最終仕様
+- [x] 24mm label = 70x24mm standard / 18mm QR + full Box.code + auxiliary Box.name
 - [ ] print/export/browser capability fallback
 
 ## 10. PWA / Offline / Authentication
