@@ -54,7 +54,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] prefix追加割当と `expectedActivePrefix`
 - [x] sequence/prefix exhaustion方針
 - [x] device stateは通常backup対象外
-- [ ] Device / DevicePrefix server schema
+- [x] Device / DevicePrefix server schema = User-scoped Device + permanently reserved prefix records
 - [ ] register/allocate-prefix API詳細
 - [ ] local device state schemaと初期化/復旧手順
 
