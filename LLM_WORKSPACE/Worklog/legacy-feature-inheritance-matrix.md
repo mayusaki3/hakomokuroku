@@ -52,7 +52,7 @@
 | **Item検索** | Item name/tags/noteを検索対象 | v0.8継承 | **設計済み** |
 | Box検索 | code/name/location/tags等 | v0.8継承 | 設計済み |
 | BoxLocation検索 | 新Data Modelに合わせ追加 | 新仕様へ置換 | 設計済み |
-| Box内Item絞り込み | 必須検索としては採用せず、カテゴリ等の並べ替えを採用 | 新仕様へ置換 | **方針確定、並べ替え詳細は要設計** |
+| Box内Item絞り込み | 必須検索としては採用せず、カテゴリ等の並べ替えを採用 | 新仕様へ置換 | **方針確定: 複数tagsをカテゴリとしてgroup表示** |
 | QR camera scan | canonical Box.codeを読み取る | 新仕様へ置換 | 設計済み |
 | QR hit時Box+Item表示/遷移 | local-first lookup | v0.8継承 | 要UI最終確認 |
 | QR local miss | offlineではserver不存在と断定しない | 新仕様へ置換 | 設計済み |
@@ -128,7 +128,7 @@ Backup/Restore、offline、PWA、Syncは現行設計を正とし、旧実装は�
 
 v0.8について、少なくとも以下は設計完了前に処理する。
 
-1. Box内Item一覧のカテゴリ等による並べ替え仕様（Box内絞り込み検索は必須としない）。
+1. Box内Item一覧は複数tagsをカテゴリとして利用する。通常一覧はItem重複なし、カテゴリ表示では複数tag groupへの重複表示を許容する。独立category/primary categoryは追加しない。
 2. PhotoRef順序変更に対応する写真並べ替えUI。
 3. User新規登録/Loginの最終UI/API境界。
 4. MFA/TOTPをv0.8へ維持するか。
