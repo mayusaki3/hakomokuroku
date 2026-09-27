@@ -377,7 +377,132 @@ logical render outputはprinter adapterから独立したvector-first representa
 
 特定printer機種のhardware marginはadapter/capability testで別途検証する。
 
-## 13. 設計残件
-- print/export/browser capability fallback
+## 13. Print / Export capability
+
+### 13.1 Principle
+label rendererとoutput mechanismを分離する。
+
+```text
+Box Business
+  -> logical label renderer
+  -> output
+       |- browser print
+       |- PDF export
+       |- image export
+       \- optional printer adapter
+```
+
+特定printer SDK/APIをv0.8の必須依存にしない。
+
+### 13.2 Browser print
+v0.8の標準print pathはbrowser print。
+
+- print専用document/viewを生成
+- logical size 70mm x 24mmをCSS print sizeへ指定
+- application navigation/header/footerを印刷対象外
+- browserのheader/footer追加は可能なら無効化を案内
+- scaleは100%を基本とし、fit-to-pageによる自動縮小を避ける
+- printer hardware margin/cut/feedは利用者のdriver/printer設定またはadapter側責務
+
+Web applicationからOS print dialogを自動確定しない。
+
+### 13.3 PDF export
+browser printが不適切/利用不能な場合のportable fallbackとしてPDF exportを提供する。
+
+- page size: 70mm x 24mm
+- 1 Box = 1 pageを標準
+- QRはvectorまたはlossless integer-aligned representation
+- Box.codeは全文保持
+- Box.name ellipsis ruleはlabel layoutと同一
+- PDF metadataへBusiness secretを追加しない
+
+複数Box一括exportを将来提供する場合も1 label = 1 logical pageを維持する。
+
+### 13.4 Image export
+画像出力はPNGを標準fallbackとする。
+
+- transparentではなく明示的background
+- output解像度はtarget printer DPI指定可能
+- DPI不明時は高解像度logical renderから生成
+- QR moduleを整数pixel alignment
+- JPEGは禁止しないがQR labelの標準exportには使用しない
+
+画像exportはprinter driverや外部label softwareへ渡す用途。
+
+### 13.5 Optional printer adapter
+printer vendor SDK、WebUSB、WebBluetooth、native bridge等はoptional adapter。
+
+adapter contract:
+- logical label input/outputを変更しない
+- Box.code/QR payloadを書き換えない
+- hardware margin/cut/feed/raster DPI等だけをdevice capabilityへ変換
+- unsupported deviceでapplication全体をfailureにしない
+
+v0.8では特定vendor printerへのdirect-print対応を完成条件に含めない。
+
+### 13.6 Capability detection
+UIは利用可能なoutput pathだけを有効表示する。
+
+最低限:
+- browser print可能 → 「印刷」
+- file generation/download可能 → 「PDF保存」「PNG保存」
+- optional adapter available → device-specific print action
+
+capability判定不能時にdirect printを推測して実行しない。
+
+### 13.7 PWA / mobile
+installed PWAでもbrowser/OSがprintを提供する場合はbrowser printを利用可能。
+
+print APIがない、またはPWA/browser制約で安定しない場合:
+1. PDF export
+2. PNG export
+の順でfallbackを提示する。
+
+mobileで外部share/save UIを利用する場合も生成物のlabel layoutは同一。
+
+### 13.8 Permission / API failure
+optional device APIでpermission拒否・device disconnect・unsupportedが発生してもlabel Business dataは変更しない。
+
+表示例:
+- printer permission denied
+- printer disconnected
+- direct print unsupported
+
+その場でPDF/PNG fallbackを選択可能にする。
+
+### 13.9 Offline
+label rendering、PDF/PNG exportは必要resourceがlocal cache済みならoffline利用可能とする。
+
+QRはBox.codeからlocal生成するためserver access不要。
+
+browser printもOS/browserがoffline printを許せば利用可能。
+
+optional adapterがnetwork/cloud vendor serviceを必要とする場合、そのadapterだけoffline unavailableとする。
+
+### 13.10 Failure boundary
+print/export failureはBusiness transactionではない。
+
+- Box/Outboxを変更しない
+- sync stateを変更しない
+- Box.codeを再発行しない
+- print成功履歴をBusiness metadataへ記録しない
+
+v0.8ではpersistent print historyを持たない。
+
+### 13.11 Preview
+print/export前にlogical label previewを表示する。
+
+previewは同じrenderer inputを使い:
+- QR
+- Box.code
+- Box.name truncation
+を確認可能にする。
+
+previewとexportで別layout implementationを持たない。
+
+## 14. QR / Search / Label設計完了
+v0.8のQR / Search / Label設計残件は完了。
+
+特定printer機種のadapter実装・実機検証は実装/検証工程で扱う。
 
 [目次](../README.md) > アーキテクチャ > QR / Search / Label設計
