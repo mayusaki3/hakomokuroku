@@ -30,7 +30,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] contentHash canonicalization基本規則
 - [x] Box / Item / BoxLocation / Outbox / SyncState / SyncConflict / SyncChangeLogの最終field schema
 - [x] server DB unique/index/FK/transaction制約
-- [ ] local IndexedDB schema/version/migration方針
+- [x] local IndexedDB = hk-local-v2-<User.id> / schemaVersion 1 / store・migration方針
 - [x] RestoreApplyResult / RestoreLockの最小schema
 - [x] RestoreApplyMarkerは `applyId` のみ
 
