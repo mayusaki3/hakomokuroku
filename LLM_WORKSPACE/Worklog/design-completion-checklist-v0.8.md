@@ -79,7 +79,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] direct parent-to-parent photo moveはv0.8対象外
 - [x] normal ingestion/upload/retry = immutable original identity + PENDING/UPLOADING/CONFIRMED + retry metadata
 - [x] server photo API = status/original/thumbnail/confirm + idempotent validation
-- [ ] local cache/GCとserver orphan GCの境界
+- [x] local/server photo GC = referenced originals保全 + thumbnail cache + unreferenced 30日GC
 - [ ] photo削除10秒Undo仕様を通常Business設計へ統合
 
 ## 8. Backup / Restore
