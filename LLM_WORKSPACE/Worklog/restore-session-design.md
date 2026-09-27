@@ -62,6 +62,7 @@ Restoreは当初、persistent RestoreSession、persistent RestoreConflict、full
 - transaction abortならBusiness/resultともcommitしない。
 - response loss時はapplyIdでresultを照会する。
 - persistent PROCESSING/progress Restore Jobは作らない。
+- RestoreApplyResult(COMMITTED)はserver commitから7日保持し、その後は削除可能。
 
 ## 7. Client apply marker / server-first — 確定
 Restore applyはserver-firstとする。
@@ -99,8 +100,7 @@ v0.8現行仕様では採用しない:
 これらを復活させる場合は新しい設計判断として再検討する。
 
 ## 9. 現在の設計残件
-1. RestoreApplyResult retention。
-2. Restore UI flow。
+1. Restore UI flow。
 
 local/server apply順序とowner photo upload境界はserver-first採用により確定した。
 
