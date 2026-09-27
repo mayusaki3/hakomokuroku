@@ -122,7 +122,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] normal SyncConflict UI = 一覧/差分/個別解決/stale再比較
 - [x] Restore conflict/confirmation/progress/completion UI
 - [x] offline / AUTH_EXPIRED / RESTORE_LOCKED = global status + affected operation + next action / local data継続
-- [ ] delete/Undo表示
+- [x] delete/Undo = entity delete事前確認 / Box・Location child影響明示 / Photo即時delete + 10秒Undo
 - [ ] accessibility・mobile/PWA基本確認
 
 ## 12. v1.0
