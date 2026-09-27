@@ -55,7 +55,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] sequence/prefix exhaustion方針
 - [x] device stateは通常backup対象外
 - [x] Device / DevicePrefix server schema = User-scoped Device + permanently reserved prefix records
-- [ ] register/allocate-prefix API詳細
+- [x] register/allocate-prefix API = idempotent register + expectedActivePrefix compare-and-switch
 - [ ] local device state schemaと初期化/復旧手順
 
 ## 6. Box / Item / BoxLocation
