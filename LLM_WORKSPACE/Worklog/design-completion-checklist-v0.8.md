@@ -41,11 +41,11 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] tombstone 30日 / SyncChangeLog 90日
 - [x] Full Resync snapshotSeq + staging + Outbox再適用
 - [x] Outbox reapply順 = BoxLocation → Box → Item
-- [ ] Push/Pull API request/response/error code詳細
+- [x] Push/Pull API request/response/error code詳細
 - [ ] blob uploadを含む通常syncの正確な順序
 - [ ] SyncConflict解決API/UIの最終仕様
 - [ ] Full Resync paging/staging採用境界の最終schema
-- [ ] Restore lock中の `RESTORE_LOCKED` を通常sync protocolへ統合
+- [x] Restore lock中の `RESTORE_LOCKED` = Push/Pull request-level 409 retryable
 
 ## 5. Box.code / Device
 - [x] `BX-<DevicePrefix 4><LocalSequence 4>`
