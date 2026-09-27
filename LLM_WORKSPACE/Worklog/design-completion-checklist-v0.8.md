@@ -31,7 +31,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [ ] Box / Item / BoxLocation / Outbox / SyncState / SyncConflict / SyncChangeLogの最終field schema
 - [ ] server DB unique/index/FK/transaction制約
 - [ ] local IndexedDB schema/version/migration方針
-- [ ] RestoreApplyMarker / RestoreApplyResult / RestoreLockの最小schema
+- [ ] RestoreApplyResult / RestoreLockの最小schema
+- [x] RestoreApplyMarkerは `applyId` のみ
 
 ## 4. 通常Sync / Conflict / Full Resync
 - [x] 通常sync = Pull → Outbox reapply → Push → Pull
@@ -91,14 +92,14 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] RestoreHistoryなし
 - [x] persistent RestoreConflictなし
 - [x] full binary stagingなし
-- [x] RestoreApplyMarker = applyId + promotedPhotoIds[] + appliedAt
+- [x] server-first Restore / RestoreApplyMarker = applyId only
 - [x] server applyはapplyId idempotency + short-lived COMMITTED result
-- [ ] local/server applyの正確な順序を確定
+- [x] local/server apply順序 = server-first
 - [ ] Restore lock lease時間/renew interval/API詳細
 - [ ] RestoreApplyResult retentionを確定
-- [ ] Restore owner photo uploadとserver Business commit境界
+- [x] Restore owner photo upload完了・検証後にserver Business atomic commit
 - [ ] Restore UI最終フロー
-- [ ] `restore-session-design.md`を現行仕様だけに再構成
+- [x] `restore-session-design.md`を判断履歴summaryへ再構成
 
 ## 9. QR / Search / Label Print
 - [x] QR payload = canonical Box.codeのみ
