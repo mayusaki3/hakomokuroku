@@ -31,9 +31,18 @@ derived WebP:
 thumbnail bytesはparent contentHashに含めない。
 
 ## 4. Sync / GC
-blob-first upload。Businessがserverでphoto referenceをcanonical化する前に必要originalがserver-readyであることを保証する。
+blob-first upload。Businessがserverでphoto referenceをcanonical化する前にoriginal + required thumbnailがserver validation済みでreference-readyであることを保証する。
 
-unreferenced server blobは30日後GC candidate。
+PhotoUploadState:
+- `PENDING`: server-ready未確認。retry可能
+- `UPLOADING`: upload/validation処理中
+- `CONFIRMED`: current User scope serverでphotoId/photoHashのoriginal + required thumbnailが検証済みでBusiness参照可能
+
+network/timeout/RESTORE_LOCKED等のretryable failureではPENDINGへ戻す。単なるupload HTTP成功ではCONFIRMEDにしない。
+
+blob confirmed後にBusiness Pushが失敗/競合した場合、blobはunreferencedのまま残り得る。これは正常な補償対象であり30日後GC candidateとする。
+
+Business payloadから既に参照されないphotoは通常syncのupload dependencyに含めない。
 
 ## 5. Edit/Delete
 direct parent-to-parent photo moveはv0.8対象外。
