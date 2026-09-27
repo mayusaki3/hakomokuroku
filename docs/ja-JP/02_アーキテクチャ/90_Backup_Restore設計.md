@@ -37,39 +37,89 @@ short lease + opaque `lockToken`。operation中のみrenewする。handoff/reacq
 
 owner以外のBusiness Sync/blob uploadは `RESTORE_LOCKED`。local編集は可能。
 
-lock ownership/leaseをpre-applyで失った場合はabortしresolutionを破棄する。
+lock ownership/leaseをserver apply前に失った場合はabortしresolutionを破棄する。
 
-## 5. Binary
-backup採用/new entityで必要なphoto binaryだけをapply直前に検証・準備する。必要binaryが揃わない状態でBusiness commitしない。
+## 5. Apply authority / order
+Restoreは**server-first**とし、server canonical stateを唯一のRestore commit authorityとする。
 
-## 6. Idempotency
+```text
+1. Restore lock取得
+2. backup検証
+3. current server Businessと比較
+4. conflict resolution / final summary
+5. USE_BACKUP / auto-addに必要なphoto binaryをserverへupload・検証
+6. clientでunique applyId生成・RestoreApplyMarkerへ永続化
+7. lockToken + applyId + final apply planでserver Restore apply
+8. server atomic transaction commit
+9. RestoreApplyResult(COMMITTED)を確認
+10. clientはserver canonical stateをPull/adopt
+11. RestoreApplyMarker削除
+12. Restore lock解放
+```
+
+Restore専用のlocal Business/Outbox commitは行わない。Restore結果はserver commit後のPullでlocalへ反映する。
+
+これによりserver commit前にlocalだけRestore済みになる状態を作らず、response loss/crash時もapplyIdからserver commit有無を判定できる。
+
+## 6. Binary
+backup採用/new entityで必要なphoto binaryはserver apply前にserverへuploadし、photoId/hash/size/formatを検証する。
+
+全必要binaryがserver-readyになるまでBusiness applyを開始しない。
+
+server apply未commitのuploadはunreferenced blobとして通常orphan GC対象にできる。Restore correctnessのためのlocal pre-promotionは不要。
+
+## 7. Idempotency / Server transaction
 server Restore applyはclient-generated unique `applyId` を使う。同一User+applyIdを二重Business applyしない。
 
-server atomic transactionにはRestore Business changes、canonical metadata、SyncChangeLog、short-lived `RestoreApplyResult(COMMITTED)` を含める。persistent Restore Jobは持たない。
+server atomic transactionには以下を含める。
+- Restore Business changes
+- canonical metadata / revision / contentHash / serverUpdatedAt / syncSeq
+- SyncChangeLog
+- short-lived `RestoreApplyResult(COMMITTED)`
 
-response loss時はapplyIdでresultを照会する。
+persistent Restore Jobは持たない。
 
-## 7. Client crash safety
-現時点の確定案ではminimal durable marker:
+response loss時は同じapplyIdでresultを照会する。
+- COMMITTED → 再applyせずlocal Pull/adoptへ進む
+- resultなし + lock有効 → 同じapplyId/requestで安全にretry可能
+- resultなし + lock失効 → 未commitとしてoperation終了。古いresolutionから自動再開しない
+
+same applyIdに異なるrequest contentを送信した場合はvalidation errorとする。
+
+## 8. Client crash safety
+minimal durable markerは以下。
+
 ```text
 RestoreApplyMarker
 - applyId
-- promotedPhotoIds[]
-- appliedAt
 ```
 
-`appliedAt` はlocal Business/Outbox commit境界だけを表し、conflict ordering等には使わない。
+markerはserver request前に保存する。
 
-## 8. 設計残件
-**Restoreの主要残件はlocal/server applyの正確な順序。**
-これを確定するまでsection 7のmarker構成も最終確定とはみなさない。
+startup/recovery:
+- markerなし → pending Restore applyなし
+- markerあり → server `RestoreApplyResult` をapplyIdで照会
+- COMMITTED → server canonical stateをPull/adoptしmarker削除
+- resultなし → local BusinessはRestore適用されていないため再applyしない。markerをcleanupし通常状態へ戻る
 
-その他:
-- lock lease / renew具体値
+`promotedPhotoIds[]` と `appliedAt` は不要。local Restore-specific Outboxも作らない。
+
+## 9. Local convergence
+server COMMITTED後のlocal反映は通常Pullのcanonical payloadを使用する。
+
+Restore owner端末ではRestore operation中の通常Business編集を禁止しているため、Restore自身のlocal Outboxとのmergeは発生しない。
+
+他端末はlock中もlocal編集可能。unlock後に通常
+```text
+Pull → Outbox reapply → required blob upload → Push → Pull
+```
+で収束し、必要なら通常SyncConflictとなる。Restore専用conflict typeは作らない。
+
+## 10. 設計残件
+- Restore lock lease / renew具体値とAPI
 - RestoreApplyResult retention
-- Restore owner photo uploadとserver Business commit境界
 - Restore UI flow
 
-旧persistent RestoreSession / RestoreHistory / persistent RestoreConflict / full binary staging / restore storage accounting / long-term resume設計は撤回済みで、現行仕様ではない。
+旧persistent RestoreSession / RestoreHistory / persistent RestoreConflict / full binary staging / restore storage accounting / long-term resume / local-first Restore applyは現行仕様ではない。
 
 [目次](../README.md) > アーキテクチャ > Backup / Restore設計
