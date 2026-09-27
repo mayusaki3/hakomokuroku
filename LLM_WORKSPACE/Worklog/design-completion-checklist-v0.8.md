@@ -114,7 +114,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] Service Worker = navigation network-first / versioned assets cache-first / Business API network-only / atomic install + old-version fallback
 - [x] auth expiry = bound User local編集継続 / server操作停止 / same-User reauth後normal Sync / cross-user禁止
 - [x] User switch = close old User DB / preserve its Outbox+photos+DeviceState / open separate new User DB / no cross-user transfer or background Sync
-- [ ] storage quota/eviction時の通常data保護方針
+- [x] storage quota/eviction = Class A primary data保護 / reconstructible cache優先cleanup / persistent storage request / loss検知後Full Resync
 
 ## 11. UI / UX
 - [ ] 登録フロー各stepの戻る/skip/cancel
