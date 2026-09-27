@@ -100,9 +100,10 @@ v0.8現行仕様では採用しない:
 これらを復活させる場合は新しい設計判断として再検討する。
 
 ## 9. 現在の設計残件
-1. Restore UI flow。
+Restore固有の主要設計残件はなし。
 
-local/server apply順序とowner photo upload境界はserver-first採用により確定した。
+UIは file選択 → lock → validation/compare → conflict resolution → final summary → explicit apply → server COMMITTED確認 → local Pull/adopt → 完了 のforeground flowとする。
+server COMMITTED後のlocal反映失敗はRestore失敗ではなく、通常syncによるlocal convergence待ちとして扱う。
 
 ## 10. 履歴
 このファイルは以前section 1〜104までの詳細な逐次判断を保持していた。
