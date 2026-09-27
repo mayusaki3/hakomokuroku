@@ -254,8 +254,130 @@ v0.8はlocal datasetに対する単純検索を正とする。
 
 検索indexはBusiness contentではなく再構築可能なlocal derived dataとする。
 
-## 12. 設計残件
-- 24mm tape label layout
+## 12. 24mm tape label
+
+### 12.1 Purpose
+24mm tape labelはBoxをphysical識別し、QR scanまたは目視code入力でBox detailへ到達するためのラベル。
+
+primary identity:
+- QR: canonical `Box.code`
+- human-readable: canonical `Box.code`
+
+Box nameは補助情報でありidentityではない。
+
+### 12.2 Logical size
+テープ幅は24mm。
+
+印刷機固有の上下左右hardware margin、cut margin、feed量はlabel content layoutと分離し、print adapter側で扱う。
+
+content safe areaは上下各2mmを最低余白として、中央20mm高以内に主要contentを配置する。
+
+label長は固定しない。Box name長とprinter capabilityに応じて必要長を算出するが、v0.8の標準target lengthは **70mm** とする。
+
+標準logical canvas:
+```text
+70mm x 24mm
+```
+
+### 12.3 Standard layout
+横長1段構成。
+
+```text
++--------------------------------------------------------------------+
+|  +----------------+   BX-AB2CDEF3                                  |
+|  |                |   電動工具                                     |
+|  |       QR       |                                                |
+|  |                |                                                |
+|  +----------------+                                                |
++--------------------------------------------------------------------+
+     QR area            text area
+```
+
+- left: QR
+- right upper: Box.code
+- right lower: Box.name
+- QR/codeをnameより優先
+
+### 12.4 QR
+QR payloadはBox.codeそのもの。
+
+QR logical size:
+- **18mm x 18mm**
+- quiet zoneをQR生成物内に含める
+- square aspect ratio固定
+- raster化時はmodule boundaryを整数pixelへ合わせる
+- interpolation/blur禁止
+
+QR error correctionは **M** を標準とする。
+
+printer解像度によって18mmでmodule integer alignmentを満たせない場合は、18mm以下で最大の整数module sizeへ縮小して中央配置する。拡大補間はしない。
+
+### 12.5 Box.code text
+Box.codeは省略禁止。
+
+- canonical stringをそのまま表示
+- uppercase
+- single line
+- QR右側の最上位visual priority
+- monospaced fontを優先するが必須ではない
+- font fallbackでも全文が入るsizeへ縮小可能
+- ellipsis禁止
+- wrap禁止
+
+目視入力できることを目的とする。
+
+### 12.6 Box.name
+Box.nameは補助表示。
+
+- single lineを標準
+- text area幅を超える場合はellipsis
+- QR/codeを縮小してnameを優先しない
+- nameが空になることはBusiness validation上ない
+- emoji/unsupported glyph等はprinter/font fallback結果に依存し、QR/code identityには影響させない
+
+v0.8ではlabel上へLocation、Item count、tag、noteを追加しない。
+
+### 12.7 Reserved Box
+reserved `UNASSIGNED` Boxはphysical label print対象外。
+
+### 12.8 Deleted Box
+tombstone Boxの新規label生成は禁止。
+
+既にphysical labelが残っている場合、scanするとQR lookup規則により「削除済み」となる。
+
+### 12.9 Pending local Box
+localで作成済みかつ未PushのBoxもlabel生成可能。
+
+Box.codeはlocal atomic allocation時点で確定・immutableなのでserver Push完了を印刷条件にしない。
+
+UIには未同期状態を表示し、利用者が認識できるようにする。
+
+### 12.10 Rendering
+label rendererへのBusiness inputは最低限:
+```text
+boxCode
+boxName
+```
+
+rendererはQR payloadをboxCodeから生成する。
+
+Business photo等をlabel rendererへ渡さない。
+
+logical render outputはprinter adapterから独立したvector-first representationを推奨し、最終raster化は出力先解像度に合わせる。
+
+### 12.11 Print verification
+実装/テストでは最低限:
+- QR scan可能
+- Box.code全文目視可能
+- 24mm幅からcontentがはみ出さない
+- long Box.nameでもQR/code layout不変
+- printer margin差でQRがclipされない
+
+を確認する。
+
+特定printer機種のhardware marginはadapter/capability testで別途検証する。
+
+## 13. 設計残件
 - print/export/browser capability fallback
 
 [目次](../README.md) > アーキテクチャ > QR / Search / Label設計
