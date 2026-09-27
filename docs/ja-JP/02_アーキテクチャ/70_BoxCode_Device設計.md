@@ -112,8 +112,128 @@ Deviceを「使わなくなった」状態にしてもprefixは解放しない�
 
 これにより過去に発行済みBox.codeと将来発行codeの衝突を、Box tombstone/physical purge後も防止する。
 
-## 7. 設計残件
-- register / allocate-prefix API
+## 7. Device API
+
+### 7.1 共通
+Device APIはauthenticated User scopeで動作する。requestにuserIdを含めない。
+
+64-bit LocalSequenceはserver管理対象ではない。serverはprefix namespaceだけを管理する。
+
+### 7.2 Register
+`POST /api/devices/register`
+
+request:
+```json
+{
+  "deviceId": "opaque-client-generated-id"
+}
+```
+
+新規device:
+1. deviceId validation
+2. 未使用prefixを1つ確保
+3. DevicePrefix作成
+4. DeviceをそのprefixをactivePrefixとして作成
+5. 1 transaction commit
+
+response:
+```json
+{
+  "deviceId": "...",
+  "activePrefix": "AB2C",
+  "created": true
+}
+```
+
+既存 `(User,deviceId)` への再送はidempotent:
+- new prefixを割り当てない
+- current activePrefixを返す
+- `created=false`
+
+通信応答喪失後も同じdeviceIdでregisterをretryする。
+
+### 7.3 Allocate next prefix
+`POST /api/devices/{deviceId}/prefixes/allocate`
+
+request:
+```json
+{
+  "expectedActivePrefix": "AB2C"
+}
+```
+
+server transaction:
+1. Deviceを取得
+2. current activePrefix確認
+3. expected == currentならnew prefix確保
+4. DevicePrefix作成
+5. old prefix.retiredAt設定
+6. Device.activePrefix=new prefix
+7. commit
+
+success:
+```json
+{
+  "deviceId": "...",
+  "previousPrefix": "AB2C",
+  "activePrefix": "D4EF",
+  "allocated": true
+}
+```
+
+### 7.4 Lost-response idempotency
+allocate成功後responseをclientが受信できず、同じrequestをretryした場合、server current activePrefixは既にexpectedと異なる。
+
+この場合new prefixを追加割当せず:
+```json
+{
+  "deviceId": "...",
+  "activePrefix": "D4EF",
+  "allocated": false,
+  "reason": "ACTIVE_PREFIX_CHANGED"
+}
+```
+をHTTP 200で返す。
+
+clientは返されたcurrent activePrefixを採用する。
+
+これにより同一expectedActivePrefixからのretryでprefixを複数消費しない。
+
+### 7.5 Concurrent allocate
+同じDeviceへ複数requestが同時に到達しても、transaction内でcurrent activePrefixを再確認する。
+
+最初の1requestだけがexpected一致でallocate可能。後続は `ACTIVE_PREFIX_CHANGED` としてcurrent activePrefixを返す。
+
+### 7.6 Errors
+Register:
+- `400 INVALID_DEVICE_ID`
+- `401 AUTH_REQUIRED`
+- `409 DEVICE_PREFIX_EXHAUSTED`
+- `500 INTERNAL_ERROR`
+- `503 TEMPORARILY_UNAVAILABLE`
+
+Allocate:
+- `400 INVALID_PREFIX`
+- `401 AUTH_REQUIRED`
+- `404 DEVICE_NOT_FOUND`
+- `409 DEVICE_PREFIX_EXHAUSTED`
+- `500 INTERNAL_ERROR`
+- `503 TEMPORARILY_UNAVAILABLE`
+
+network/5xxはsame request retry可能。
+
+`DEVICE_PREFIX_EXHAUSTED` はretryで解消しないUser-scope namespace exhaustion。
+
+### 7.7 Restore lockとの関係
+Device register / prefix allocationはBusiness Restore applyの対象外だが、新しいBox.code発行能力に影響する。
+
+v0.8ではRestore lock中:
+- existing local prefixでoffline Box作成は可能
+- server Device register / allocate-prefixは `409 RESTORE_LOCKED` として一時停止
+
+これによりRestore中のserver namespace mutationを単純化する。
+
+## 8. 設計残件
 - local device state schema
 - local data消失・再setup時の具体手順
 
