@@ -256,8 +256,120 @@ Service Worker/cacheだけが壊れている場合:
 
 Service Worker registrationを解除/再登録するrecoveryを実装しても、IndexedDB deletionと連動させない。
 
-## 14. 設計残件
-- auth session expiry中のoffline操作と再認証後sync
+## 14. Authentication expiry / offline editing
+
+### 14.1 Separate authentication from local ownership
+server authentication sessionとlocal DB ownershipを分離する。
+
+server session/tokenが期限切れでも、端末上で既に認証済みUser identityへ安全にbindingされたlocal session contextが残っている場合、そのUserのlocal DBをoffline modeで開ける。
+
+local session contextは最低限:
+```text
+userId
+lastAuthenticatedAt
+localSessionVersion
+```
+
+を持つ。server token/password等のcredentialをBusiness DBへ保存しない。
+
+### 14.2 Offline unlock boundary
+v0.8でoffline editingを許可する条件:
+- 過去にonline authentication成功済み
+- local session contextのUser IDが明確
+- 対応する `hk-local-v2-<User.id>` を特定可能
+- explicit logout/user switchでlocal session bindingが解除されていない
+
+条件を満たさない場合、network無しでUserを推測してDBを開かない。
+
+「最後に存在するDBを自動選択」は禁止。
+
+### 14.3 Session expired while online
+server APIが `AUTH_REQUIRED` を返した場合:
+- local Business閲覧は継続可能
+- local Business編集は継続可能
+- Business + Outbox commitは通常通り
+- Push/Pull/photo upload/Device prefix allocation/Restore等server operationを停止
+- UIを `AUTH_EXPIRED` stateへ
+- 再認証を要求
+
+未同期変更を削除・rollbackしない。
+
+### 14.4 Session expires while offline
+offline中はserver session validityを確認できない。
+
+local session contextが有効ならoffline editingを継続し、server operationはnetwork unavailableとしてpending。
+
+「offlineだからsessionが有効」とは判定しない。online復帰後の最初のserver accessで認証状態を確認する。
+
+### 14.5 Operations allowed while auth expired
+許可:
+- local Box/Item/BoxLocation閲覧
+- local create/update/delete
+- local photo追加/削除/Undo
+- local search
+- local QR lookup
+- local label preview/export
+- local backup export（local dataだけで完結可能な範囲）
+
+server access不要な操作だけを許可する。
+
+不可/保留:
+- Sync Push/Pull
+- Full Resync
+- server photo confirm/download
+- Restore
+- Device register/new prefix allocate
+- server conflict resolve
+- server canonical存在確認を必要とするQR not-found判定
+
+### 14.6 Box creation and DeviceState
+auth expired/offlineでもhealthy DeviceStateに未使用LocalSequenceがあれば新規Box作成可能。
+
+activePrefixがexhaustedしnew prefix allocationが必要な場合はserver authenticationが必要なので、新規Box作成だけをblockする。
+
+既存Businessの編集は継続可能。
+
+### 14.7 Reauthentication
+再認証成功時、返されたauthenticated User IDをlocal session contextのUser IDと比較する。
+
+same User:
+1. local session context更新
+2. server operation再開
+3. normal Syncを `Pull -> Outbox reapply -> required blob upload -> Push -> Pull` で実行
+4. conflictは通常SyncConflict
+
+different User:
+- 現在開いている旧User DBへ新User credentialでSyncしない
+- 旧User DBをclose
+- User switch lifecycleへ遷移
+- 新Userのlocal DBを別途open
+
+cross-user Outbox移送は禁止。
+
+### 14.8 Reauthentication failure
+credential failure/network failure等で再認証できない場合:
+- local data保持
+- Outbox保持
+- AUTH_EXPIRED/offline state継続
+- destructive resetを提示しない
+
+### 14.9 Explicit logout
+explicit logoutはserver session/tokenを破棄し、current Userのlocal session bindingを解除する。
+
+logoutだけではUser local DB/Outbox/photoを自動削除しない。
+
+logout後は再認証なしにそのUser DBを自動openしてoffline editingを再開しない。
+
+local data削除は別の明示的なdevice data removal操作として扱う。
+
+### 14.10 Security boundary
+offline local accessはserver authenticationの代替ではない。
+
+端末OS/browser profile自体を共有する脅威に対する追加local encryption/PIN lockはv0.8必須範囲外。
+
+ただしlogout後にlocal sessionを自動復活させないことで、application levelのUser切替境界を維持する。
+
+## 15. 設計残件
 - User切替時local DB lifecycle
 - storage quota/eviction時の通常data保護
 
