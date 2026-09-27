@@ -118,7 +118,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 
 ## 11. UI / UX
 - [x] 登録flow = stepごと即時保存 / Backはrollbackなし / optional step skip / Box作成後Cancelはflow終了のみ
-- [ ] sync状態表示
+- [x] sync表示 = global + entity state / SYNCED-PENDING-SYNCING-CONFLICT-BLOCKED + offline/auth/Restore context
 - [x] normal SyncConflict UI = 一覧/差分/個別解決/stale再比較
 - [x] Restore conflict/confirmation/progress/completion UI
 - [ ] offline / RESTORE_LOCKED / auth expired表示
