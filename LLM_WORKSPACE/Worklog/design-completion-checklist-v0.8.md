@@ -95,7 +95,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] server-first Restore / RestoreApplyMarker = applyId only
 - [x] server applyはapplyId idempotency + short-lived COMMITTED result
 - [x] local/server apply順序 = server-first
-- [ ] Restore lock lease時間/renew interval/API詳細
+- [x] Restore lock = 60秒lease / 20秒renew / owner token API
 - [ ] RestoreApplyResult retentionを確定
 - [x] Restore owner photo upload完了・検証後にserver Business atomic commit
 - [ ] Restore UI最終フロー
