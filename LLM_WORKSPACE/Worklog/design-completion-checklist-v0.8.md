@@ -65,6 +65,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] BoxLocation delete → child BoxをUNASSIGNED
 - [x] parent delete + child correctionはserver atomic operation
 - [x] BoxLocationはflat independent master
+- [x] Box nesting = optional parentBoxId / same User active Box / cycle禁止 / nested Boxはeffective location継承
+- [x] parent Box移動時はdescendant locationId伝播、parent Box削除時はchild Boxを親階層へ昇格しLocation維持
 - [x] 各entity field/validation最終仕様
 - [x] BoxLocation同名後勝ちauto-rename = server受理側優先、既存を最小 name(n)
 - [x] CRUD logical transaction境界を確定
