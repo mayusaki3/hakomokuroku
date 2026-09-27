@@ -28,10 +28,10 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] server sync metadata方針
 - [x] business identity = `(User.id, entityId)`
 - [x] contentHash canonicalization基本規則
-- [ ] Box / Item / BoxLocation / Outbox / SyncState / SyncConflict / SyncChangeLogの最終field schema
+- [x] Box / Item / BoxLocation / Outbox / SyncState / SyncConflict / SyncChangeLogの最終field schema
 - [ ] server DB unique/index/FK/transaction制約
 - [ ] local IndexedDB schema/version/migration方針
-- [ ] RestoreApplyResult / RestoreLockの最小schema
+- [x] RestoreApplyResult / RestoreLockの最小schema
 - [x] RestoreApplyMarkerは `applyId` のみ
 
 ## 4. 通常Sync / Conflict / Full Resync
@@ -65,8 +65,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] BoxLocation delete → child BoxをUNASSIGNED
 - [x] parent delete + child correctionはserver atomic operation
 - [x] BoxLocationはflat independent master
-- [ ] 各entity field/validation最終仕様
-- [ ] BoxLocation同名後勝ち自動rename仕様を現行全体設計と再確認
+- [x] 各entity field/validation最終仕様
+- [x] BoxLocation同名後勝ちauto-rename = server受理側優先、既存を最小 name(n)
 - [ ] CRUD APIとtransaction境界を確定
 
 ## 7. Photo / Blob
