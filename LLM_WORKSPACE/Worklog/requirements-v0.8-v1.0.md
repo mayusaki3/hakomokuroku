@@ -77,10 +77,11 @@ BoxLocationはBox従属1:1ではなく、部屋・押入れ・棚など「置き
 
 ### 5.1 関係
 - Box : BoxLocation = 多対1
-- Box側が `locationId` で最終的な物理BoxLocationを参照する。
+- BoxLocationへ直接置かれたtop-level Boxだけが `locationId` でBoxLocationを参照する。
 - Boxはoptional `parentBoxId` で同一Userの別Boxを収納先として指定できる。
 - parentBoxIdはself/descendantを指定不可としcycleを禁止する。
-- nested BoxのlocationIdは親Boxのeffective locationを継承し、親移動時はdescendantへ伝播する。
+- nested Boxは `locationId=null` とし、収納先を `parentBoxId` だけで表現する。物理場所はancestor Box chainを辿って最上位BoxのlocationIdから解決する。
+- parent Box削除時はdirect child Boxだけを箱から出し `parentBoxId=null`, `locationId=UNASSIGNED` とする。さらに下のBox nestingは維持する。
 - BoxLocationに `boxId` は持たせない。
 - BoxLocation master自体は階層構造を持たせない。Boxの入れ子はBox.parentBoxIdで表現する。
 
