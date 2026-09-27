@@ -46,6 +46,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] SyncConflict = KEEP_SERVER / USE_LOCAL、stale時再選択、最新Outboxをlocal候補
 - [x] Full Resync = immutable server snapshot / keyset paging / staging / atomic adopt
 - [x] Restore lock中の `RESTORE_LOCKED` = Push/Pull request-level 409 retryable
+- [x] Box parent Sync = server current graphでcycle/reference/XOR検証、競合端末によるcycleはREJECTEDでOutbox保持
+- [x] Conflict USE_LOCALでもBox graphを再検証し、違反はRESOLUTION_REJECTED
 
 ## 5. Box.code / Device
 - [x] `BX-<DevicePrefix 4><LocalSequence 4>`
@@ -100,6 +102,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] Restore lock = 60秒lease / 20秒renew / owner token API
 - [x] RestoreApplyResult retention = server commitから7日
 - [x] Restore owner photo upload完了・検証後にserver Business atomic commit
+- [x] Backup/RestoreはparentBoxId/locationIdを保持し、conflict選択後final Box graph全体をcycle/reference/XOR検証してからapply
 - [x] Restore UI = file選択→lock/validation→conflict→summary→apply→COMMITTED→local adopt→完了
 - [x] `restore-session-design.md`を判断履歴summaryへ再構成
 
