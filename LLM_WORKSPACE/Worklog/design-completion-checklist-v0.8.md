@@ -121,7 +121,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] sync表示 = global + entity state / SYNCED-PENDING-SYNCING-CONFLICT-BLOCKED + offline/auth/Restore context
 - [x] normal SyncConflict UI = 一覧/差分/個別解決/stale再比較
 - [x] Restore conflict/confirmation/progress/completion UI
-- [ ] offline / RESTORE_LOCKED / auth expired表示
+- [x] offline / AUTH_EXPIRED / RESTORE_LOCKED = global status + affected operation + next action / local data継続
 - [ ] delete/Undo表示
 - [ ] accessibility・mobile/PWA基本確認
 
