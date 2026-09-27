@@ -113,7 +113,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] PWA install/update/cache = optional install / versioned app shell / safe-boundary update / IndexedDB preservation
 - [x] Service Worker = navigation network-first / versioned assets cache-first / Business API network-only / atomic install + old-version fallback
 - [x] auth expiry = bound User local編集継続 / server操作停止 / same-User reauth後normal Sync / cross-user禁止
-- [ ] User切替時の `hk-local-v2-<User.id>` lifecycle
+- [x] User switch = close old User DB / preserve its Outbox+photos+DeviceState / open separate new User DB / no cross-user transfer or background Sync
 - [ ] storage quota/eviction時の通常data保護方針
 
 ## 11. UI / UX
