@@ -43,7 +43,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] Outbox reapply順 = BoxLocation → Box → Item
 - [x] Push/Pull API request/response/error code詳細
 - [x] blob uploadを含む通常sync = Pull→Outbox reapply→photo server-ready→Business Push→final Pull
-- [ ] SyncConflict解決API/UIの最終仕様
+- [x] SyncConflict = KEEP_SERVER / USE_LOCAL、stale時再選択、最新Outboxをlocal候補
 - [ ] Full Resync paging/staging採用境界の最終schema
 - [x] Restore lock中の `RESTORE_LOCKED` = Push/Pull request-level 409 retryable
 
@@ -119,7 +119,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 ## 11. UI / UX
 - [ ] 登録フロー各stepの戻る/skip/cancel
 - [ ] sync状態表示
-- [ ] normal SyncConflict UI
+- [x] normal SyncConflict UI = 一覧/差分/個別解決/stale再比較
 - [x] Restore conflict/confirmation/progress/completion UI
 - [ ] offline / RESTORE_LOCKED / auth expired表示
 - [ ] delete/Undo表示
