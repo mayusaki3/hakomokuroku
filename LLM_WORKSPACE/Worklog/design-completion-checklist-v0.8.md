@@ -131,6 +131,19 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [-] Vision/LLM test/implementation
 v0.8設計完了後に別工程で扱う。
 
+## 12.1 旧版機能継承確認
+- [x] 旧版画面/APIの機能棚卸しを実施し、`legacy-feature-inheritance-matrix.md` を作成
+- [ ] Box内Item絞り込み検索のUI仕様を確定
+- [ ] PhotoRef順序変更の写真並べ替えUIを確定
+- [ ] User新規登録/Loginの最終UI/API境界を確定
+- [ ] MFA/TOTPのv0.8継承範囲を確定
+- [ ] User名/User icon/device管理のv0.8継承範囲を確定
+- [ ] 旧QR URL / `hk:` payload互換の扱いを確定
+- [ ] A4 label印刷の扱いを確定
+- [ ] Theme既存機能の維持/縮小/廃止を確定
+- [ ] Helpのv0.8での扱いを確定
+- [-] Vision旧機能の詳細設計はv1.0。ただし旧provider/prompt/test/Item・Box写真認識を継承候補として記録済み
+
 ## 13. 設計完了条件
 以下をすべて満たした時点でv0.8設計完了とする。
 - [ ] 上記v0.8設計項目がすべて[x]
