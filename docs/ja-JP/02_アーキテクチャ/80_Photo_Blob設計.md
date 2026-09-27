@@ -252,8 +252,117 @@ Restoreは必要photoをすべてreference-readyにしてからserver atomic Bus
 
 通常syncのnon-owner upload/confirmはRestore lock中 `RESTORE_LOCKED`。
 
-## 14. 設計残件
-- local cache/GCとserver orphan GC境界
+## 14. Local storage / GC
+
+### 14.1 Classification
+local photo dataを次の2種類として扱う。
+
+**required local data**
+- current local Businessが参照するoriginal
+- current Outbox payloadが参照するoriginal
+- server未CONFIRMEDで再uploadに必要なoriginal
+- photo recovery処理中に必要なsource
+- active Undo entryが復元に必要とするblob
+
+**reconstructible/cache data**
+- thumbnail
+- server CONFIRMED済みで、current local Business/Outbox/Undo/recoveryから参照されないorphan blob
+
+required local dataを通常cache GCで削除しない。
+
+### 14.2 Thumbnail cache
+thumbnailはderived cacheなので、storage pressure時に優先削除可能。
+
+削除後:
+- originalがlocalにあれば再生成
+- originalがlocalに無ければserverから再取得可能なら取得
+- どちらも不可ならplaceholder表示
+
+thumbnail消失だけでBusiness/Outboxを変更しない。
+
+### 14.3 Local original
+current local BusinessまたはOutboxが参照するoriginalは自動GC禁止。
+
+特にserver CONFIRMEDであっても、offline利用・backup export・将来の再upload/recoveryのため、通常状態ではlocal originalを保持する。
+
+v0.8では「容量節約のため参照中originalを自動evictする」機能は提供しない。
+
+### 14.4 Local orphan GC
+parentから参照解除されたphotoIdはlocal orphan candidateになる。
+
+自動削除可能条件:
+1. current Businessから非参照
+2. current Outbox payloadから非参照
+3. active Undo entryから非参照
+4. recovery operationから非参照
+5. uploadが進行中でない
+6. server CONFIRMED済み、またはserverへ一度も必要なBusiness referenceとしてcommitされておらず再利用予定がない
+
+Undo仕様のgrace中は削除禁止。
+
+local orphanの具体的保持時間はserver 30日と一致させる必要はない。v0.8では安全側として **30日** を標準自動GC期限とする。
+
+manual storage cleanupを提供する場合も上記参照条件を破ってはならない。
+
+### 14.5 Storage pressure
+browser quota不足時:
+1. unreferenced thumbnail
+2. referenced thumbnail（再生成可能）
+3. 30日経過local orphan original
+の順にcleanup候補とする。
+
+それでも不足する場合、参照中originalや未同期originalを自動削除せず、storage不足として新規photo保存等を停止し利用者へ通知する。
+
+## 15. Server orphan GC
+
+### 15.1 Orphan definition
+server PhotoBlobがどのserver Business parentからも参照されていない状態をorphanとする。
+
+blob-first upload直後や、Business Push失敗/Conflict後もorphanになり得る。
+
+### 15.2 GC eligibility
+server orphan blobは **unreferencedになってから30日** 経過後にphysical delete可能。
+
+PhotoBlobにはGC判定用に:
+```text
+unreferencedAt timestamp?
+```
+を保持する。
+
+- first uploadで未参照ならcreated時点をunreferencedAtとする
+- Business reference bind成功時はunreferencedAt=null
+- 最後のBusiness reference解除時にserver時刻を設定
+- orphanの再upload/status accessだけでは期限を延長しない
+
+### 15.3 GC safety
+GC transaction/jobは削除直前にBusiness referenceを再確認する。
+
+参照が存在すれば削除禁止し、必要ならunreferencedAtを修正する。
+
+Restoreでserver-ready化したblobも、Restore applyされずorphanのままなら同じ30日規則。
+
+### 15.4 Tombstone parent
+tombstone Business payloadがphotoIdを参照している間は**参照中**として扱いserver blobを削除しない。
+
+Business tombstone自体が30日後にphysical purgeされ、その結果最後のreferenceが消えた時点からphoto blobの30日 orphan timerを開始する。
+
+したがってBusiness DELETEからblob削除まで最大でさらに30日以上残ることを許容する。安全性を優先し、Business tombstoneとblobを同時purgeする必要はない。
+
+### 15.5 Photo status after GC
+server GC済みphotoIdへのstatusはnot-readyを返す。
+
+local Business/Outboxがそのphotoを必要としておりlocal originalが残っていれば、同じphotoId/photoHashで再uploadしてreference-readyへ戻せる。ただし別parentへの再利用は禁止。
+
+## 16. Local / server responsibility boundary
+- Business reference truth: server Business + local pending Outbox
+- unsynced binary保全: local responsibility
+- confirmed binary durability: server responsibility
+- local thumbnail: cache
+- server unreferenced blob: temporary staging, 30日GC
+- GCはBusiness identity/contentHashを変更しない
+- GC結果そのものをSyncChangeLogへ記録しない
+
+## 17. 設計残件
 - Undoと通常Business/Syncの最終統合
 
 [目次](../README.md) > アーキテクチャ > Photo / Blob設計
