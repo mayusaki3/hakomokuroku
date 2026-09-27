@@ -98,7 +98,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] Restore lock = 60秒lease / 20秒renew / owner token API
 - [x] RestoreApplyResult retention = server commitから7日
 - [x] Restore owner photo upload完了・検証後にserver Business atomic commit
-- [ ] Restore UI最終フロー
+- [x] Restore UI = file選択→lock/validation→conflict→summary→apply→COMMITTED→local adopt→完了
 - [x] `restore-session-design.md`を判断履歴summaryへ再構成
 
 ## 9. QR / Search / Label Print
@@ -120,7 +120,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [ ] 登録フロー各stepの戻る/skip/cancel
 - [ ] sync状態表示
 - [ ] normal SyncConflict UI
-- [ ] Restore conflict/confirmation/progress/completion UI
+- [x] Restore conflict/confirmation/progress/completion UI
 - [ ] offline / RESTORE_LOCKED / auth expired表示
 - [ ] delete/Undo表示
 - [ ] accessibility・mobile/PWA基本確認
