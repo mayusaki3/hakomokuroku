@@ -77,8 +77,8 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] thumbnail WebP 400px/q0.8/256KiB
 - [x] photoHash / blob-first / unreferenced 30日GC
 - [x] direct parent-to-parent photo moveはv0.8対象外
-- [ ] normal ingestion/upload/retry stateの最終整理
-- [ ] server original/thumbnail APIとvalidation
+- [x] normal ingestion/upload/retry = immutable original identity + PENDING/UPLOADING/CONFIRMED + retry metadata
+- [x] server photo API = status/original/thumbnail/confirm + idempotent validation
 - [ ] local cache/GCとserver orphan GCの境界
 - [ ] photo削除10秒Undo仕様を通常Business設計へ統合
 
