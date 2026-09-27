@@ -347,19 +347,24 @@ Item→Box、Box→BoxLocationなどの参照も同一userId内に限定する�
 
 ## 16. バックアップID / ハッシュ
 
-バックアップは元のIDと同期用と同一の `contentHash` を保持する。
+バックアップは元のBusiness identityと同期用と同じcanonicalizationによる `contentHash` を保持する。
 
-リストア:
-- ID不存在 → 元IDで復元
-- 同一ID + 同一contentHash → 同一データとしてID維持
-- 同一ID + 異なるcontentHash → インポート側へ新ID発行
+Restore:
+- backupは作成したUserと同一UserへのRestoreのみ許可する。
+- identity不存在 → validation後、元identityのままauto-add candidate。
+- 同一identity + 同一business content → UNCHANGED。
+- 同一identity + 異なるbusiness content → `KEEP_EXISTING / USE_BACKUP` を利用者が選択する。
+- Restoreを理由とする一般的なentity ID再採番は行わない。
+- backup由来のsync metadataは導入しない。
+- `userId` はcontentHashに含めないが、これはcross-user Restoreを許可する意味ではない。
 
-ID再発行時は参照を同一処理内で再マッピングする。
-- `Item.boxId`
-- `Box.locationId`
-- その他、正式データモデルで確定した参照
+Boxは追加のintegrity ruleを持つ。
+- Box.codeはimmutable。
+- same Box.id + different codeはreject。
+- different Box.id + duplicate codeはreject。
+- noncanonical Box.codeはreject。
 
-`userId` はhashに含めない。バックアップは別ユーザーへ移す用途も許容する。
+詳細正本は `docs/ja-JP/02_アーキテクチャ/90_Backup_Restore設計.md` と `70_BoxCode_Device設計.md` を参照する。
 
 ## 17. Vision / LLM
 
