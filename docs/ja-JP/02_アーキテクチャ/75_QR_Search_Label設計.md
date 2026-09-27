@@ -104,8 +104,157 @@ QR codeは認証情報ではない。
 
 QR payloadにUser identityを含めないため、別Userで同じBox.codeが存在する可能性は許容される。
 
-## 11. 設計残件
-- Search対象field・matching・offline挙動
+## 11. Search
+
+### 11.1 Scope
+v0.8の通常検索は現在Userのlocal Businessを対象とする。
+
+対象entity:
+- Box
+- Item
+- BoxLocation
+
+server search APIを検索の必須経路にしない。offlineでも同じ基本検索を使用できる。
+
+### 11.2 Search fields
+Box:
+- `code`
+- `name`
+- `tags[]`
+- `note`
+- 参照先BoxLocationの `name`
+
+Item:
+- `name`
+- `tags[]`
+- `note`
+- 所属Boxの `code`
+- 所属Boxの `name`
+- 所属BoxLocationの `name`
+
+BoxLocation:
+- `name`
+- `note`
+
+対象外:
+- entity id
+- userId
+- `meta`
+- photoId/photoHash
+- photo binary
+- createdAt/updatedAt/serverUpdatedAt
+- revision/contentHash/syncSeq
+- SyncConflict/Outbox等のcontrol data
+
+### 11.3 Query normalization
+検索入力:
+1. trim
+2. Unicode NFC
+3. locale-independent case fold相当でcase-insensitive比較
+
+Business保存値そのものは検索のために変更しない。
+
+v0.8では:
+- ひらがな/カタカナ自動同一視をしない
+- 漢字から読み仮名を推測しない
+- 全角/半角の積極的NFKC変換をしない
+- typo/fuzzy/semantic searchをしない
+- stemmingをしない
+
+これらは検索結果の予測可能性を優先するため。
+
+### 11.4 Matching
+query全体のsubstring matchを基本とする。
+
+例:
+```text
+query = "工具"
+"電動工具" -> match
+"工具箱"   -> match
+```
+
+複数語入力はUnicode whitespaceでtokenizeし、**AND** 条件。
+
+各tokenはentityの検索対象fieldのどれか1つにsubstring matchすればよい。tokenごとに別fieldへmatchしてよい。
+
+例:
+```text
+query = "BX-AB2C 工具"
+
+Box.code = BX-AB2CDEF3
+Box.name = 電動工具
+-> match
+```
+
+空queryは検索結果一覧を返さず、検索未実行状態とする。
+
+### 11.5 Tags
+tagは各tag stringを個別fieldとしてsubstring matchする。
+
+tag完全一致専用filterは通常free-text searchとは分離し、将来UI filterとして追加可能。v0.8 free-textではsubstring。
+
+### 11.6 Deleted data
+通常検索結果からtombstone entityを除外する。
+
+ただしactive Item/Boxが参照するreserved `UNASSIGNED` はrelationship表示に利用可能。
+
+削除済みデータを探す管理/履歴検索はv0.8通常検索対象外。
+
+### 11.7 Pending local changes
+local Businessが検索正本なので:
+- 未Push create
+- 未Push update
+- Outbox reapply後のlocal state
+
+を即時検索結果へ反映する。
+
+local delete済みtombstoneは即時通常検索から除外。
+
+### 11.8 Offline behavior
+offlineでもlocal DB内の検索は通常通り動作する。
+
+結果画面にはoffline状態を表示できるが、「server全体に対する完全な結果」とは表現しない。
+
+Full Resync未完了のnew DBなどlocal datasetが未構築の場合:
+```text
+この端末のデータ同期が完了していないため、検索結果は不完全です。
+```
+と表示する。
+
+### 11.9 Online synchronization
+検索実行ごとにnetwork requestや強制Syncは行わない。
+
+通常background/manual Syncによりlocal Businessが更新されたら検索結果を再評価する。
+
+利用者が明示的に「同期して再検索」を実行できるUIは許可する。その場合も通常Syncを使用し、server search結果を直接localへ混入させない。
+
+### 11.10 Result grouping
+結果はentity typeを保持して表示する。
+
+最低限:
+- Box: code + name + location
+- Item: name + parent Box code/name
+- BoxLocation: name
+
+同一entityを複数field matchで重複表示しない。
+
+v0.8ではrelevance scoreによる順位付けを仕様化しない。安定した表示順として:
+1. entity type
+2. display name/code
+3. entity idを最終tie-break
+
+を使用する。
+
+UIがentity type filterを提供してもmatching semanticsは変えない。
+
+### 11.11 Performance boundary
+v0.8はlocal datasetに対する単純検索を正とする。
+
+実測で全件scanがUI性能要件を満たさない場合、normalized search indexをlocal derived dataとして追加可能。ただし検索対象field/matching semanticsは本書から変更しない。
+
+検索indexはBusiness contentではなく再構築可能なlocal derived dataとする。
+
+## 12. 設計残件
 - 24mm tape label layout
 - print/export/browser capability fallback
 
