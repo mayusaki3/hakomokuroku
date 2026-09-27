@@ -502,7 +502,135 @@ User switch eventを同origin clientsへ通知し、旧Userを開いているtab
 
 旧tabが別User credentialでserver requestを送ることを防止する。
 
-## 16. 設計残件
-- storage quota/eviction時の通常data保護
+## 16. Storage quota / eviction
+
+### 16.1 Data classes
+local storageをloss impactで分類する。
+
+**Class A: loss禁止 / primary local state**
+- Business stores
+- Outbox
+- SyncState / SyncConflict
+- DeviceState
+- RestoreApplyMarker
+- current Business/Outboxから参照されるphoto original
+- server未CONFIRMED photo original
+- active Undo/recovery dependencyのoriginal
+
+**Class B: reconstructible / cache**
+- photo thumbnail（originalから再生成可能な場合）
+- obsolete Service Worker application shell cache
+- rebuildable search/index derived data
+- completed/expired temporary stagingで再取得可能なもの
+
+Class Aをapplicationの自動quota cleanup対象にしない。
+
+### 16.2 Persistent storage request
+browserがStorageManager persistent storageを提供する場合、local Businessを保持するUserについてpersistent storageを要求してよい。
+
+- granted: eviction risk低減として扱う
+- denied/unsupported: application利用を禁止しない
+- persistent=trueでもbackup代替とはみなさない
+
+permission/stateをUI診断情報として表示可能。
+
+### 16.3 Quota monitoring
+StorageManager estimate等が利用可能ならusage/quotaを監視する。
+
+固定byte thresholdだけに依存せず、少なくとも:
+- normal
+- storage pressure
+- write failed/quota exceeded
+をapplication stateとして扱う。
+
+APIが利用不能なら実際のwrite failureを最終判定とする。
+
+### 16.4 Cleanup order
+storage pressure時のautomatic cleanup順:
+1. unreferenced thumbnails
+2. referenced thumbnailsでoriginalから再生成可能なもの
+3. obsolete application shell cache
+4. expired/completed temporary staging
+5. Photo / Blob設計で削除条件を満たす30日超local orphan original
+
+削除前に現在のBusiness / Outbox / Undo / recovery / upload dependencyを再確認する。
+
+Class Aは削除しない。
+
+### 16.5 Capacity-increasing operations
+cleanup後も安全な空き容量を確保できない場合、既存dataを削除して書込みを継続しない。
+
+容量増加が大きいoperationをblock:
+- new photo ingestion
+- backup restoreでlocal容量を大きく増やす処理
+- Full Resync staging開始（必要容量を確保できない場合）
+
+small Business editはtransaction commitが可能な限り許可する。ただしIndexedDB writeがQUOTA_EXCEEDEDならcommit失敗として扱い、BusinessとOutboxを部分commitしない。
+
+### 16.6 Photo save failure
+photo encode後、Blob保存またはparent Business transactionがquotaで失敗:
+- PhotoRefをBusinessへ残さない
+- partial blob/temporary dataをcleanup可能
+- existing Business/Outboxを変更しない
+- UIにstorage不足を表示
+
+Photo / Blobのblob-first atomic boundaryを維持する。
+
+### 16.7 Business write failure
+Business + Outbox transactionがquota等でcommitできない場合:
+- transaction全体rollback
+- UI上で「保存済み」と表示しない
+- retry前にcleanup可能なClass Bをcleanup
+- それでも失敗なら利用者へstorage確保を要求
+
+Outboxだけ、またはBusinessだけがcommitされた状態を許さない。
+
+### 16.8 Browser/platform eviction
+browser/OSによるorigin storage evictionはapplicationから完全には防止できない。
+
+起動時にexpected local session bindingに対してDB不存在/必須store欠落を検知した場合:
+- 自動的に「正常な空DB」とみなして未同期dataが無かったと断定しない
+- local storage lossとして表示
+- online/authenticatedならserver canonicalからFull Resync
+- new DeviceState setup
+- server未反映だったlocal-only Business/photoは復元不能の可能性を明示
+
+失われたold DeviceStateのprefix/counterをBox一覧から推測・復元しない。
+
+### 16.9 Partial corruption / partial loss
+DBは存在するがstore/record整合性が壊れている場合、Data Modelのcorruption policyを適用し自動DB deleteしない。
+
+特にOutbox safetyが不明な場合はdestructive reset禁止。
+
+photo thumbnail欠落は再生成可能。
+photo original欠落はPhoto / Blob recovery ruleに従い、参照中originalを「cache miss」と同等扱いしない。
+
+### 16.10 Cache Storage eviction
+Service Worker Cache Storageだけ失われ、IndexedDBが健全:
+- onlineならapp shell再取得
+- offlineでshell無しなら起動不能
+- IndexedDB dataはresetしない
+
+app shell lossとBusiness lossを同一recoveryにしない。
+
+### 16.11 User notification
+storage pressure時は少なくとも:
+- storage容量不足
+- 写真追加停止
+- local data保護のため自動削除していないこと
+- browser/device storage確保の案内
+を表示可能にする。
+
+browser storage eviction riskが高い/永続化不可の場合、backup exportを推奨導線として表示してよい。
+
+### 16.12 Backup boundary
+Backupはquota/eviction対策として有効だが、applicationが自動的にUser file systemへbackupを書き出したと仮定しない。
+
+normal Backup/Restore仕様はBackup / Restore設計を正とする。
+
+## 17. PWA / Offline / Authentication設計完了
+v0.8のPWA / Offline / Authentication設計残件は完了。
+
+browserごとのStorageManager/PWA/Service Worker capability差は実装/検証工程で確認する。
 
 [目次](../README.md) > アーキテクチャ > PWA / Offline / Authentication設計
