@@ -63,20 +63,24 @@ Restoreは当初、persistent RestoreSession、persistent RestoreConflict、full
 - response loss時はapplyIdでresultを照会する。
 - persistent PROCESSING/progress Restore Jobは作らない。
 
-## 7. Client apply marker
-検討時点での最小案:
+## 7. Client apply marker / server-first — 確定
+Restore applyはserver-firstとする。
+
+順序:
+`lock → validate/resolve → required blob upload → applyId marker → server atomic apply → COMMITTED確認 → local Pull/adopt → marker cleanup → unlock`
+
+client marker:
 ```text
 RestoreApplyMarker
 - applyId
-- promotedPhotoIds[]
-- appliedAt
 ```
 
-`appliedAt` はlocal Business + Outbox commit境界を示すために導入した。
+Restore専用local Business/Outbox commitは行わない。
+旧markerの `promotedPhotoIds[]` / `appliedAt` は不要。
+local pre-promotionもcorrectness要件から外す。
 
-ただし、local/server applyの正確な順序が未確定であり、server-firstを採用する場合はlocal pre-promotion、restore-specific Outbox、`promotedPhotoIds[]`、`appliedAt`自体をさらに削減できる可能性がある。
-
-したがってRestoreApplyMarkerは最終確定前の設計要素として扱う。
+server response loss/crash時はapplyIdでRestoreApplyResultを照会する。
+COMMITTEDならPull/adopt、resultなしならlocal BusinessはRestore未適用なのでcleanupして終了する。
 
 ## 8. 明示的に撤回した旧設計
 v0.8現行仕様では採用しない:
@@ -95,13 +99,11 @@ v0.8現行仕様では採用しない:
 これらを復活させる場合は新しい設計判断として再検討する。
 
 ## 9. 現在の設計残件
-1. local/server Restore applyの正確な順序。
-2. Restore lock lease/renew具体値。
-3. RestoreApplyResult retention。
-4. Restore owner photo uploadとserver Business commit境界。
-5. Restore UI flow。
+1. Restore lock lease/renew具体値。
+2. RestoreApplyResult retention。
+3. Restore UI flow。
 
-最優先は1。これによりclient marker/binary preparation/Outboxの最終構成が決まる。
+local/server apply順序とowner photo upload境界はserver-first採用により確定した。
 
 ## 10. 履歴
 このファイルは以前section 1〜104までの詳細な逐次判断を保持していた。
