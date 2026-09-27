@@ -133,7 +133,8 @@ v0.8設計完了後に別工程で扱う。
 
 ## 12.1 旧版機能継承確認
 - [x] 旧版画面/APIの機能棚卸しを実施し、`legacy-feature-inheritance-matrix.md` を作成
-- [ ] Box内Item絞り込み検索のUI仕様を確定
+- [x] Box内Item絞り込み検索は必須とせず、カテゴリ等の並べ替えを優先
+- [ ] Box内Item一覧の並べ替え項目・既定順を確定
 - [ ] PhotoRef順序変更の写真並べ替えUIを確定
 - [ ] User新規登録/Loginの最終UI/API境界を確定
 - [ ] MFA/TOTPのv0.8継承範囲を確定
