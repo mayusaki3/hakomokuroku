@@ -165,6 +165,29 @@ Pull → Outbox reapply → required blob upload → Push → Pull
 ```
 で収束し、必要なら通常SyncConflictとなる。Restore専用conflict typeは作らない。
 
+
+## 9.1 Box hierarchy in Backup / Restore
+
+BackupのBox Business snapshotには `parentBoxId` と `locationId` をそのまま含める。
+
+Restore validationではfinal apply plan全体に対して、server commit前に次を検証する。
+
+- parentBoxIdがnullならlocationIdは有効なBoxLocationまたはUNASSIGNED
+- parentBoxIdがあるBoxはlocationId=null
+- parentBoxId参照先はRestore後のfinal stateで同一Userのactive Box
+- self parent禁止
+- Box graph全体にcycleがない
+- backup/current conflict解決後の組合せでも上記を満たす
+
+validationはbackup単体だけではなく、**利用者が選択したcurrent/backup conflict結果を合成したfinal state** に対して行う。
+たとえばAはbackup採用、Bはcurrent採用という選択の結果 `A→B→A` になる場合、applyを開始せず階層競合として利用者へ戻す。
+
+Restore apply transactionでも同じgraph validationを再実行し、validation後にserver stateが変化して不整合となる可能性を排除する。Restore lockにより通常Business Syncは停止するが、commit authority側でもvalidationを省略しない。
+
+RestoreでparentBoxIdを自動修正したり、Boxを自動的にUNASSIGNEDへ移動してcycleを解消しない。利用者がfinal planを修正してからapplyする。
+
+Restore完了後のPullではparentBoxId/locationIdを通常Business fieldとしてadoptする。
+
 ## 10. Restore UI flow
 Restoreは長期再開を持たない1回のforeground flowとする。
 
