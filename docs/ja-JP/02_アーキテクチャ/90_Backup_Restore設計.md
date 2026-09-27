@@ -165,8 +165,84 @@ Pull → Outbox reapply → required blob upload → Push → Pull
 ```
 で収束し、必要なら通常SyncConflictとなる。Restore専用conflict typeは作らない。
 
-## 10. 設計残件
-- Restore UI flow
+## 10. Restore UI flow
+Restoreは長期再開を持たない1回のforeground flowとする。
+
+```text
+ファイル選択
+  ↓
+Restore lock取得
+  ↓
+backup検証 / current server Business比較
+  ↓
+差分summary
+  ↓
+競合があれば1件ずつ KEEP_EXISTING / USE_BACKUP
+  ↓
+最終summary
+  ↓
+[復元を実行]
+  ↓
+必要photo upload / validation
+  ↓
+server apply
+  ↓
+COMMITTED確認
+  ↓
+local Pull/adopt
+  ↓
+完了
+```
+
+### 10.1 ファイル選択
+- online/authenticatedでなければRestore開始不可
+- file選択後、最初にRestore lockを取得する
+- lock取得失敗時はbackup解析を開始せず `RESTORE_LOCKED` を表示
+- backup owner/schema/integrity validation failureは適用前に終了
+
+### 10.2 差分・競合
+差分summaryではentity type別に少なくとも以下の件数を表示する。
+- auto-add
+- USE_BACKUP候補
+- KEEP_EXISTING候補
+- UNCHANGED
+
+business contentが異なるidentityだけ利用者判断を要求する。
+各競合ではcurrentとbackupを比較し、`現在を保持` / `バックアップを使用` を選択する。
+
+全競合が解決するまで最終実行へ進めない。
+
+### 10.3 最終summary
+利用者の明示操作 `復元を実行` を必須とする。
+summaryには最終的な追加・backup採用・現在維持・変更なし件数を表示する。
+
+この操作まではCancel可能。Cancel時はmemory上resolutionを破棄しlockをreleaseする。次回はfile選択からやり直す。
+
+### 10.4 Apply中
+`復元を実行` 後は通常Cancelを提供しない。
+
+進行表示は内部state machineの永続化を意味せず、少なくとも以下を区別する。
+- 写真を準備中
+- サーバーへ復元中
+- 復元結果を確認中
+- この端末へ反映中
+
+server apply request送信後に通信が切れた場合は失敗と断定せず `復元結果を確認中` とし、applyIdでRestoreApplyResultを照会する。
+
+### 10.5 完了
+COMMITTED確認後、local Pull/adopt完了をもってowner端末のUIを `復元完了` とする。
+
+完了画面には追加/更新/維持/変更なしのsummaryを表示可能だが、RestoreHistoryとして永続保存しない。
+
+### 10.6 Error
+- apply前のvalidation/lock/network failure: Restore未適用として終了し、再実行はfile選択から
+- apply後のCOMMITTED: error表示に戻さずlocal convergenceを続行
+- apply後にresultなし + lock失効: 未commitとして終了
+- local Pull/adopt failure after COMMITTED: server Restoreは成功済み。UIは `復元済み・この端末への反映待ち` とし、通常syncで再取得する
+- error/cancelで過去resolutionを再利用しない
+
+## 11. 設計残件
+Restore固有の主要設計残件はなし。通常Data Model / Sync / Photo / UI共通仕様の確定内容に従う。
 
 旧persistent RestoreSession / RestoreHistory / persistent RestoreConflict / full binary staging / restore storage accounting / long-term resume / local-first Restore applyは現行仕様ではない。
 
