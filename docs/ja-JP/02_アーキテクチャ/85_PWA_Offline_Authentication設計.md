@@ -369,8 +369,140 @@ offline local accessはserver authenticationの代替ではない。
 
 ただしlogout後にlocal sessionを自動復活させないことで、application levelのUser切替境界を維持する。
 
-## 15. 設計残件
-- User切替時local DB lifecycle
+## 15. User switch / local DB lifecycle
+
+### 15.1 Principle
+User switchはlocal Businessのmigrationではなく、active User scopeの切替。
+
+```text
+User A
+  -> hk-local-v2-A close
+  -> authenticated User B confirm
+  -> hk-local-v2-B open/create
+```
+
+User AのrecordをUser B DBへcopy/moveしない。
+
+### 15.2 Switch precondition
+User switch開始時、新規Business操作の受付を一時停止する。
+
+以下の短時間local operationが進行中なら完了または安全にabortしてから切替:
+- IndexedDB Business + Outbox transaction
+- photo local commit
+- Box + DeviceState sequence transaction
+- Full Resync adopt
+- local schema migration
+
+Restore apply request送信後などserver commit判定が必要なoperationは、そのUserのrecovery marker/stateを保持してDBをcloseする。別Userとして続きを実行しない。
+
+### 15.3 Pending Outbox
+Outboxの有無はUser switch禁止理由にしない。
+
+User Aにpending Outboxがあっても:
+- User A DB内に保持
+- User Bへ移送しない
+- backgroundでUser B credentialを使ってPushしない
+- User Aへ再ログインした時に通常Sync再開
+
+switch前の強制Syncは要求しない。offlineでもUser switch可能な範囲を維持する。
+
+### 15.4 Photo state
+User Aの:
+- photoOriginals
+- photoThumbnails
+- photoUploadStates
+- Undo/recovery dependency
+
+はUser A scopeに保持する。
+
+User Bから参照/再利用しない。
+
+### 15.5 DeviceState
+DeviceStateもUser-local。
+
+同一physical browser/deviceでもUserごとに別deviceId/prefix stateを持てる。
+
+User B DBにDeviceStateが無い場合:
+- online/authenticatedなら通常Device setup
+- offlineではnew prefixを取得できないためnew Box.code発行不可
+- 既存User B Businessがlocalに存在する場合、その編集は可能
+
+User A DeviceStateをUser Bへ流用しない。
+
+### 15.6 Existing User DB
+User Bの `hk-local-v2-B` が既に存在:
+1. DB open
+2. schema compatibility確認
+3. local session bindingをBへ
+4. local Businessを即時表示可能
+5. onlineならnormal Sync
+
+server canonicalを毎回Full Resyncしてから表示する必要はない。
+
+### 15.7 New User DB
+User B DBが存在しない:
+1. `hk-local-v2-B` schema作成
+2. `pullCursor=null`
+3. online/authenticatedならFull Resync
+4. DeviceState setup
+5. local dataset構築後normal operation
+
+Full Resync完了前はlocal dataset不完全表示を明示する。
+
+### 15.8 Switch while offline
+offline User switchは、切替先Userについてexplicit logoutで解除されていない有効なlocal session/profile bindingが端末に残っている場合のみ許可可能。
+
+単にDB fileが存在することだけを根拠にUser Bへ切り替えない。
+
+新しいUserへの初回switchはonline authentication必須。
+
+### 15.9 Explicit logout
+logout:
+- current DBへのnew operation停止
+- current DB close
+- local session binding解除
+- server credential/session破棄
+
+保持:
+- Business
+- Outbox
+- photo binaries/upload state
+- SyncState/conflict
+- DeviceState
+- RestoreApplyMarker
+
+logoutとdevice-local data deletionは別操作。
+
+### 15.10 Remove local data
+利用者が明示的に「この端末のUser dataを削除」した場合のみUser DBをphysical delete可能。
+
+削除前:
+- pending Outbox有無を確認
+- unconfirmed photo/local-only data有無を確認
+- server未反映dataがある場合はloss warning + explicit confirmation
+
+削除対象は指定UserのDBのみ。他User DB/cacheを巻き込まない。
+
+Service Worker app-shell cacheはUser DB削除対象ではない。
+
+### 15.11 Background operation boundary
+active authenticated User以外のUser DBに対してbackground Syncを行わない。
+
+v0.8ではmulti-user background Syncを実装しない。
+
+これによりcredential/User scope取り違えを避ける。
+
+### 15.12 Multi-tab
+同一browser profileで異なるUserを複数tabから同時利用することをv0.8の保証対象にしない。
+
+User switch eventを同origin clientsへ通知し、旧Userを開いているtabには:
+- operation停止
+- reload/login要求
+を行う。
+
+旧tabが別User credentialでserver requestを送ることを防止する。
+
+## 16. 設計残件
 - storage quota/eviction時の通常data保護
 
 [目次](../README.md) > アーキテクチャ > PWA / Offline / Authentication設計
