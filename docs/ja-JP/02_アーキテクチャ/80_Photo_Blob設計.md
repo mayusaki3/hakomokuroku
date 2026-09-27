@@ -362,7 +362,120 @@ local Business/Outboxがそのphotoを必要としておりlocal originalが残�
 - GCはBusiness identity/contentHashを変更しない
 - GC結果そのものをSyncChangeLogへ記録しない
 
-## 17. 設計残件
-- Undoと通常Business/Syncの最終統合
+## 17. Photo delete / 10-second Undo
+
+### 17.1 Delete commit
+photo削除操作はUI上の仮削除ではなく、その時点で通常Business updateとしてcommitする。
+
+同一IndexedDB transaction:
+1. parent current Businessを取得
+2. target PhotoRefと元indexを記録
+3. parent `thumbs` からPhotoRefを削除
+4. parent contentHash/updatedAt等local Businessを更新
+5. Outboxを通常規則でupsert
+6. commit
+
+Syncは10秒待たず通常通り進行可能。
+
+### 17.2 Undo entry
+delete commit成功後、UI runtimeにUndo entryを作る。
+
+```text
+undoId
+parentType
+parentId
+photoId
+photoHash
+originalIndex
+expiresAt
+```
+
+- grace = 10秒
+- 各deleteは独立entry
+- UI操作はLIFO
+- Undo entryはBusiness/Sync entityではない
+- v0.8ではapp/browser再起動をまたぐpersistent Undoを保証しない
+
+Undo entryがactiveな間は対応local blobをGCしない。
+
+### 17.3 Undo
+10秒以内のUndoは削除前transactionのrollbackではなく、**新しい通常Business update**。
+
+同一IndexedDB transaction:
+1. current parent取得
+2. parentがactiveであることを確認
+3. same photoIdが既に存在しないことを確認
+4. originalIndexを基準にPhotoRefを再挿入
+5. parent contentHash/updatedAt更新
+6. Outboxを通常規則でupsert
+7. commit
+8. Undo entry消費
+
+削除が既にserverへAPPLIED済みでも、Undoは次のBusiness revisionとしてPushされる。
+
+blobがserverでunreferencedになっていても30日GC前なら同じphotoId/hashを同じparentへ再binding可能。server blobが既に存在しない場合、local originalから再uploadしてからPushする。
+
+### 17.4 Reinsert position
+削除後10秒間に同じparentのphoto順序が別操作で変わる可能性がある。
+
+originalIndexがcurrent length以下ならそのindexへ挿入。current lengthを超える場合は末尾へ挿入する。
+
+v0.8では隣接photo identityを追跡する複雑な位置mergeは行わない。
+
+### 17.5 Multiple deletes
+各deleteは独立Undo entryを持つが、UIのUndo操作対象は最新entryからLIFO。
+
+例:
+```text
+delete A
+delete B
+Undo -> B
+Undo -> A
+```
+
+各entryの10秒期限は自身のdelete commit時刻から独立計測する。
+
+期限切れentryはUndo不可として破棄する。
+
+### 17.6 Parent deletion
+Undo対象parent自体がdelete/tombstoneされた時点で、そのparentに属するphoto Undo entryをすべてinvalidateする。
+
+parent delete後にphoto単体Undoでparentを復活させない。
+
+parent delete自体のUndoを将来提供する場合は別Business操作として設計する。v0.8 photo Undoの責務外。
+
+### 17.7 Conflict / remote changes
+Undo commitも通常Business editなので、その後のPushでserver revisionが進んでいれば通常SyncConflictになる。
+
+Undoだからserver変更へ強制適用しない。
+
+remote側でparentがdeletedになっていた場合も通常Conflictとして利用者判断へ送る。
+
+### 17.8 Missing blob
+Undo時にlocal thumbnailが無いだけならoriginalから再生成可能。
+
+local originalも無くserver blobも取得不能の場合、同じphotoIdを内容不明のまま復元しない。Undoを完了できない旨を表示し、recovery規則に従う。
+
+### 17.9 Sync boundary
+canonical behavior:
+```text
+delete
+  -> Business + Outbox commit
+  -> 10s Undo UI開始
+  -> Syncは停止しない
+
+Undo within 10s
+  -> new Business + Outbox commit
+  -> normal Sync
+
+no Undo
+  -> entry expires
+  -> local blob becomes GC candidate when other safety conditions are met
+```
+
+## 18. Photo / Blob設計完了
+v0.8のPhoto / Blob設計残件は完了。
+
+実装工程では本書を正本としてingestion、Photo API、upload state、GC、Undoを実装する。
 
 [目次](../README.md) > アーキテクチャ > Photo / Blob設計
