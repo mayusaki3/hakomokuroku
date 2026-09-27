@@ -111,7 +111,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 ## 10. PWA / Offline / Authentication
 - [x] offline local編集 + reconnect sync基本方針
 - [x] PWA install/update/cache = optional install / versioned app shell / safe-boundary update / IndexedDB preservation
-- [ ] service worker cache対象/更新失敗時挙動
+- [x] Service Worker = navigation network-first / versioned assets cache-first / Business API network-only / atomic install + old-version fallback
 - [ ] auth session expiry中のoffline操作と再認証後sync
 - [ ] User切替時の `hk-local-v2-<User.id>` lifecycle
 - [ ] storage quota/eviction時の通常data保護方針
