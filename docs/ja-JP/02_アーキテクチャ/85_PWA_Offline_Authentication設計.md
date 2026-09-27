@@ -137,8 +137,126 @@ local schema migration規則はData Model設計を正とする。
 
 自動reloadで入力途中の画面を突然破棄しない。
 
-## 13. 設計残件
-- Service Worker cache対象/更新失敗時挙動の詳細確認
+## 13. Service Worker fetch strategy
+
+### 13.1 Request classification
+Service Workerはrequestを次のclassへ分類する。
+
+1. navigation
+2. versioned static asset
+3. non-versioned static/application resource
+4. authenticated API
+5. photo/blob API
+6. other external/network resource
+
+Business correctnessに関わるrequestをstatic cache fallbackへ混在させない。
+
+### 13.2 Navigation
+same-origin navigationは **network-first with cached app-shell fallback**。
+
+```text
+navigation
+  -> network available: current deployment response
+  -> network failure: compatible cached app shell
+  -> shell unavailable: offline startup unavailable
+```
+
+networkから取得したHTMLを無制限に世代混在させない。current buildのshell cacheへ属するものだけをcurrent shellとして扱う。
+
+offline fallback HTMLがserver Business dataを埋め込んだsnapshotを持つ設計は禁止。
+
+### 13.3 Versioned static assets
+content hash/build hashをURLに持つJS/CSS/font/icon等は **cache-first**。
+
+- precache manifestに含まれるassetはinstall時に取得
+- missing cache entryはnetwork fallback
+- hash URLはimmutableとして扱える
+- response validation失敗時はcacheへ保存しない
+
+new worker installは必須precache assetが揃わなければ成功扱いにしない。
+
+### 13.4 Non-versioned static resources
+manifest、icon alias等の非versioned resourceはstaleな世代固定を避けるためnetwork-firstまたは明示version keyで管理する。
+
+offline時はcurrent known-good cacheへfallback可能。
+
+### 13.5 Authenticated API
+`/api/*` のauthenticated responseはService Worker Cache Storageへ保存しない。
+
+特に:
+- Sync Pull/Push
+- Full Resync
+- SyncConflict
+- Restore
+- Device registration/prefix
+- User-scoped Business API
+
+はnetwork-only。
+
+offline時はsynthetic success/cached successを返さずnetwork unavailableとしてapplicationへ通知する。
+
+### 13.6 Photo/blob API
+server photo original/thumbnail/status/upload/confirmもService Worker Cache Storageへ保存しない。
+
+local photo binaryはPhoto / Blob設計のIndexedDB storesを使用する。
+
+GET photoをbrowser HTTP cacheが保持すること自体はplatform behaviorとして許容するが、Business correctnessはHTTP cache hitを前提にしない。
+
+### 13.7 External resources
+v0.8 application shellに必須のresourceをthird-party CDNへ依存させないことを原則とする。
+
+外部resourceを使用する場合:
+- offline availabilityを保証しない
+- failureでBusiness dataを変更しない
+- authentication token/User dataを外部originへ送らない
+
+### 13.8 Install atomicity
+new worker install時はcurrent buildの必須precache setをすべて取得・検証してからinstall成功。
+
+途中失敗:
+- new workerをactivateしない
+- old active worker/cacheを維持
+- current applicationを継続
+
+partial new cacheは後でcleanup可能だがcurrent cacheとして参照しない。
+
+### 13.9 Activation
+activationはsafe reload boundaryで実施する。
+
+activate後:
+1. new cacheをcurrentとして扱う
+2. client reload
+3. app/local DB compatibility確認
+4. obsolete shell cache cleanup
+
+obsolete cache cleanupが失敗してもnew app/Business処理をrollbackしない。
+
+### 13.10 Mixed-version tabs
+複数tab/windowが存在する場合、new worker activationで旧tabを即時破壊しない。
+
+reloadを要求された旧clientはserver protocol compatibility範囲なら継続可能。非互換ならserver operationをblockしupdate要求を表示する。
+
+異なるapp versionが同一local DBを同時に危険なschemaで開く状態は避ける。local schema migration開始前に他clientへreload/close要求を出し、安全にexclusive migrationできない場合はmigrationを開始しない。
+
+### 13.11 Update/install failure states
+最低限UI state:
+- UPDATE_AVAILABLE
+- UPDATE_INSTALL_FAILED
+- UPDATE_RELOAD_REQUIRED
+- UPDATE_BLOCKED_BY_ACTIVE_OPERATION
+- OFFLINE_SHELL_UNAVAILABLE
+
+failure時にlocal Businessをresetするactionを既定導線にしない。
+
+### 13.12 Recovery
+Service Worker/cacheだけが壊れている場合:
+- online: registration/cacheを再構築
+- offline: known-good shellが無ければ起動不可
+- IndexedDBは保持
+
+Service Worker registrationを解除/再登録するrecoveryを実装しても、IndexedDB deletionと連動させない。
+
+## 14. 設計残件
 - auth session expiry中のoffline操作と再認証後sync
 - User切替時local DB lifecycle
 - storage quota/eviction時の通常data保護
