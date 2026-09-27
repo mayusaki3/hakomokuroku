@@ -96,7 +96,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] server applyはapplyId idempotency + short-lived COMMITTED result
 - [x] local/server apply順序 = server-first
 - [x] Restore lock = 60秒lease / 20秒renew / owner token API
-- [ ] RestoreApplyResult retentionを確定
+- [x] RestoreApplyResult retention = server commitから7日
 - [x] Restore owner photo upload完了・検証後にserver Business atomic commit
 - [ ] Restore UI最終フロー
 - [x] `restore-session-design.md`を判断履歴summaryへ再構成
