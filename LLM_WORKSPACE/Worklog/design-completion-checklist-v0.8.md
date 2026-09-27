@@ -29,7 +29,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] business identity = `(User.id, entityId)`
 - [x] contentHash canonicalization基本規則
 - [x] Box / Item / BoxLocation / Outbox / SyncState / SyncConflict / SyncChangeLogの最終field schema
-- [ ] server DB unique/index/FK/transaction制約
+- [x] server DB unique/index/FK/transaction制約
 - [ ] local IndexedDB schema/version/migration方針
 - [x] RestoreApplyResult / RestoreLockの最小schema
 - [x] RestoreApplyMarkerは `applyId` のみ
@@ -67,7 +67,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] BoxLocationはflat independent master
 - [x] 各entity field/validation最終仕様
 - [x] BoxLocation同名後勝ちauto-rename = server受理側優先、既存を最小 name(n)
-- [ ] CRUD APIとtransaction境界を確定
+- [x] CRUD logical transaction境界を確定
 
 ## 7. Photo / Blob
 - [x] photoId独立identity / no dedup
