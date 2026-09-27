@@ -150,7 +150,27 @@ response:
 
 不存在はready=false相当のresponseを返してよい。same photoId + different hashは `PHOTO_HASH_MISMATCH`。
 
-### 10.2 Original upload
+### 10.2 Download
+
+new device / Full Resync / local thumbnail regeneration等でserver-ready photoをlocalへ取得するため、authenticated User-scope download APIを提供する。
+
+- `GET /api/photos/{photoId}/original?photoHash=<sha256>`
+- `GET /api/photos/{photoId}/thumbnail?photoHash=<sha256>`
+
+規則:
+- authenticated User scopeのみ
+- requested photoId/photoHashがserver PhotoBlobと一致すること
+- current server Businessから当該Userのphotoとして参照される、またはclientが正当にrecovery対象として取得可能なものだけ返す
+- cross-user access禁止
+- hash mismatchは `PHOTO_HASH_MISMATCH`
+- binary responseはBusiness/Sync metadataを変更しない
+- download自体で `unreferencedAt` を延長しない
+- thumbnail不存在時はoriginal取得後client再生成可能
+- original不存在時はmissingとして扱い、空bytesや別photoを返さない
+
+Service Worker Cache Storageをcanonical photo cacheとして使用しない。取得後はIndexedDB photo storeへ保存する。
+
+### 10.3 Original upload
 `PUT /api/photos/{photoId}/original`
 
 metadata header/bodyでexpected `photoHash` を必須とし、bodyはWebP bytes。
@@ -167,7 +187,7 @@ server validation:
 
 同一photoId/hash/same valid bytesへの再PUTはidempotent success。
 
-### 10.3 Thumbnail upload
+### 10.4 Thumbnail upload
 `PUT /api/photos/{photoId}/thumbnail`
 
 expected photoHashを指定する。thumbnail自身はparent contentHashへ入らないが、originalのphotoId/photoHash pairへ紐付ける。
@@ -183,7 +203,7 @@ validation:
 
 同一pairへの再PUTはidempotent。thumbnail bytesが既存と異なる場合は、original identityは変えずvalidated thumbnailを置換可能。thumbnailはderived cacheでありBusiness identityではない。
 
-### 10.4 Confirm reference-ready
+### 10.5 Confirm reference-ready
 `POST /api/photos/{photoId}/confirm`
 
 request:
