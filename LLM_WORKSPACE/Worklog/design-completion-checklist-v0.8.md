@@ -20,7 +20,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] User単位の完全データ分離
 - [x] offline-first local Business + Outbox方針
 - [x] 現行設計を正式docsへ配置し、アーキテクチャ正本文書を分割
-- [ ] v0.8画面遷移と各操作の保存境界を最終確認
+- [x] v0.8画面遷移と保存境界 = navigation非commit / Business+Outbox atomic / Restore server-first / 全操作matrix確認
 
 ## 3. Data Model
 - [x] Box / Item / BoxLocationの基本関係
