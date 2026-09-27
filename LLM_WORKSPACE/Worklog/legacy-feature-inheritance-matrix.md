@@ -27,7 +27,7 @@
 | Item新規登録 | /boxes/[id]/items/new | 登録wizardおよびBox詳細から登録 | v0.8継承 | 要UI最終確認 |
 | Item一覧 | /items | User全Item一覧 | v0.8継承 | 要UI最終確認 |
 | Box内Item一覧 | /boxes/[id]/items | Box所属Item一覧 | v0.8継承 | 要UI最終確認 |
-| Box内Item絞り込み | /boxes/[id]/items の name/tag検索 | local絞り込みとして維持候補 | v0.8継承 | **設計追記必要** |
+| Box内Item絞り込み | /boxes/[id]/items の name/tag検索 | 必須機能としては継承しない。Box内はカテゴリ等による並べ替えを優先 | 廃止候補 | **方針確定: 検索の必要度は低い** |
 | Item詳細 | /items/[id] | name/tags/note/photos/所属Box | v0.8継承 | 要UI最終確認 |
 | Item取り出し/移動 | moveItem | boxId変更、取り出しはUNASSIGNED | 新仕様へ置換 | 設計済み |
 | Item削除 | removeItem | tombstone | 新仕様へ置換 | 設計済み |
@@ -52,7 +52,7 @@
 | **Item検索** | Item name/tags/noteを検索対象 | v0.8継承 | **設計済み** |
 | Box検索 | code/name/location/tags等 | v0.8継承 | 設計済み |
 | BoxLocation検索 | 新Data Modelに合わせ追加 | 新仕様へ置換 | 設計済み |
-| Box内Item絞り込み | name/tag local filter | v0.8継承 | **設計追記必要** |
+| Box内Item絞り込み | 必須検索としては採用せず、カテゴリ等の並べ替えを採用 | 新仕様へ置換 | **方針確定、並べ替え詳細は要設計** |
 | QR camera scan | canonical Box.codeを読み取る | 新仕様へ置換 | 設計済み |
 | QR hit時Box+Item表示/遷移 | local-first lookup | v0.8継承 | 要UI最終確認 |
 | QR local miss | offlineではserver不存在と断定しない | 新仕様へ置換 | 設計済み |
@@ -128,7 +128,7 @@ Backup/Restore、offline、PWA、Syncは現行設計を正とし、旧実装は�
 
 v0.8について、少なくとも以下は設計完了前に処理する。
 
-1. Box内Item絞り込み検索のUI仕様。
+1. Box内Item一覧のカテゴリ等による並べ替え仕様（Box内絞り込み検索は必須としない）。
 2. PhotoRef順序変更に対応する写真並べ替えUI。
 3. User新規登録/Loginの最終UI/API境界。
 4. MFA/TOTPをv0.8へ維持するか。
