@@ -56,7 +56,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] device stateは通常backup対象外
 - [x] Device / DevicePrefix server schema = User-scoped Device + permanently reserved prefix records
 - [x] register/allocate-prefix API = idempotent register + expectedActivePrefix compare-and-switch
-- [ ] local device state schemaと初期化/復旧手順
+- [x] local DeviceState + atomic sequence + data loss時new device/prefix再setup
 
 ## 6. Box / Item / BoxLocation
 - [x] Item取り出し = `boxId=UNASSIGNED`
