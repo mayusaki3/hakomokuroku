@@ -123,6 +123,19 @@ response loss時は同じapplyIdでresultを照会する。
 
 same applyIdに異なるrequest contentを送信した場合はvalidation errorとする。
 
+### 7.1 RestoreApplyResult retention
+`RestoreApplyResult(COMMITTED)` はcommit時点から **7日間** 保持する。
+
+目的はresponse loss / client crash後のidempotency・commit判定だけであり、Restore履歴やaudit用途には使用しない。
+
+- retention起点はserver commit時刻
+- 7日経過後はphysical deletion可能
+- cleanup遅延に依存した動作は禁止し、7日経過後は存在を保証しない
+- clientは通常COMMITTED確認・Pull/adopt完了後にmarkerを削除する
+- 7日を超えて古いlocal `RestoreApplyMarker` が残り、resultが存在しない場合は**自動再applyしない**
+- その場合markerをcleanupし、通常syncでserver canonical stateへ収束する
+- RestoreApplyResult削除はBusiness / SyncChangeLog / photo referenceを変更しない
+
 ## 8. Client crash safety
 minimal durable markerは以下。
 
@@ -153,7 +166,6 @@ Pull → Outbox reapply → required blob upload → Push → Pull
 で収束し、必要なら通常SyncConflictとなる。Restore専用conflict typeは作らない。
 
 ## 10. 設計残件
-- RestoreApplyResult retention
 - Restore UI flow
 
 旧persistent RestoreSession / RestoreHistory / persistent RestoreConflict / full binary staging / restore storage accounting / long-term resume / local-first Restore applyは現行仕様ではない。
