@@ -117,7 +117,7 @@ v0.8の設計完了条件を有限のチェックリストとして管理する�
 - [x] storage quota/eviction = Class A primary data保護 / reconstructible cache優先cleanup / persistent storage request / loss検知後Full Resync
 
 ## 11. UI / UX
-- [ ] 登録フロー各stepの戻る/skip/cancel
+- [x] 登録flow = stepごと即時保存 / Backはrollbackなし / optional step skip / Box作成後Cancelはflow終了のみ
 - [ ] sync状態表示
 - [x] normal SyncConflict UI = 一覧/差分/個別解決/stale再比較
 - [x] Restore conflict/confirmation/progress/completion UI
