@@ -233,8 +233,134 @@ v0.8ではRestore lock中:
 
 これによりRestore中のserver namespace mutationを単純化する。
 
-## 8. 設計残件
-- local device state schema
-- local data消失・再setup時の具体手順
+## 8. Local DeviceState
+
+DeviceStateはUser-local IndexedDB `hk-local-v2-<User.id>` の `deviceState` storeに1 record保持する。
+
+```text
+id               "DEVICE"
+deviceId         string
+activePrefix     string
+nextSequence     int
+registeredAt     timestamp
+prefixActivatedAt timestamp
+updatedAt        timestamp
+```
+
+意味:
+- `deviceId`: このlocal DB generationで使用するopaque device identity
+- `activePrefix`: 次のBox.code発行に使用するserver allocated prefix
+- `nextSequence`: 次に使用するsequence。範囲 `0..923520`
+- timestampは診断用でcode correctnessには使用しない
+
+DeviceStateは通常Backup/Restore対象外。
+
+### 8.1 Initial setup
+authenticated Userのlocal DBにDeviceStateが無い場合:
+1. cryptographically randomなnew deviceId生成
+2. onlineならregister API
+3. activePrefix取得
+4. `nextSequence=0` でDeviceState作成
+5. Box作成可能状態へ遷移
+
+register完了前はserver-issued prefixが無いため新規Box.codeを発行できない。
+
+既存Box/Itemの閲覧・編集など、new Box.codeを必要としないoffline操作は別途可能。
+
+### 8.2 Box creation transaction
+新規Box作成時:
+1. DeviceState読込
+2. activePrefix + nextSequenceからcode生成
+3. canonical code validation
+4. Box作成
+5. Outbox作成
+6. `nextSequence += 1`
+7. 同一IndexedDB transaction commit
+
+transaction失敗時はBox/Outbox/counterのすべてrollback。
+
+成功commitしたsequenceは、そのBoxを直後に削除しても再利用しない。
+
+### 8.3 Sequence exhaustion
+`nextSequence <= 923520` の間はその値を使用可能。
+
+sequence 923520をcommitすると、local stateは「current prefix exhausted」として扱う。次のBox作成前にonlineでallocate-prefixを実行する。
+
+new prefix取得後:
+```text
+activePrefix = server returned current activePrefix
+nextSequence = 0
+prefixActivatedAt = now
+```
+
+をatomicに保存してからBox作成を再開する。
+
+offlineかつcurrent prefix exhaustedの場合、新規Box作成だけを停止する。他のoffline Business操作は継続可能。
+
+### 8.4 Allocate response loss
+allocate request送信後にresponseを失ってもlocal activePrefixを推測変更しない。
+
+same `deviceId + expectedActivePrefix` でretryし、serverが返すcurrent activePrefixを採用する。
+
+local DeviceState切替はserver response取得後だけ行う。
+
+## 9. Local data loss / re-setup
+
+### 9.1 Principle
+DeviceState消失時、旧 `nextSequence` をserver Box一覧等から推測して復元しない。
+
+理由:
+- offline未Push Boxが存在した可能性をserverから判定できない
+- sequence hole/reuse判定が不完全になる
+- backupはDeviceStateを含まない
+
+### 9.2 Complete local DB loss
+`hk-local-v2-<User.id>` 自体が消失/再作成された場合:
+1. Full ResyncでBusinessをserver canonicalから復元
+2. **new deviceId** を生成
+3. register APIでnew prefix取得
+4. `nextSequence=0`
+5. new DeviceStateとして開始
+
+旧deviceId/prefixはserverに永久予約されたまま残し、再利用しない。
+
+### 9.3 DeviceStateだけ欠損
+Business DBが残っていてもDeviceStateだけ欠損/破損している場合、旧counterを推測復旧しない。
+
+利用者へ「端末識別情報を再設定する」旨を表示し、online/authenticated後:
+1. new deviceId
+2. register
+3. new prefix
+4. nextSequence=0
+
+で再setupする。
+
+既存Business/Outboxは変更しない。
+
+### 9.4 App reinstall / browser storage clear
+local storage identityが保持されていることを前提にしない。DeviceStateが無ければ常にnew device setupとして扱う。
+
+serverに旧Device recordが存在していても、自動的に旧deviceIdへ再接続しない。
+
+### 9.5 Backup Restore後
+backupからBusinessをRestoreしてもDeviceStateは復元しない。
+
+同じlocal DBに既存DeviceStateが健全ならそのまま継続使用する。
+
+新規環境へのRestoreでDeviceStateが無ければnew device setupを行う。Restoreされた既存Box.codeは変更しない。
+
+### 9.6 Corruption safety
+DeviceStateの以下が不正なら新規Box作成を禁止する。
+- deviceId missing
+- activePrefix noncanonical
+- nextSequence範囲外
+- server登録状態と明確に矛盾
+
+自動counter resetやprefix書換えは行わず、new device setupへ誘導する。
+
+## 10. Box.code / Device設計完了
+v0.8のBox.code / Device設計は確定。
+
+実装工程ではDevice/DevicePrefix Prisma model、Device API、Dexie DeviceState、Box creation transactionへ反映する。
 
 [目次](../README.md) > アーキテクチャ > Box.code / Device設計
