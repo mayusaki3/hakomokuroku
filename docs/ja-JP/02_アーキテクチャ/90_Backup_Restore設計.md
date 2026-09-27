@@ -33,11 +33,48 @@ Restoreはonlineの単一operation。
 - currentにidentity無し = validation後auto-add candidate
 
 ## 4. Restore lock
-short lease + opaque `lockToken`。operation中のみrenewする。handoff/reacquire/resolution reuseは行わない。
+User scopeで1つのlockをserverが管理する。
+
+### 4.1 Lease
+- lease duration: **60秒**
+- renew interval: **20秒**
+- opaque `lockToken`
+- expiry判定はserver clockを正とする
+- renew成功時はそのserver処理時点から60秒へ延長
+- operation中だけrenewし、backgroundで無期限維持しない
+- handoff / transparent reacquire / resolution reuseは行わない
 
 owner以外のBusiness Sync/blob uploadは `RESTORE_LOCKED`。local編集は可能。
 
-lock ownership/leaseをserver apply前に失った場合はabortしresolutionを破棄する。
+### 4.2 API
+概念API:
+```text
+POST /restore/lock
+POST /restore/lock/renew
+DELETE /restore/lock
+```
+
+取得成功:
+```text
+lockToken
+expiresAt
+```
+
+renew:
+- authenticated UserとlockTokenがcurrent ownerに一致する場合のみ成功
+- 成功時は新しい `expiresAt` を返す
+- expired / token mismatch / ownership mismatchはrenew失敗
+
+release:
+- ownerのみ明示release可能
+- operation完了/cancel時は明示releaseを試みる
+- release requestが失敗してもlease expiryで解放される
+
+### 4.3 Failure
+- server apply request送信前にrenew/ownershipを失った場合: 即abortしmemory上resolutionを破棄
+- server apply request送信後に通信/renewが不明になった場合: local判断で再applyせず、`applyId` でRestoreApplyResultを照会
+- active lockが存在する状態で別Restore開始要求: retryable `RESTORE_LOCKED`
+- lock expiry自体はBusiness rollbackを意味しない
 
 ## 5. Apply authority / order
 Restoreは**server-first**とし、server canonical stateを唯一のRestore commit authorityとする。
@@ -116,7 +153,6 @@ Pull → Outbox reapply → required blob upload → Push → Pull
 で収束し、必要なら通常SyncConflictとなる。Restore専用conflict typeは作らない。
 
 ## 10. 設計残件
-- Restore lock lease / renew具体値とAPI
 - RestoreApplyResult retention
 - Restore UI flow
 
