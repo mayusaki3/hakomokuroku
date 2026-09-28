@@ -146,8 +146,8 @@ v0.8設計完了後に別工程で扱う。
 - [x] User名/User iconをv0.8継承 / Device管理は新Deviceモデルへ置換 / login session一覧・失効は認証領域として分離維持
 - [x] QR legacy互換なし = v0.8.0初版、payloadはcanonical Box.codeのみ
 - [x] A4 label = ラベルプリンタ非所有者向け代替としてv0.8継承、canonical label rendererを面付け
-- [ ] Theme既存機能の維持/縮小/廃止を確定
-- [ ] Helpのv0.8での扱いを確定
+- [x] Theme = built-in System/Light/Dark + user themeへ統合。server正本 + User-scoped local cache。詳細は `95_Theme_Help設計.md`
+- [x] Help = v0.8正式機能。offline bundled content + 主要17章 + deep link。詳細は `95_Theme_Help設計.md`
 - [-] Vision旧機能の詳細設計はv1.0。ただし旧provider/prompt/test/Item・Box写真認識を継承候補として記録済み
 
 ## 13. 設計完了条件
