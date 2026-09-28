@@ -358,6 +358,27 @@ DeviceStateの以下が不正なら新規Box作成を禁止する。
 
 自動counter resetやprefix書換えは行わず、new device setupへ誘導する。
 
+
+## 9.4 Device management UI
+
+v0.8では旧版の「端末管理」という利用目的を維持し、現行Device / DevicePrefixへ置き換える。
+
+Device managementで最低限表示する:
+- device name（利用者が変更可能な表示名）
+- deviceId（通常は省略表示し詳細で確認可能）
+- activePrefix
+- createdAt
+- lastUsedAt
+- current local deviceかどうか
+
+device nameはBox.code生成規則やidentity判定に使用しない表示用metadataとする。同名を許容する。
+
+v0.8ではDevice削除を提供しない。使わなくなったDeviceも割当済みprefixを解放・再利用しない。
+DeviceStateを別Deviceへ手動で切り替える操作も提供しない。
+
+旧SyncTokenのdevice label/revokeはこのDevice管理へそのまま移植しない。
+認証session/tokenを失効させる機能を維持する場合は「ログイン中の端末 / セッション管理」として認証領域に分離し、Box.code Device recordやDevicePrefixを削除・変更しない。
+
 ## 10. Box.code / Device設計完了
 v0.8のBox.code / Device設計は確定。
 
