@@ -141,8 +141,8 @@ v0.8設計完了後に別工程で扱う。
 - [x] Box内Item絞り込み検索は必須とせず、カテゴリ等の並べ替えを優先
 - [x] Box内Item一覧 = 独立categoryなし / 複数tagsをカテゴリ利用 / 通常一覧は重複なし / tag group表示では複数group所属可
 - [x] PhotoRef順序変更 = drag/touch drag + 前へ/後ろへ、親Business update、offline対応、競合時auto-mergeなし
-- [ ] User新規登録/Loginの最終UI/API境界を確定
-- [ ] MFA/TOTPのv0.8継承範囲を確定
+- [x] User新規登録/Login = authenticated session確立後User別DB open/create、TOTP有効時はchallenge完了までBusiness API不可
+- [x] MFA/TOTP = login/setup/verify/status/disable/recovery code再発行をv0.8継承、secret/recoveryはBusiness backup/local DB対象外
 - [ ] User名/User icon/device管理のv0.8継承範囲を確定
 - [ ] 旧QR URL / `hk:` payload互換の扱いを確定
 - [ ] A4 label印刷の扱いを確定
