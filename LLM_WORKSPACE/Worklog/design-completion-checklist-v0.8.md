@@ -143,7 +143,7 @@ v0.8設計完了後に別工程で扱う。
 - [x] PhotoRef順序変更 = drag/touch drag + 前へ/後ろへ、親Business update、offline対応、競合時auto-mergeなし
 - [x] User新規登録/Login = authenticated session確立後User別DB open/create、TOTP有効時はchallenge完了までBusiness API不可
 - [x] MFA/TOTP = login/setup/verify/status/disable/recovery code再発行をv0.8継承、secret/recoveryはBusiness backup/local DB対象外
-- [ ] User名/User icon/device管理のv0.8継承範囲を確定
+- [x] User名/User iconをv0.8継承 / Device管理は新Deviceモデルへ置換 / login session一覧・失効は認証領域として分離維持
 - [ ] 旧QR URL / `hk:` payload互換の扱いを確定
 - [ ] A4 label印刷の扱いを確定
 - [ ] Theme既存機能の維持/縮小/廃止を確定
