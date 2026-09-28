@@ -41,7 +41,7 @@
 | camera/file選択 | Web/PWA capabilityで入力 | v0.8継承 | 要UI最終確認 |
 | WebP縮小/thumbnail | original 1600/q.85, thumb 400/q.8 | 新仕様へ置換 | 設計済み |
 | 写真削除 | 即時Business update + 10秒Undo | 新仕様へ置換 | 設計済み |
-| **写真並べ替え** | PhotoRef順序はbusiness-significant | v0.8継承 | **UI設計追記必要** |
+| **写真並べ替え** | PhotoRef順序はbusiness-significant。drag/touch drag + 前へ/後ろへ操作、親Business updateとして保存 | v0.8継承 | **設計済み** |
 | 写真原寸/preview表示 | local original/thumbnail利用 | v0.8継承 | 要UI最終確認 |
 
 ## 4. Search / QR
@@ -129,7 +129,7 @@ Backup/Restore、offline、PWA、Syncは現行設計を正とし、旧実装は�
 v0.8について、少なくとも以下は設計完了前に処理する。
 
 1. Box内Item一覧は複数tagsをカテゴリとして利用する。通常一覧はItem重複なし、カテゴリ表示では複数tag groupへの重複表示を許容する。独立category/primary categoryは追加しない。
-2. PhotoRef順序変更に対応する写真並べ替えUI。
+2. ~~PhotoRef順序変更に対応する写真並べ替えUI。~~ → 設計済み。
 3. User新規登録/Loginの最終UI/API境界。
 4. MFA/TOTPをv0.8へ維持するか。
 5. User名/User icon/device管理をv0.8へ維持するか。
