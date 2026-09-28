@@ -144,8 +144,8 @@ v0.8設計完了後に別工程で扱う。
 - [x] User新規登録/Login = authenticated session確立後User別DB open/create、TOTP有効時はchallenge完了までBusiness API不可
 - [x] MFA/TOTP = login/setup/verify/status/disable/recovery code再発行をv0.8継承、secret/recoveryはBusiness backup/local DB対象外
 - [x] User名/User iconをv0.8継承 / Device管理は新Deviceモデルへ置換 / login session一覧・失効は認証領域として分離維持
-- [ ] 旧QR URL / `hk:` payload互換の扱いを確定
-- [ ] A4 label印刷の扱いを確定
+- [x] QR legacy互換なし = v0.8.0初版、payloadはcanonical Box.codeのみ
+- [x] A4 label = ラベルプリンタ非所有者向け代替としてv0.8継承、canonical label rendererを面付け
 - [ ] Theme既存機能の維持/縮小/廃止を確定
 - [ ] Helpのv0.8での扱いを確定
 - [-] Vision旧機能の詳細設計はv1.0。ただし旧provider/prompt/test/Item・Box写真認識を継承候補として記録済み
