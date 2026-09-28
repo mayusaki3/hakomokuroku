@@ -148,6 +148,7 @@ v0.8設計完了後に別工程で扱う。
 - [x] A4 label = ラベルプリンタ非所有者向け代替としてv0.8継承、canonical label rendererを面付け
 - [x] Theme = built-in System/Light/Dark + user themeへ統合。server正本 + User-scoped local cache。詳細は `95_Theme_Help設計.md`
 - [x] Help = v0.8正式機能。offline bundled content + 主要17章 + deep link。詳細は `95_Theme_Help設計.md`
+- [x] Settings home = 旧実装を基準にカテゴリ再編。Profile/Security/Login session/Box.code Deviceを分離し、旧Sync endpoint/token・QR legacy設定・v0.8 Vision UIを除外
 - [-] Vision旧機能の詳細設計はv1.0。ただし旧provider/prompt/test/Item・Box写真認識を継承候補として記録済み
 
 ## 13. 設計完了条件
