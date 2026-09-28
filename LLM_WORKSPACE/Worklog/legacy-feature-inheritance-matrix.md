@@ -56,7 +56,7 @@
 | QR camera scan | canonical Box.codeを読み取る | 新仕様へ置換 | 設計済み |
 | QR hit時Box+Item表示/遷移 | local-first lookup | v0.8継承 | 要UI最終確認 |
 | QR local miss | offlineではserver不存在と断定しない | 新仕様へ置換 | 設計済み |
-| 旧URL/hk: QR互換 | canonical code onlyへ変更 | 廃止候補 | **利用者確認必要** |
+| 旧URL/hk: QR互換 | v0.8.0が初版のため互換不要。canonical Box.codeのみ | 廃止 | **方針確定** |
 
 ## 5. Label / Print
 
@@ -64,7 +64,7 @@
 |---|---|---|---|
 | QR label | canonical Box.code | 新仕様へ置換 | 設計済み |
 | tape印刷 | 24mm standard label | 新仕様へ置換 | 設計済み |
-| A4 label印刷 | 現設計はbrowser print/PDF/PNG中心 | 対象外候補 | **利用者確認必要** |
+| A4 label印刷 | ラベルプリンタ非所有者向け代替。canonical label rendererをA4へ面付け | v0.8継承 | **方針確定** |
 | preview | same renderer input | v0.8継承 | 設計済み |
 | printer-specific operation | optional adapter | 新仕様へ置換 | 設計済み |
 
@@ -108,11 +108,11 @@ v1.0へ延期すること自体は確定しているが、旧版機能を抽象�
 | 旧版機能 | 分類 | 状態 |
 |---|---|---|
 | Settings home | v0.8継承候補 | 要画面整理 |
-| Theme選択 | 対象外候補 | **利用者確認必要** |
-| Theme追加/編集 | 対象外候補 | **利用者確認必要** |
-| wallpaper色/画像/camera | 対象外候補 | **利用者確認必要** |
-| header/input/button等のtheme vars | 対象外候補 | **利用者確認必要** |
-| Help page | v0.8継承候補 | **内容/位置づけ確認必要** |
+| Theme選択 | 組み込みテーマ + ユーザー定義テーマへ整理 | v0.8継承 | **整理方針確定、詳細設計要** |
+| Theme追加/編集 | user themeとして維持。保存/適用モデルを一本化 | v0.8継承 | **整理方針確定、詳細設計要** |
+| wallpaper色/画像/camera | user theme構成要素として維持 | v0.8継承 | **整理方針確定、詳細設計要** |
+| header/input/button等のtheme vars | user theme tokenとして整理して維持 | v0.8継承 | **整理方針確定、詳細設計要** |
+| Help page | v0.8正式機能。主要操作・offline/sync・QR/label・backup/restore・account/securityを案内 | v0.8継承 | **方針確定、内容設計要** |
 
 「高度なテーマ機能の追加開発は対象外」は、既存Theme機能を削除する決定とは解釈しない。
 維持・縮小・廃止は利用者確認後に確定する。
@@ -133,10 +133,10 @@ v0.8について、少なくとも以下は設計完了前に処理する。
 3. ~~User新規登録/Loginの最終UI/API境界。~~ → 基本境界確定。
 4. ~~MFA/TOTPをv0.8へ維持するか。~~ → TOTP login/setup/verify/status/disable/recoveryをv0.8継承。
 5. ~~User名/User icon/device管理をv0.8へ維持するか。~~ → 一通り維持。Box.code Device管理と認証session管理は分離。
-6. 旧QR URL / `hk:` payload互換を廃止してよいか。
-7. A4 label印刷を維持するか。
-8. Theme既存機能を維持・縮小・廃止のどれにするか。
-9. Helpをv0.8完成機能として整備するか。
+6. ~~旧QR URL / `hk:` payload互換を廃止してよいか。~~ → v0.8.0が初版のため廃止、canonical Box.codeのみ。
+7. ~~A4 label印刷を維持するか。~~ → ラベルプリンタ非所有者向けにv0.8継承。
+8. ~~Theme既存機能を維持・縮小・廃止のどれにするか。~~ → 既存機能を整理し、組み込み + user themeへ統合してv0.8収録。詳細設計継続。
+9. ~~Helpをv0.8完成機能として整備するか。~~ → v0.8正式機能として整備。
 
 v1.0については、Vision旧機能を正式要件へ具体化する。
 
