@@ -72,12 +72,12 @@
 
 | 旧版機能 | 現行方針 | 分類 | 状態 |
 |---|---|---|---|
-| User新規登録 | v0.8認証に必要 | v0.8継承 | **詳細UI/API再確認必要** |
-| ID/password Login | v0.8認証に必要 | v0.8継承 | **詳細UI/API再確認必要** |
+| User新規登録 | 登録成功後session確立、User別local DB open/create、初回Device setup | v0.8継承 | **方針確定** |
+| ID/password Login | session認証。TOTP有効Userはchallenge完了後にsession確立 | v0.8継承 | **方針確定** |
 | Logout | session解除、local DB保持 | 新仕様へ置換 | 設計済み |
-| TOTP login | 旧版MFA | v0.8継承候補 | **利用者確認必要** |
-| TOTP setup/disable | 旧版MFA設定 | v0.8継承候補 | **利用者確認必要** |
-| recovery code再発行 | 旧APIあり | v0.8継承候補 | **利用者確認必要** |
+| TOTP login | 旧版MFAを維持 | v0.8継承 | **方針確定** |
+| TOTP setup/disable | setup/verify/status/disableを維持 | v0.8継承 | **方針確定** |
+| recovery code再発行 | MFA recoveryとして維持 | v0.8継承 | **方針確定** |
 | User名 | User profile | v0.8継承候補 | **利用者確認必要** |
 | User icon | camera/file/rotate/save | v0.8継承候補 | **利用者確認必要** |
 | 旧device token label | Device/DevicePrefixへ再整理 | 新仕様へ置換 | **UI対応要確認** |
@@ -130,8 +130,8 @@ v0.8について、少なくとも以下は設計完了前に処理する。
 
 1. Box内Item一覧は複数tagsをカテゴリとして利用する。通常一覧はItem重複なし、カテゴリ表示では複数tag groupへの重複表示を許容する。独立category/primary categoryは追加しない。
 2. ~~PhotoRef順序変更に対応する写真並べ替えUI。~~ → 設計済み。
-3. User新規登録/Loginの最終UI/API境界。
-4. MFA/TOTPをv0.8へ維持するか。
+3. ~~User新規登録/Loginの最終UI/API境界。~~ → 基本境界確定。
+4. ~~MFA/TOTPをv0.8へ維持するか。~~ → TOTP login/setup/verify/status/disable/recoveryをv0.8継承。
 5. User名/User icon/device管理をv0.8へ維持するか。
 6. 旧QR URL / `hk:` payload互換を廃止してよいか。
 7. A4 label印刷を維持するか。
