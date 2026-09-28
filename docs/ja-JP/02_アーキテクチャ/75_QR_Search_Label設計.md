@@ -122,8 +122,8 @@ Box:
 - `name`
 - `tags[]`
 - `note`
-- 参照先BoxLocationの `name`
-- 親Box chainの `code` / `name`（例: 小箱 → 大箱）
+- top-level Boxでは参照先BoxLocationの `name`
+- nested BoxではparentBox chainの `code` / `name` と、ancestorを辿って解決したtop-level BoxLocationの `name`
 
 Item:
 - `name`
@@ -131,8 +131,8 @@ Item:
 - `note`
 - 所属Boxの `code`
 - 所属Boxの `name`
-- 所属BoxLocationの `name`
-- 所属Boxの親Box chainの `code` / `name`
+- 所属BoxおよびparentBox chainの `code` / `name`
+- 所属Boxからancestorを辿って解決したtop-level BoxLocationの `name`
 
 BoxLocation:
 - `name`
