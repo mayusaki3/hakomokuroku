@@ -38,12 +38,8 @@ Settings homeは各設定の詳細編集画面ではなく、カテゴリ別の�
 - Sync状態/詳細への導線
 - 旧syncBaseUrl / syncToken / endpoint入力は廃止
 
-### 2.6 アカウント
-- User profile
-- MFA/TOTP
-- ログインsession管理
-- Box.code Device管理
-- Logout
+### 2.6 Account
+AccountはSettingsから独立した画面領域とする。Settings homeにはAccount設定を内包しない。HeaderのUser icon等からAccountへ遷移する。
 
 ### 2.7 Help
 - Helpトップへの導線
@@ -58,7 +54,7 @@ v0.8では表示しない。v1.0でVision設計完了後に追加する。
 - User IDはread-only表示
 - User name表示/編集
 - User icon表示、file/camera、rotate、save
-- profile画面からMFA/Device等へ移動できてもよいが、主導線はSettings home
+- Profile / MFA / Login sessions / Box.code DeviceはAccount領域としてまとめ、Settingsとは独立させる
 - Logoutを配置してよい
 
 旧SyncToken label由来の「デバイス名」はUser profileから削除し、Box.code Device管理へ移す。
@@ -122,18 +118,22 @@ Settings
 ├─ データ
 │  ├─ Backup / Restore
 │  └─ Sync status
-├─ アカウント
-│  ├─ Profile
-│  ├─ Security / MFA
-│  ├─ Login sessions
-│  ├─ Box.code Devices
-│  └─ Logout
 └─ Help / version
+
+Account  ※ Settingsとは独立
+├─ Profile
+├─ Security / MFA
+│  ├─ TOTP
+│  └─ Recovery Code
+├─ Login sessions
+├─ Box.code Devices
+└─ Logout
 ```
 
 ## 11. 旧実装からの整理
 維持:
 - Settingsカテゴリ画面
+- Settingsとは独立したAccount/User領域
 - Theme
 - camera/scan preferences
 - sort/filter preferences
