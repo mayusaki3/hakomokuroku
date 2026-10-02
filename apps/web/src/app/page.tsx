@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
+import Link from 'next/link';
 import type { SearchRow } from '@/lib/search';
 import { searchByText, searchByQrPayload } from '@/lib/search';
 import ListRow from '@/app/components/ListRow';
@@ -108,9 +109,15 @@ export default function Home() {
             <button type="button" onClick={runTextSearch} className="btn">
               検索
             </button>
-            <button type="button" onClick={startScan} aria-disabled={scanning} className="icon-btn">
+            <button type="button" onClick={startScan} aria-disabled={scanning} className="btn">
               <CameraIcon />
+              <span>QRで検索</span>
             </button>
+          </div>
+
+          <div className="home-register-actions">
+            <Link href="/register" className="btn">箱登録</Link>
+            <Link href="/register?step=item" className="btn">アイテム登録</Link>
           </div>
 
           {rows.length === 0 && !scanning && (
@@ -133,8 +140,9 @@ export default function Home() {
           )}
         </section>
 
-        {/* 共通レイアウト適用 */}
-        <section aria-label="検索結果">
+        {/* 検索結果は通常検索とQR検索で共通の1領域に表示する。 */}
+        <section className="hk-frame" aria-label="検索結果">
+          <h2 className="home-search-result-title">検索結果</h2>
           {rows.length > 0 && (
             <ul className="divide-y">
               {rows.map((r, idx) => {
