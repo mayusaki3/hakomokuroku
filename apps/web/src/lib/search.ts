@@ -66,9 +66,7 @@ export async function searchByQrPayload(payload: string): Promise<SearchRow[]> {
     return [{ kind: 'unregistered', code }];
   }
 
-  // 箱ヒット：箱 1件 + その箱のアイテム一覧
+  // QR検索は「箱を探す」のではなく、その箱の中身を検索結果として返す。
   const items = await db.items.where('boxId').equals(box.id).toArray();
-  const rows: SearchRow[] = [{ kind: 'box', box }];
-  rows.push(...items.map((i) => ({ kind: 'item', item: i, box })));
-  return rows;
+  return items.map((i) => ({ kind: 'item', item: i, box }));
 }
