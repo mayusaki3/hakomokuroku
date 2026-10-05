@@ -1,66 +1,68 @@
 // apps/web/prisma/schema.prisma
+// v0.8 initial server schema. Business semantics are defined in
+// docs/ja-JP/02_アーキテクチャ/40_DBスキーマ定義.md.
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL") // 例: file:./dev.db
+  url      = env("DATABASE_URL")
 }
 
-/// タグの用途
-enum TagKind {
+enum BusinessEntityType {
   BOX
   ITEM
-  SHARED
+  BOX_LOCATION
+}
+
+enum FullResyncSnapshotStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum ThemeBase {
+  system
+  light
+  dark
 }
 
 model User {
   id            String   @id @default(cuid())
-  userId        String   @unique               // ログイン用ID
+  userId        String   @unique
   userName      String?
-  passwordHash  String                         // argon2id
+  passwordHash  String
   iconDataUrl   String?
   isActive      Boolean  @default(true)
 
-  // TOTP
-  totpEnabled   Boolean  @default(false)
-  totpSecretEnc String?
+  totpEnabled          Boolean  @default(false)
+  totpSecretEnc        String?
   totpPendingSecretEnc String?
-  totpPendingAt DateTime?
-  recoveryCodes Json?                          // ["hash1","hash2",...]
-  totpFailCount Int      @default(0)
-  lockUntil     DateTime?
+  totpPendingAt        DateTime?
+  recoveryCodes        Json?
+  totpFailCount        Int      @default(0)
+  lockUntil            DateTime?
 
-  lastLoginAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  tokens        SyncToken[]
-  boxes         Box[]
-  items         Item[]
-  locations     BoxLocation[]
-  tags          Tag[]
-  themes          Theme[]
-  setting         UserSetting?
-
-  @@index([userId])
-}
-
-model SyncToken {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique                 // 平文は返却のみ／DBはハッシュ
-  issuedAt   DateTime @default(now())
-  expiresAt  DateTime
-  lastUsedAt DateTime?
-  deviceName String?
-  userAgent  String?
-  ip         String?
+  boxes             Box[]
+  items             Item[]
+  locations         BoxLocation[]
+  devices           Device[]
+  devicePrefixes    DevicePrefix[]
+  themes            Theme[]
+  setting           UserSetting?
+  syncChanges       SyncChangeLog[]
+  syncConflicts     SyncConflict[]
+  restoreLock       RestoreLock?
+  restoreResults    RestoreApplyResult[]
+  resyncSnapshots   FullResyncSnapshot[]
 
   @@index([userId])
-  @@index([expiresAt])
 }
 
 model LoginChallenge {
@@ -75,125 +77,238 @@ model LoginChallenge {
 }
 
 model Box {
-  id           String   @id                  // 既存クライアント生成IDを踏襲
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  id          String
+  code        String
+  name        String
+  locationId  String?
+  parentBoxId String?
+  tags        Json
+  note        String?
+  thumbs      Json
+  meta        Json?
+  createdAt       DateTime
+  updatedAt       DateTime
+  deletedAt       DateTime?
+  serverUpdatedAt DateTime?
+  revision        BigInt   @default(0)
+  contentHash     String
+  syncSeq         BigInt?
 
-  code         String
-  name         String
-  location     String?
-  tags         Json?
-  thumbs       Json?
-  meta         Json?
-  aiState      String?
-  aiUpdatedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location   BoxLocation? @relation(fields: [userId, locationId], references: [userId, id])
+  parentBox  Box?         @relation("BoxNesting", fields: [userId, parentBoxId], references: [userId, id])
+  childBoxes Box[]        @relation("BoxNesting")
+  items      Item[]
 
-  items        Item[]
-  boxLocation  BoxLocation?
-
-  @@unique([userId, code])                   // コードはユーザー内で一意（UNASSIGNED もここで制御）
-  @@index([userId, updatedAt])
-  @@index([aiState, updatedAt])
+  @@id([userId, id])
+  @@unique([userId, code])
+  @@index([userId, serverUpdatedAt])
+  @@index([userId, syncSeq])
+  @@index([userId, locationId, deletedAt])
+  @@index([userId, parentBoxId, deletedAt])
 }
 
 model Item {
-  id           String   @id
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  id     String
+  boxId  String
+  name   String
+  tags   Json
+  note   String?
+  thumbs Json
+  meta   Json?
+  createdAt       DateTime
+  updatedAt       DateTime
+  deletedAt       DateTime?
+  serverUpdatedAt DateTime?
+  revision        BigInt   @default(0)
+  contentHash     String
+  syncSeq         BigInt?
 
-  boxId        String
-  box          Box      @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  box  Box  @relation(fields: [userId, boxId], references: [userId, id])
 
-  name         String
-  tags         Json?
-  note         String?
-  thumbs       Json?
-  meta         Json?
-  aiState      String?
-  aiUpdatedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId, updatedAt])
-  @@index([boxId])
+  @@id([userId, id])
+  @@index([userId, serverUpdatedAt])
+  @@index([userId, syncSeq])
+  @@index([userId, boxId, deletedAt])
 }
 
 model BoxLocation {
-  id           String   @id
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  id     String
+  name   String
+  note   String?
+  thumbs Json
+  meta   Json?
+  createdAt       DateTime
+  updatedAt       DateTime
+  deletedAt       DateTime?
+  serverUpdatedAt DateTime?
+  revision        BigInt   @default(0)
+  contentHash     String
+  syncSeq         BigInt?
 
-  boxId        String   @unique             // 箱1つに1レコード
-  box          Box      @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  boxes Box[]
 
-  thumbs       Json?
-  note         String?
-  meta         Json?
-  aiState      String?
-  aiUpdatedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@index([userId, updatedAt])
+  @@id([userId, id])
+  @@index([userId, serverUpdatedAt])
+  @@index([userId, syncSeq])
+  @@index([userId, name, deletedAt])
 }
 
-model Tag {
-  id        String   @id
-  userId    String?                          // 共有タグは null、ユーザー専用は userId 指定
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+model SyncSequence {
+  id      String @id
+  lastSeq BigInt
+}
 
-  name      String
-  kind      TagKind
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model SyncChangeLog {
+  syncSeq         BigInt             @id
+  userId          String
+  entityType      BusinessEntityType
+  entityId        String
+  revision        BigInt
+  contentHash     String
+  deleted         Boolean
+  payload         Json
+  serverUpdatedAt DateTime
 
-  @@unique([userId, name, kind])             // ユーザー内で一意（共有は userId=null 扱い）
-  @@index([enabled, kind, name])
-  @@index([userId, name, kind])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, syncSeq])
+  @@index([serverUpdatedAt])
+}
+
+model SyncConflict {
+  id                          String             @id @default(cuid())
+  userId                      String
+  entityType                  BusinessEntityType
+  entityId                    String
+  clientBaseRevision          BigInt
+  clientContentHash           String
+  clientPayload               Json
+  serverRevisionAtConflict    BigInt
+  serverContentHashAtConflict String
+  serverPayloadAtConflict     Json
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, entityType, entityId])
+  @@index([userId, entityType, entityId])
+}
+
+model RestoreLock {
+  userId        String   @id
+  lockTokenHash String
+  expiresAt     DateTime
+  createdAt     DateTime
+  renewedAt     DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model RestoreApplyResult {
+  userId        String
+  applyId       String
+  requestDigest String
+  status        String
+  committedAt   DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, applyId])
+  @@index([committedAt])
+}
+
+model FullResyncSnapshot {
+  snapshotId String                   @id
+  userId     String
+  snapshotSeq BigInt
+  createdAt  DateTime
+  expiresAt  DateTime
+  status     FullResyncSnapshotStatus
+
+  user     User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entities FullResyncSnapshotEntity[]
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model FullResyncSnapshotEntity {
+  snapshotId      String
+  entityType      BusinessEntityType
+  entityId        String
+  payload         Json
+  revision        BigInt
+  contentHash     String
+  syncSeq         BigInt
+  serverUpdatedAt DateTime
+  deleted         Boolean
+
+  snapshot FullResyncSnapshot @relation(fields: [snapshotId], references: [snapshotId], onDelete: Cascade)
+
+  @@id([snapshotId, entityType, entityId])
+}
+
+model Device {
+  userId       String
+  deviceId     String
+  name         String?
+  activePrefix String
+  createdAt    DateTime
+  lastUsedAt   DateTime
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prefixes DevicePrefix[]
+
+  @@id([userId, deviceId])
+  @@index([userId, lastUsedAt])
+}
+
+model DevicePrefix {
+  userId      String
+  prefix      String
+  deviceId    String
+  allocatedAt DateTime
+  activatedAt DateTime
+  retiredAt   DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [userId, deviceId], references: [userId, deviceId], onDelete: Cascade)
+
+  @@id([userId, prefix])
+  @@index([userId, deviceId, allocatedAt])
+  @@index([userId, deviceId, retiredAt])
 }
 
 model Theme {
-  id             String   @id @default(cuid())
-  userId         String
-  name           String
-  vars           Json?
-  wallpaperThumb String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id        String    @id @default(cuid())
+  userId    String
+  name      String
+  baseTheme ThemeBase
+  tokens    Json
+  wallpaper Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, updatedAt])
 }
 
-model ThemeActive {
-  userId   String   @id
-  themeId  String?  // 空=デフォルト
-  vars     Json?    // テーマの CSS 変数一式（null/空でデフォルト扱い）
-  updatedAt DateTime @updatedAt
-}
-
-enum VisionProvider {
-  none
-  openai
-  claude
-  gemini
-}
-
 model UserSetting {
-  userId           String   @id
-  visionProvider   VisionProvider @default(none)
-  visionApiKeyEnc  String?
-  visionPromptName String?
-  visionPromptTags String?
-  visionPromptNote String?
-  uiVars           Json?
+  userId      String   @id
+  activeTheme String   @default("builtin:system")
+  uiSettings  Json?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
 
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  updatedAt        DateTime @updatedAt
-  createdAt        DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
