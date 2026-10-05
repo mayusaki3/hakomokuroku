@@ -92,8 +92,7 @@ export default function Home() {
   };
 
   return (
-    <div className="app-content content-edge-6">
-      <div className="app-scroll">
+    <div className="app-scroll content-edge-6">
         <section className="hk-frame">
           <div className="searchbar">
             <input
@@ -197,7 +196,6 @@ export default function Home() {
             </ul>
           )}
         </section>
-      </div>
     </div>
   );
 }
