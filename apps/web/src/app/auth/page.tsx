@@ -115,8 +115,7 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="app-content content-edge-6">
-      <div className="app-scroll">
+    <div className="app-scroll content-edge-6">
         <section className="hk-frame">
           {/* 行1：タイトル＋トグル */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -192,7 +191,6 @@ export default function AuthPage() {
             </div>
           </form>
         </section>
-      </div>
     </div>
   );
 }
