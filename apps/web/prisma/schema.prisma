@@ -30,37 +30,37 @@ enum ThemeBase {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  userName      String?
-  passwordHash  String
-  iconDataUrl   String?
-  isActive      Boolean  @default(true)
+  id           String  @id @default(cuid())
+  userId       String  @unique
+  userName     String?
+  passwordHash String
+  iconDataUrl  String?
+  isActive     Boolean @default(true)
 
-  totpEnabled          Boolean  @default(false)
+  totpEnabled          Boolean   @default(false)
   totpSecretEnc        String?
   totpPendingSecretEnc String?
   totpPendingAt        DateTime?
   recoveryCodes        Json?
-  totpFailCount        Int      @default(0)
+  totpFailCount        Int       @default(0)
   lockUntil            DateTime?
 
   lastLoginAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  boxes             Box[]
-  items             Item[]
-  locations         BoxLocation[]
-  devices           Device[]
-  devicePrefixes    DevicePrefix[]
-  themes            Theme[]
-  setting           UserSetting?
-  syncChanges       SyncChangeLog[]
-  syncConflicts     SyncConflict[]
-  restoreLock       RestoreLock?
-  restoreResults    RestoreApplyResult[]
-  resyncSnapshots   FullResyncSnapshot[]
+  boxes           Box[]
+  items           Item[]
+  locations       BoxLocation[]
+  devices         Device[]
+  devicePrefixes  DevicePrefix[]
+  themes          Theme[]
+  setting         UserSetting?
+  syncChanges     SyncChangeLog[]
+  syncConflicts   SyncConflict[]
+  restoreLock     RestoreLock?
+  restoreResults  RestoreApplyResult[]
+  resyncSnapshots FullResyncSnapshot[]
 
   @@index([userId])
 }
@@ -77,21 +77,21 @@ model LoginChallenge {
 }
 
 model Box {
-  userId      String
-  id          String
-  code        String
-  name        String
-  locationId  String?
-  parentBoxId String?
-  tags        Json
-  note        String?
-  thumbs      Json
-  meta        Json?
+  userId          String
+  id              String
+  code            String
+  name            String
+  locationId      String?
+  parentBoxId     String?
+  tags            Json
+  note            String?
+  thumbs          Json
+  meta            Json?
   createdAt       DateTime
   updatedAt       DateTime
   deletedAt       DateTime?
   serverUpdatedAt DateTime?
-  revision        BigInt   @default(0)
+  revision        BigInt    @default(0)
   contentHash     String
   syncSeq         BigInt?
 
@@ -110,19 +110,19 @@ model Box {
 }
 
 model Item {
-  userId String
-  id     String
-  boxId  String
-  name   String
-  tags   Json
-  note   String?
-  thumbs Json
-  meta   Json?
+  userId          String
+  id              String
+  boxId           String
+  name            String
+  tags            Json
+  note            String?
+  thumbs          Json
+  meta            Json?
   createdAt       DateTime
   updatedAt       DateTime
   deletedAt       DateTime?
   serverUpdatedAt DateTime?
-  revision        BigInt   @default(0)
+  revision        BigInt    @default(0)
   contentHash     String
   syncSeq         BigInt?
 
@@ -136,17 +136,17 @@ model Item {
 }
 
 model BoxLocation {
-  userId String
-  id     String
-  name   String
-  note   String?
-  thumbs Json
-  meta   Json?
+  userId          String
+  id              String
+  name            String
+  note            String?
+  thumbs          Json
+  meta            Json?
   createdAt       DateTime
   updatedAt       DateTime
   deletedAt       DateTime?
   serverUpdatedAt DateTime?
-  revision        BigInt   @default(0)
+  revision        BigInt    @default(0)
   contentHash     String
   syncSeq         BigInt?
 
@@ -227,12 +227,12 @@ model RestoreApplyResult {
 }
 
 model FullResyncSnapshot {
-  snapshotId String                   @id
-  userId     String
+  snapshotId  String                   @id
+  userId      String
   snapshotSeq BigInt
-  createdAt  DateTime
-  expiresAt  DateTime
-  status     FullResyncSnapshotStatus
+  createdAt   DateTime
+  expiresAt   DateTime
+  status      FullResyncSnapshotStatus
 
   user     User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   entities FullResyncSnapshotEntity[]
