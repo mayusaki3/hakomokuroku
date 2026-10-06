@@ -1,4 +1,4 @@
-[目次](../README.md) > アーキテクチャ > Box.code / Device設計
+[目次](../目次.md) > アーキテクチャ > Box.code / Device設計
 
 # Box.code / Device設計
 
@@ -384,4 +384,4 @@ v0.8のBox.code / Device設計は確定。
 
 実装工程ではDevice/DevicePrefix Prisma model、Device API、Dexie DeviceState、Box creation transactionへ反映する。
 
-[目次](../README.md) > アーキテクチャ > Box.code / Device設計
+[目次](../目次.md) > アーキテクチャ > Box.code / Device設計
