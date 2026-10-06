@@ -59,4 +59,15 @@ describe('v0.8 Prisma schema', () => {
     expect(schema).not.toContain('aiState');
     expect(schema).not.toContain('aiUpdatedAt');
   });
+
+  it('DB_SCHEMA-TC-07: unassigned Box/Location references are nullable while foreign keys remain', () => {
+    const box = modelBody('Box');
+    const item = modelBody('Item');
+
+    expect(box).toMatch(/\n\s+locationId\s+String\?/);
+    expect(box).toMatch(/\n\s+location\s+BoxLocation\?/);
+    expect(item).toMatch(/\n\s+boxId\s+String\?/);
+    expect(item).toMatch(/\n\s+box\s+Box\?/);
+    expect(schema).not.toMatch(/["']UNASSIGNED["']/);
+  });
 });
