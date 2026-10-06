@@ -10,7 +10,7 @@
 
 ## 2. Box.code（箱コード）の形式
 
-## 1. canonical format
+## 2.1 canonical format
 ```text
 BX-<DevicePrefix4><LocalSequence4>
 ```
@@ -54,7 +54,7 @@ User scopeのBox.code unique constraintを残す。想定外duplicateは自動co
 
 DeviceはBusiness entityではなくUser配下のdevice namespace管理record。通常Sync/Backup対象外。
 
-### 10.1 Device（デバイス）
+### 7.1 Device（デバイス）
 ```text
 userId         string      PK(1), FK -> User.id
 deviceId       string      PK(2)
@@ -71,7 +71,7 @@ constraints:
 - serverはauthenticated User scopeを使用し、payload userIdは受け付けない
 - deviceId自体は別User間で同一でもよい
 
-### 10.2 DevicePrefix（デバイス接頭辞）
+### 7.2 DevicePrefix（デバイス接頭辞）
 ```text
 userId         string      PK(1), FK -> User.id
 prefix         string      PK(2)
@@ -94,7 +94,7 @@ indexes:
 - `(userId,deviceId,allocatedAt)`
 - `(userId,deviceId,retiredAt)`
 
-### 10.3 activePrefix整合性
+### 7.3 activePrefix整合性
 SQLite/Prismaの単純FKだけでは `Device.activePrefix` が「同じdeviceIdに属するprefix」であることを十分表現しにくいため、service transactionで保証する。
 
 Device作成/追加prefix切替は必ず:
@@ -106,7 +106,7 @@ Device作成/追加prefix切替は必ず:
 
 を1 server transactionで行う。
 
-### 10.4 Prefix allocation
+### 7.4 Prefix allocation
 prefix candidateはCSPRNGで4文字生成し、`(userId,prefix)` unique insertを試行する。
 
 collision時は再試行。異常にcollisionが継続する場合のみalphabet順deterministic scanで未使用prefixを探索する。
@@ -115,19 +115,19 @@ collision時は再試行。異常にcollisionが継続する場合のみalphabet
 
 DB unique constraintを最終防御とし、事前存在確認だけでuniqueを保証しない。
 
-### 10.5 Prefix permanence
+### 7.5 Prefix permanence
 Deviceを「使わなくなった」状態にしてもprefixは解放しない。v0.8ではDevice削除APIを設けない。
 
 これにより過去に発行済みBox.codeと将来発行codeの衝突を、Box tombstone/physical purge後も防止する。
 
 ## 8. Device（デバイス）API
 
-### 10.1 共通
+### 8.1 共通
 Device APIはauthenticated User scopeで動作する。requestにuserIdを含めない。
 
 64-bit LocalSequenceはserver管理対象ではない。serverはprefix namespaceだけを管理する。
 
-### 10.2 Register
+### 8.2 Register
 `POST /api/devices/register`
 
 request:
@@ -160,7 +160,7 @@ response:
 
 通信応答喪失後も同じdeviceIdでregisterをretryする。
 
-### 10.3 Allocate next prefix
+### 8.3 Allocate next prefix
 `POST /api/devices/{deviceId}/prefixes/allocate`
 
 request:
@@ -189,7 +189,7 @@ success:
 }
 ```
 
-### 10.4 Lost-response idempotency
+### 8.4 Lost-response idempotency
 allocate成功後responseをclientが受信できず、同じrequestをretryした場合、server current activePrefixは既にexpectedと異なる。
 
 この場合new prefixを追加割当せず:
@@ -207,12 +207,12 @@ clientは返されたcurrent activePrefixを採用する。
 
 これにより同一expectedActivePrefixからのretryでprefixを複数消費しない。
 
-### 10.5 Concurrent allocate
+### 8.5 Concurrent allocate
 同じDeviceへ複数requestが同時に到達しても、transaction内でcurrent activePrefixを再確認する。
 
 最初の1requestだけがexpected一致でallocate可能。後続は `ACTIVE_PREFIX_CHANGED` としてcurrent activePrefixを返す。
 
-### 10.6 Errors
+### 8.6 Errors
 Register:
 - `400 INVALID_DEVICE_ID`
 - `401 AUTH_REQUIRED`
@@ -232,7 +232,7 @@ network/5xxはsame request retry可能。
 
 `DEVICE_PREFIX_EXHAUSTED` はretryで解消しないUser-scope namespace exhaustion。
 
-### 10.7 Restore lockとの関係
+### 8.7 Restore lockとの関係
 Device register / prefix allocationはBusiness Restore applyの対象外だが、新しいBox.code発行能力に影響する。
 
 v0.8ではRestore lock中:
@@ -263,7 +263,7 @@ updatedAt        timestamp
 
 DeviceStateは通常Backup/Restore対象外。
 
-### 10.1 Initial setup
+### 9.1 Initial setup
 authenticated Userのlocal DBにDeviceStateが無い場合:
 1. cryptographically randomなnew deviceId生成
 2. onlineならregister API
@@ -275,7 +275,7 @@ register完了前はserver-issued prefixが無いため新規Box.codeを発行�
 
 既存Box/Itemの閲覧・編集など、new Box.codeを必要としないoffline操作は別途可能。
 
-### 10.2 Box creation transaction
+### 9.2 Box creation transaction
 新規Box作成時:
 1. DeviceState読込
 2. activePrefix + nextSequenceからcode生成
@@ -289,7 +289,7 @@ transaction失敗時はBox/Outbox/counterのすべてrollback。
 
 成功commitしたsequenceは、そのBoxを直後に削除しても再利用しない。
 
-### 10.3 Sequence exhaustion
+### 9.3 Sequence exhaustion
 `nextSequence <= 923520` の間はその値を使用可能。
 
 sequence 923520をcommitすると、local stateは「current prefix exhausted」として扱う。次のBox作成前にonlineでallocate-prefixを実行する。
@@ -305,7 +305,7 @@ prefixActivatedAt = now
 
 offlineかつcurrent prefix exhaustedの場合、新規Box作成だけを停止する。他のoffline Business操作は継続可能。
 
-### 10.4 Allocate response loss
+### 9.4 Allocate response loss
 allocate request送信後にresponseを失ってもlocal activePrefixを推測変更しない。
 
 same `deviceId + expectedActivePrefix` でretryし、serverが返すcurrent activePrefixを採用する。
