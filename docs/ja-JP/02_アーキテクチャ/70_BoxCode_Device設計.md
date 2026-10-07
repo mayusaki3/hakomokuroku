@@ -58,6 +58,7 @@ DeviceはBusiness entityではなくUser配下のdevice namespace管理record。
 ```text
 userId         string      PK(1), FK -> User.id
 deviceId       string      PK(2)
+name           string?     optional
 activePrefix   string      required
 createdAt      timestamp   required
 lastUsedAt     timestamp   required
@@ -70,6 +71,8 @@ constraints:
 - deviceIdはclientが初回setup時にcryptographically randomなopaque IDとして生成
 - serverはauthenticated User scopeを使用し、payload userIdは受け付けない
 - deviceId自体は別User間で同一でもよい
+- nameは利用者向け表示名であり、identityやBox.code生成には使用しない
+- nameは同一User内でも重複可
 
 ### 7.2 DevicePrefix（デバイス接頭辞）
 ```text
