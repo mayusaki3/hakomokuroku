@@ -65,6 +65,6 @@ model Theme {
 model UserSetting {
   userId String @id
   activeTheme String @default("builtin:system")
-  uiSettings Json @default("{}")
+  uiSettings Json
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
