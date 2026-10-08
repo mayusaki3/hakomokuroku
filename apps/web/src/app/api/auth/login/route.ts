@@ -1,89 +1,51 @@
-// src/app/api/auth/login/route.ts
-import { NextResponse } from "next/server";
-import { prisma } from "@/server/prisma";
-import { verifyPassword } from "@/server/auth";
+export const runtime = 'nodejs';
 
-type LoginBody = {
-  userId?: unknown;
-  password?: unknown;
-};
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-function isNonEmptyString(v: unknown): v is string {
-  return typeof v === "string" && v.trim().length > 0;
-}
-
-function json400(code: string) {
-  return NextResponse.json({ ok: false, error: code }, { status: 400 });
-}
-
-function json401(code: string) {
-  return NextResponse.json({ ok: false, error: code }, { status: 401 });
-}
+import { NextResponse } from 'next/server';
+import { prisma } from '@/server/prisma';
+import { verifyPassword } from '@/server/password';
+import { createSession, revokeSession, SESSION_COOKIE, sessionCookieOptions } from '@/server/auth';
 
 export async function POST(req: Request): Promise<Response> {
-  // sec_auth_login_invalid_request: Content-Type guard
-  const ct = req.headers.get("content-type") ?? "";
-  if (!ct.includes("application/json")) {
-    return json400("invalid_request");
+  if (!req.headers.get('content-type')?.includes('application/json')) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  let body: unknown;
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  const input = body as Record<string, unknown>;
+  if (typeof input.userId !== 'string' || !input.userId.trim() ||
+      typeof input.password !== 'string' || !input.password) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
   }
 
-  // sec_auth_login_invalid_request: JSON parse guard
-  let bodyUnknown: unknown;
   try {
-    bodyUnknown = await req.json();
-  } catch (e) {
-    return json400("invalid_request");
+    const user = await prisma.user.findUnique({ where: { userId: input.userId.trim() } });
+    if (!user || !user.isActive || (user.lockUntil && user.lockUntil > new Date()) ||
+        !(await verifyPassword(user.passwordHash, input.password))) {
+      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    }
+
+    if (user.totpEnabled) {
+      const challenge = await prisma.loginChallenge.create({
+        data: { userId: user.id, expiresAt: new Date(Date.now() + 5 * 60 * 1000) },
+      });
+      return NextResponse.json({ ok: true, mfaRequired: true, challengeId: challenge.id });
+    }
+
+    const previous = req.headers.get('cookie')?.split(';').map(v => v.trim())
+      .find(v => v.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
+    const { token } = await createSession(user.id);
+    await revokeSession(previous);
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    const response = NextResponse.json({ ok: true, mfaRequired: false });
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    return response;
+  } catch (error) {
+    console.error('POST /api/auth/login failed', error);
+    return NextResponse.json({ ok: false, error: 'internal_error' }, { status: 500 });
   }
-
-  // sec_auth_login_invalid_request: body shape guard
-  if (!isRecord(bodyUnknown)) {
-    return json400("invalid_request");
-  }
-
-  const body = bodyUnknown as LoginBody;
-
-  // sec_auth_login_request_body / sec_auth_login_invalid_request: required fields
-  if (!isNonEmptyString(body.userId) || !isNonEmptyString(body.password)) {
-    return json400("invalid_request");
-  }
-
-  const userId = body.userId.trim();
-  const password = body.password;
-
-  // sec_auth_login_auth_failed: user lookup
-  const user = await prisma.user.findUnique({
-    where: { userId },
-  });
-
-  if (!user) {
-    return json401("unauthorized");
-  }
-
-  // sec_auth_login_locked: lockUntil check
-  const lockUntil = (user as any).lockUntil as Date | null | undefined;
-  if (lockUntil instanceof Date && lockUntil.getTime() > Date.now()) {
-    return json401("unauthorized");
-  }
-
-  // sec_auth_login_auth_failed / sec_auth_login_security: password verification
-  const passwordHash = (user as any).passwordHash as string | null | undefined;
-  if (!passwordHash || !verifyPassword(password, passwordHash)) {
-    return json401("unauthorized");
-  }
-
-  // sec_auth_login_success_basic: successful login response
-  const res = NextResponse.json(
-    {
-      ok: true,
-    },
-    { status: 200 },
-  );
-
-  // sec_auth_login_success_basic: login cookie
-  res.headers.set("Set-Cookie", "sid=dummy; Path=/; HttpOnly; SameSite=Lax");
-  return res;
 }
