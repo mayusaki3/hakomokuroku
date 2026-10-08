@@ -100,3 +100,14 @@ python ../../tests/schema-validation/check_auth_session_sqlite.py "D:\WORKPLACE\
 ```
 
 `check_auth_session_sqlite.py` は名前が `auth-session-validation.db` の既存DBのみ受理し、テスト書き込みはrollbackする。新しい専用DB以外では実行しない。結果を確認するまでPASS扱いしない。
+
+### AuthSession検証結果（2026-10-08）
+
+Windows / PowerShell、`apps/web` から実施:
+
+- `npx vitest run tests/auth-session.schema.spec.ts`: **5/5 PASS**
+- `npx prisma validate --schema ../../tests/schema-validation/auth-session.prisma`: **valid**
+- `npx prisma db push --schema ../../tests/schema-validation/auth-session.prisma --skip-generate`: **success**、専用DB `auth-session-validation.db` 作成
+- `python ../../tests/schema-validation/check_auth_session_sqlite.py .../auth-session-validation.db`: **7/7 PASS**（digest保存、重複拒否、期限境界、失効拒否、inactive User拒否、User削除cascade、rollback）
+
+Prismaの `package.json#prisma` 非推奨警告あり（今回の失敗要因ではない）。これらはisolated fixture検証であり、production認証API・session運用の成功を意味しない。
