@@ -53,7 +53,11 @@ export async function readSession(): Promise<{
 
 export const getUser = readSession;
 
-export async function requireUserId(): Promise<string> {
+export async function getCurrentUser(_req?: Request) {
+  return (await readSession()).user;
+}
+
+export async function requireUserId(_req?: Request): Promise<string> {
   const { user } = await readSession();
   if (!user) throw new Error('UNAUTHORIZED');
   return user.id;
