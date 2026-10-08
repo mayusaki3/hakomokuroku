@@ -10,9 +10,11 @@ const fixture = readFileSync(
 );
 
 function body(name: string): string {
-  const match = fixture.match(new RegExp(`model ${name} \\\\{([\\\\s\\\\S]*?)\\\\n\\\\}`));
-  if (!match) throw new Error(`Missing model: ${name}`);
-  return match[1];
+  const start = fixture.indexOf(`model ${name} {`);
+  if (start < 0) throw new Error(`Missing model: ${name}`);
+  const end = fixture.indexOf('\n}', start);
+  if (end < 0) throw new Error(`Unclosed model: ${name}`);
+  return fixture.slice(start, end);
 }
 
 describe('UserImage isolated Prisma fixture contract', () => {
