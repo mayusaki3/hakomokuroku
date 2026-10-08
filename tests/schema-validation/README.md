@@ -56,3 +56,18 @@ npx prisma db push --schema ../../tests/schema-validation/user-image-relations.p
 ```
 
 実行前に指定した専用DBが存在しないことを確認する。Prismaが既存DBのresetを提案したら中断する。成功後にFK制約のINSERT/DELETE検証を行う。
+
+## SQLite db push失敗と修正（2026-10-08）
+
+最初の専用DBで `db push` が `unrecognized token: "{"` により失敗。原因は `uiSettings Json @default("{}")` がSQLiteで `DEFAULT {}` に変換されたこと。`uiSettings Json`（必須、DB defaultなし）へ変更し、UserSetting作成時にアプリから空objectを明示する。
+
+失敗した `relation-validation.db` は再利用しない。次は新規 `relation-validation-v2.db` を使用する。
+
+```powershell
+$testDb2 = "D:\\WORKPLACE\\Makes\\GitHub\\hakomokuroku\\tests\\schema-validation\\relation-validation-v2.db"
+Test-Path $testDb2
+# Falseのときのみ以下を実行
+$env:DATABASE_URL = "file:D:/WORKPLACE/Makes/GitHub/hakomokuroku/tests/schema-validation/relation-validation-v2.db"
+npx prisma validate --schema ../../tests/schema-validation/user-image-relations.prisma
+npx prisma db push --schema ../../tests/schema-validation/user-image-relations.prisma --skip-generate
+```
