@@ -29,7 +29,7 @@ id
 name
 baseTheme
 tokens
-wallpaper
+wallpaperImageId
 createdAt
 updatedAt
 ```
@@ -114,7 +114,7 @@ request概念形式:
   "name": "string",
   "baseTheme": "system",
   "tokens": {},
-  "wallpaper": null
+  "wallpaperImageId": null
 }
 ```
 
@@ -126,7 +126,7 @@ serverは許可済みtokenだけを保存する。
 
 ### PUT /api/settings/themes/{themeId}
 
-name / baseTheme / tokens / wallpaperを更新する。
+name / baseTheme / tokens / wallpaperImageIdを更新する。
 
 idとUser ownershipは変更しない。
 
@@ -146,7 +146,7 @@ WallpaperはThemeの一部として扱う。
 
 data URLを無制限にUserSettingへ埋め込む方式を正規仕様にしない。
 
-具体的なbinary保存形式はTheme実装時のtest case作成前に確定する。
+binaryはUserImageとして別管理する。`wallpaperImageId` は同一User所有かつ `kind=THEME_WALLPAPER`、`status=READY` の画像のみ参照可能。具体的な仕様は [Account / Theme画像設計](./88_Account_Theme画像設計.md) および [UserImage API](./89_API_UserImage.md) に従う。
 
 ## 11. UI設定
 
@@ -179,7 +179,7 @@ Device表示名は [Device API](./84_API_Device.md) を参照。
 | 401 | unauthorized | 未認証 |
 | 404 | not_found | User scope内にThemeが存在しない |
 | 409 | conflict | 現在状態では操作不可 |
-| 413 | payload_too_large | Wallpaper等が上限超過 |
+| 413 | payload_too_large | 画像upload等が上限超過 |
 | 500 | internal_error | server内部エラー |
 
 ## 14. 現行実装との差分
