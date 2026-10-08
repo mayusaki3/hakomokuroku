@@ -5,6 +5,7 @@ applies the exact checked-in migration and verifies preservation + constraints.
 """
 from pathlib import Path
 import sqlite3
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "apps/web/prisma/migrations/20261008172500_add_auth_session/migration.sql"
@@ -12,8 +13,10 @@ MIGRATION = ROOT / "apps/web/prisma/migrations/20261008172500_add_auth_session/m
 
 def main() -> None:
     sql = MIGRATION.read_text(encoding="utf-8")
-    if any(word in sql.upper() for word in ("DROP TABLE", "ALTER TABLE", "DELETE FROM", "UPDATE ")):
-        raise AssertionError("Migration contains non-additive SQL")
+    statements = re.sub(r"(?m)^\\s*--[^\\n]*", "", sql).split(";")
+    forbidden = re.compile(r"^\\s*(?:DROP|ALTER|DELETE|UPDATE|TRUNCATE|REPLACE)\\b", re.IGNORECASE)
+    if any(forbidden.match(statement) for statement in statements):
+        raise AssertionError("Migration contains non-additive SQL statement")
     db = sqlite3.connect(":memory:")
     try:
         db.execute("PRAGMA foreign_keys = ON")
