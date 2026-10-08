@@ -34,3 +34,25 @@ npx prisma migrate diff --from-empty --to-schema-datamodel ../../tests/schema-va
 CLIバージョンにより引数が非対応なら `npx prisma migrate diff --help` の出力を確認し、適切な引数へ修正する。生成されたSQLの `User`、`UserImage`、`Theme` の `FOREIGN KEY` と `ON DELETE` を点検する。
 
 [目次](../../docs/ja-JP/目次.md) > アーキテクチャ > Prisma relation検証
+
+## SQL生成結果（2026-10-08）
+
+Windows上で `npx prisma migrate diff --from-empty --to-schema-datamodel ../../tests/schema-validation/user-image-relations.prisma --script` 成功。以下を確認した。
+
+- `User(id, iconImageId)` → `UserImage(userId, id)`: `ON DELETE NO ACTION`
+- `UserImage.userId` → `User.id`: `ON DELETE CASCADE`
+- `Theme(userId, wallpaperImageId)` → `UserImage(userId, id)`: `ON DELETE NO ACTION`
+- `Theme.userId` → `User.id`: `ON DELETE CASCADE`
+- `UserSetting.uiSettings`: `JSONB NOT NULL DEFAULT {}`
+
+**結果: migration SQL生成成功、実DBへの適用とFK挙動は未検証。**
+
+### 次の実DB検証（専用の一時SQLite）
+
+```powershell
+# apps/web から実行。既存DBを触らないため絶対パスを使う。
+$env:DATABASE_URL = "file:D:/WORKPLACE/Makes/GitHub/hakomokuroku/tests/schema-validation/relation-validation.db"
+npx prisma db push --schema ../../tests/schema-validation/user-image-relations.prisma --skip-generate
+```
+
+実行前に指定した専用DBが存在しないことを確認する。Prismaが既存DBのresetを提案したら中断する。成功後にFK制約のINSERT/DELETE検証を行う。
