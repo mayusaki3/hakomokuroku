@@ -305,9 +305,7 @@ Recovery Codeを使用した場合は、認証と無効化を同一transaction�
 
 ## 14. SessionとCookie
 
-認証sessionを表すCookie名とsession保存方式は1方式へ統一する。
-
-`sid` と `hk_token` のように複数方式を混在させない。
+認証sessionは [Session設計](./92_Session設計.md) に従い、DB保存型の不透明tokenと `hk_session` Cookieへ統一する。旧 `sid` と `hk_token` は使用しない。
 
 Cookieは少なくとも次を満たす。
 
