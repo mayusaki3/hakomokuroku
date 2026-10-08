@@ -97,3 +97,5 @@ export async function verifyRecoveryCode(
   const h = sha256Hex(rc);
   return list.some((x) => x === h);
 }
+
+export const hashRecoveryCode = sha256Hex;
