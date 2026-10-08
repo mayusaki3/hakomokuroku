@@ -13,9 +13,9 @@ AccountはUserの表示情報を管理する。認証とTOTPは[認証API](./80_
 - `PUT /api/account/icon` — アイコンを設定・変更
 - `DELETE /api/account/icon` — アイコンを削除
 
-すべて認証必須。User scopeはsessionから確定する。表示名はtrim + NFCで正規化する。アイコンは画像形式、サイズ、decodeを検証する。具体的なサイズ上限と格納形式はテストケース作成前に確定する。
+すべて認証必須。User scopeはsessionから確定する。表示名fieldはAPI / DBとも `displayName` に統一し、trim + NFCで正規化する。ログイン用 `userId` は別fieldであり変更しない。アイコンの形式・容量・保存方式は[Account / Theme画像設計](./88_Account_Theme画像設計.md)、画像APIは[UserImage API](./89_API_UserImage.md)を参照。
 
-AccountのUser IDはログイン識別子であり、表示名とは区別する。
+`PATCH /api/account` のrequestは `{ "displayName": "string" }` とする。`GET /api/account` は `id`、`userId`、`displayName`、`iconImageId` を返す。AccountのUser IDはログイン識別子であり、表示名とは区別する。
 
 ## 3. セッション管理
 
