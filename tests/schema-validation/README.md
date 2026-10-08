@@ -79,3 +79,7 @@ Windowsで専用 `relation-validation-v2.db` に対して `prisma validate` 成�
 ## 外部キー実行テスト結果（2026-10-08）
 
 Windowsの専用 `relation-validation-v2.db` に対して `python ../../tests/schema-validation/check_sqlite_relations.py ...` を実行し、全7件PASSを確認。内訳はowner icon参照、cross-user icon拒否、参照中画像削除拒否、owner wallpaper参照、cross-user wallpaper拒否、User削除cascade、rollback。**Prisma構文・SQLiteスキーマ適用・FK動作は検証完了**。画像kindとREADY検証はservice層の正式テスト対象。
+
+## Vitest fixture契約テスト結果（2026-10-08）
+
+Windows `apps/web` にて `npx vitest run tests/user-image.schema.spec.ts` 実行、5 tests PASS（UI-FK-001～005）。これは検証用Prisma fixtureの静的チェックであり、本番DB/APIの受入試験ではない。
