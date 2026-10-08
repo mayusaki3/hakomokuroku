@@ -51,13 +51,23 @@ PrismaでUser自身の `(id,iconImageId)` 複合FKを表現する際は、relati
 
 ## 6. 追加確認事項
 
-- Account表示名は既存 `User.userName` を使用するか、名称を `displayName` に統一するか、実装前に確定する。
+- Account表示名はAPI / DBとも `displayName` に統一し、既存 `User.userName` は移行時に置換する。ログイン識別子 `userId` は変更しない。
 - UserImage binary storageの配備時永続性・backup・復旧はserver運用設計で確認する。通常の利用者 `.hkmbackup` には含まれない。
 - SQLite/Prismaの複合FK、循環relation、Json defaultの有効性はschema validationで確認する。
 - 入力画像の制限値と変換は[Account / Theme画像設計](./88_Account_Theme画像設計.md)を正とする。
 - 現行PrismaのItem.boxId必須をnullableへ変更するのは別の既定作業。
 
-## 7. 次工程
+## 7. Prisma relation設計の確定
+
+- `UserImage` は `@@id([userId,id])` とし、`userId -> User.id` を必須FKとする。
+- `Theme` は `@@id([userId,id])`、`wallpaperImageId` はnullableとする。
+- `Theme.wallpaperImageId` は `[userId,wallpaperImageId] -> UserImage[userId,id]` のnullable複合FKとする。参照解除時は明示的にnullへ更新し、参照中のUserImageは物理削除しない。
+- `User.iconImageId` はUser.idと組み合わせた複合FKを第一候補とする。UserとUserImageの循環参照についてSQLite/Prisma validationで不成立なら、UserImage側に `accountOwnerUserId` のunique参照を持たせる代替を検討し、設計変更を明示する。FK無しのアプリ検証だけへ黙って後退しない。
+- `UserImage.kind` / READY / 同一User検証はservice transactionで保証する。
+- `UserSetting.uiSettings` はrequired Json、初期値 `{}` とする。
+- Prismaの具体的なrelation構文は実装前のschema validationで確定し、その結果をテスト仕様へ反映する。
+
+## 8. 次工程
 
 1. 残るfield命名とDB relationを確定する。
 2. 正式テストケースを実装前に作成する。
