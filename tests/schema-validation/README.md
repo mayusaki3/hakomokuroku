@@ -111,3 +111,15 @@ Windows / PowerShell、`apps/web` から実施:
 - `python ../../tests/schema-validation/check_auth_session_sqlite.py .../auth-session-validation.db`: **7/7 PASS**（digest保存、重複拒否、期限境界、失効拒否、inactive User拒否、User削除cascade、rollback）
 
 Prismaの `package.json#prisma` 非推奨警告あり（今回の失敗要因ではない）。これらはisolated fixture検証であり、production認証API・session運用の成功を意味しない。
+
+### AuthSession追加migration検証（2026-10-08）
+
+`python ../../tests/schema-validation/check_auth_session_migration.py` をWindowsから実行し **5/5 PASS**。
+
+- 既存Userデータ保持
+- tokenHash uniqueと検索index作成
+- 重複tokenHash拒否
+- 存在しないUserへのsession作成拒否
+- User削除時のAuthSession cascade
+
+対象はメモリ上の模擬SQLite DB。実DBへのmigration適用は未実施。最初の検証スクリプトは `ON UPDATE CASCADE` を誤検出したため修正（`bd441c0`）し、再実行で成功。
