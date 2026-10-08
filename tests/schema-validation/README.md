@@ -71,3 +71,7 @@ $env:DATABASE_URL = "file:D:/WORKPLACE/Makes/GitHub/hakomokuroku/tests/schema-va
 npx prisma validate --schema ../../tests/schema-validation/user-image-relations.prisma
 npx prisma db push --schema ../../tests/schema-validation/user-image-relations.prisma --skip-generate
 ```
+
+## SQLite実DB適用結果（2026-10-08）
+
+Windowsで専用 `relation-validation-v2.db` に対して `prisma validate` 成功、`prisma db push --skip-generate` 成功。出力 `Your database is now in sync with your Prisma schema.` を確認した。外部キーのINSERT/UPDATE/DELETE実行テストは未実施。
