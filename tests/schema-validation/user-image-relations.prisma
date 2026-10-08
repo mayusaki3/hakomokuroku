@@ -1,0 +1,70 @@
+// v0.8 isolated relation validation fixture. NOT production schema.
+// Run: npx prisma validate --schema tests/schema-validation/user-image-relations.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+enum ImageKind {
+  ACCOUNT_ICON
+  THEME_WALLPAPER
+}
+enum ImageStatus {
+  STAGING
+  READY
+}
+enum ThemeBase {
+  system
+  light
+  dark
+}
+model User {
+  id String @id @default(cuid())
+  userId String @unique
+  displayName String?
+  iconImageId String?
+  images UserImage[] @relation("UserImages")
+  iconImage UserImage? @relation("UserIcon", fields: [id, iconImageId], references: [userId, id], onDelete: NoAction, onUpdate: NoAction)
+  themes Theme[]
+  setting UserSetting?
+  @@unique([id, iconImageId])
+}
+model UserImage {
+  userId String
+  id String
+  kind ImageKind
+  status ImageStatus @default(STAGING)
+  contentHash String
+  mimeType String
+  byteLength Int
+  width Int
+  height Int
+  createdAt DateTime @default(now())
+  readyAt DateTime?
+  unreferencedAt DateTime?
+  user User @relation("UserImages", fields: [userId], references: [id], onDelete: Cascade)
+  iconFor User? @relation("UserIcon")
+  wallpaperFor Theme[] @relation("ThemeWallpaper")
+  @@id([userId, id])
+}
+model Theme {
+  userId String
+  id String
+  name String
+  baseTheme ThemeBase
+  tokens Json
+  wallpaperImageId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallpaperImage UserImage? @relation("ThemeWallpaper", fields: [userId, wallpaperImageId], references: [userId, id], onDelete: NoAction, onUpdate: NoAction)
+  @@id([userId, id])
+}
+model UserSetting {
+  userId String @id
+  activeTheme String @default("builtin:system")
+  uiSettings Json @default("{}")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
