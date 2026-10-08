@@ -75,3 +75,7 @@ npx prisma db push --schema ../../tests/schema-validation/user-image-relations.p
 ## SQLite実DB適用結果（2026-10-08）
 
 Windowsで専用 `relation-validation-v2.db` に対して `prisma validate` 成功、`prisma db push --skip-generate` 成功。出力 `Your database is now in sync with your Prisma schema.` を確認した。外部キーのINSERT/UPDATE/DELETE実行テストは未実施。
+
+## 外部キー実行テスト結果（2026-10-08）
+
+Windowsの専用 `relation-validation-v2.db` に対して `python ../../tests/schema-validation/check_sqlite_relations.py ...` を実行し、全7件PASSを確認。内訳はowner icon参照、cross-user icon拒否、参照中画像削除拒否、owner wallpaper参照、cross-user wallpaper拒否、User削除cascade、rollback。**Prisma構文・SQLiteスキーマ適用・FK動作は検証完了**。画像kindとREADY検証はservice層の正式テスト対象。
