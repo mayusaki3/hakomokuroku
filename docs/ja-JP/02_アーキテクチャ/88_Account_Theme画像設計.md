@@ -92,17 +92,34 @@ local cacheは表示用であり正本ではない。offlineでcacheが無い場
 
 Business Outboxへ画像設定変更を混入しない。offlineでの設定編集キューはv0.8の必須機能にしない。
 
-## 8. 未確定事項
+## 8. 画像形式と制限
 
-正式テストケース作成前に次を確定する。
+| 項目 | Account icon | Theme wallpaper |
+| --- | --- | --- |
+| 受理入力 | PNG / JPEG / WebP | PNG / JPEG / WebP |
+| canonical形式 | WebP | WebP |
+| canonical最大辺 | 256 px | 1920 px |
+| canonical最大byteLength | 256 KiB | 2 MiB |
+| 変換品質の初期値 | 0.85 | 0.85 |
+| thumbnail | 不要 | 不要 |
 
-- iconとwallpaperの受理画像形式
-- それぞれの最大寸法・byteLength
-- canonical変換方式とthumbnailの要否
-- storage adapter、配信cache header、GC猶予期間
-- UserImage upload / get APIの詳細request / response
+画像は縦横比を保持して縮小し、拡大しない。EXIF方向を反映し、不要なmetadataを除去する。animated imageは先頭frameのみを採用する。serverはdecode後のpixel数にも上限を設け、展開爆弾を拒否する。
 
-## 9. 関連文書
+入力上限は両用途とも10 MiB、decode前の画像寸法は縦横それぞれ8192 px以下とする。canonical出力が上限を超える場合は品質調整を試み、それでも収まらなければ拒否する。
+
+## 9. StorageとGC
+
+server binary storageはUser scopeで管理し、metadataはSQLite/Prismaで保持する。実体はserver管理ディレクトリに格納し、DB transactionとfilesystem writeの不一致はREADY stateとstaging cleanupで処理する。公開URLやclient指定pathをstorage pathに用いない。
+
+画像の新規upload後、DB参照切替までの猶予を24時間とする。未参照画像は最後の参照解除またはuploadから7日経過後にGC可能とする。参照確認に失敗した場合は削除しない。
+
+取得responseは `Cache-Control: private, max-age=3600`、contentHashに基づくETagを付与する。画像IDは不変であり、更新時は新IDへ参照を切り替える。
+
+## 10. API
+
+UserImageのupload / get APIは [UserImage API](./89_API_UserImage.md) を参照。
+
+## 11. 関連文書
 
 - [DBスキーマ定義](./40_DBスキーマ定義.md)
 - [Theme / User設定API](./85_API_Theme_User設定.md)
