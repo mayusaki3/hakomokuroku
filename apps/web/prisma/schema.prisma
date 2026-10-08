@@ -49,6 +49,7 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  authSessions    AuthSession[]
   boxes           Box[]
   items           Item[]
   locations       BoxLocation[]
@@ -63,6 +64,21 @@ model User {
   resyncSnapshots FullResyncSnapshot[]
 
   @@index([userId])
+}
+
+model AuthSession {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
 }
 
 model LoginChallenge {
