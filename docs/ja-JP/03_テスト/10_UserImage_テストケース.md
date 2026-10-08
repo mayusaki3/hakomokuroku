@@ -30,13 +30,13 @@ Account icon、Theme wallpaper、UserImage storage、API、Prisma relation。Bus
 | UI-010 | GET | If-None-Match一致 | 304 |
 | UI-011 | GET | 別User画像 | 404 |
 | UI-012 | Account | 自分のREADY ACCOUNT_ICONを設定 | 200、iconImageId更新 |
-| UI-013 | Account | THEME_WALLPAPERをアイコン指定 | 拒否、参照変更なし |
-| UI-014 | Account | STAGING画像を指定 | 拒否、参照変更なし |
+| UI-013 | Account | THEME_WALLPAPERをアイコン指定 | 400 invalid_request、参照変更なし |
+| UI-014 | Account | STAGING画像を指定 | 409 conflict、参照変更なし |
 | UI-015 | Account | 別User画像を指定 | 404、参照変更なし |
 | UI-016 | Account | アイコン解除 | 参照null、画像はGC猶予へ |
 | UI-017 | Theme | 自分のREADY THEME_WALLPAPERを指定 | 更新成功 |
 | UI-018 | Theme | ACCOUNT_ICONを壁紙指定 | 拒否、参照変更なし |
-| UI-019 | Theme | STAGING・別User画像を指定 | 拒否、参照変更なし |
+| UI-019 | Theme | STAGINGは409 conflict、別Userは404 not_found、参照変更なし |
 | UI-020 | Theme | active Theme削除 | activeThemeがbuiltin:systemへ同時更新 |
 | UI-021 | GC | 参照中画像 | 削除しない |
 | UI-022 | GC | 参照解除から7日未満 | 削除しない |
@@ -50,11 +50,21 @@ Account icon、Theme wallpaper、UserImage storage、API、Prisma relation。Bus
 | UI-030 | Offline | cache無し | 既定icon・壁紙なし表示 |
 | UI-031 | Scope | Business Pull / Backup | UserImageを含めない |
 
-## 4. 判定・記録
+## 4. APIエラー判定の確定事項
+
+- `kind` 不一致: `400 invalid_request`（入力imageIdの用途不一致）
+- `status=STAGING`: `409 conflict`（画像の現在状態がREADYでない）
+- 別UserのimageId: `404 not_found`（存在を開示しない）
+- 画像uploadのdecode失敗: `422 invalid_image`
+- 画像uploadのbinary保存失敗: `500 internal_error`
+
+このマッピングを [UserImage API](../02_アーキテクチャ/89_API_UserImage.md) と一致させる。
+
+## 5. 判定・記録
 
 各テストで入力、HTTP status/error、DB参照、binary実体、rollback/GCの状態を記録する。APIの拒否時error codeは実装前に統一する。未実装はPASS扱いにしない。
 
-## 5. 既実施の検証
+## 6. 既実施の検証
 
 2026-10-08にisolated Prisma schema validate、SQLite db push、FK smoke 7項目成功。これらは上記正式テストの実施済み判定ではなく、設計の実現可能性検証として扱う。
 
