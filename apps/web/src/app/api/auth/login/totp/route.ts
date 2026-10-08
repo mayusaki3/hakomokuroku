@@ -1,196 +1,106 @@
-// apps/web/src/app/api/auth/login/totp/route.ts
 export const runtime = 'nodejs';
 
+import { randomBytes, createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { prisma } from '@/server/prisma';
-import { issueSyncToken } from '@/server/auth';
-import { decryptStr } from '@/server/crypto';
 import { authenticator } from 'otplib';
-import crypto from 'crypto';
+import { prisma } from '@/server/prisma';
+import { decryptStr } from '@/server/crypto';
+import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
 
-// ------------------------------
-// TOTP 設定
-// ------------------------------
-
-// login/totp は「ログイン challenge」を消費してセッション（syncToken）を発行する。
-// - challenge は used=false かつ expiresAt > now のもののみ有効
-// - ロック中（lockUntil が未来）は 401/429 相当を返す（実装差異許容）
-// - 例外は 500（server_error）で返すが、できる限り 4xx で落とす
-
-const attempts = new Map<string, { count: number; resetAt: number }>();
-
-const nowMs = () => Date.now();
-
-const clientIp = (req: Request) =>
-  req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-  req.headers.get('x-real-ip') ||
-  '0.0.0.0';
-
-const pushAttempt = (userId: string, ip: string) => {
-  const key = `${userId}:${ip}`;
-  const cur = attempts.get(key);
-  const now = nowMs();
-  if (!cur || cur.resetAt <= now) {
-    attempts.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 });
-    return 1;
-  }
-  cur.count += 1;
-  return cur.count;
-};
-
-const headerDate = (value: unknown) => {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'string') return value;
-  return '';
-};
-
-// ------------------------------
-// 入力正規化（全角→半角、数字6桁）
-// ------------------------------
-const norm6 = (v: unknown) =>
-  String(v ?? '')
-    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
-    .replace(/\D/g, '')
-    .slice(0, 6);
-
-// ------------------------------
-// POST /api/auth/login/totp
-// ------------------------------
 export async function POST(req: Request) {
+  if (!req.headers.get('content-type')?.includes('application/json')) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  let body: unknown;
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+  const input = body as Record<string, unknown>;
+  if (typeof input.challengeId !== 'string' || !input.challengeId ||
+      (typeof input.code !== 'string' && typeof input.recoveryCode !== 'string')) {
+    return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
+  }
+
   try {
-    // sec_auth_login_totp_invalid_request: Content-Type guard
-    const ct = String(req.headers.get('content-type'));
-    if (!ct.includes('application/json')) {
-      return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
-    }
-
-    // sec_auth_login_totp_invalid_request: JSON parse guard
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (e: any) {
-      return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
-    }
-
-    // sec_auth_login_totp_invalid_request: body shape guard
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
-    }
-
-    // sec_auth_login_totp_request / sec_auth_login_totp_invalid_request: required challengeId
-    const { challengeId, code, recoveryCode } = body ?? {};
-    if (!challengeId) {
-      return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
-    }
-
-    // sec_auth_login_totp_challenge_validation: challenge lookup
-    const ch = await prisma.loginChallenge.findUnique({ where: { id: String(challengeId) } });
-    if (!ch) {
+    const challenge = await prisma.loginChallenge.findUnique({ where: { id: input.challengeId } });
+    if (!challenge || challenge.used || challenge.expiresAt <= new Date()) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
     }
-
-    // sec_auth_login_totp_challenge_validation: used / expired guard
-    const now = new Date();
-    if ((ch as any).used) {
-      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
-    }
-    if ((ch as any).expiresAt && new Date((ch as any).expiresAt) <= now) {
-      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+    const user = await prisma.user.findUnique({ where: { id: challenge.userId } });
+    if (!user || !user.isActive || !user.totpEnabled || !user.totpSecretEnc ||
+        (user.lockUntil && user.lockUntil > new Date())) {
+      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
     }
 
-    // sec_auth_login_totp_challenge_validation: user lookup by challenge.userId
-    const user = await prisma.user.findUnique({ where: { id: (ch as any).userId } });
-    if (!user) {
-      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
-    }
-
-    // sec_auth_login_totp_locked: lockUntil check
-    if ((user as any).lockUntil && new Date((user as any).lockUntil) > now) {
-      return NextResponse.json({ ok: false, error: 'locked' }, { status: 401 });
-    }
-
-    // sec_auth_login_totp_invalid_request: TOTP enabled state guard
-    if (!(user as any).totpEnabled || !(user as any).totpSecretEnc) {
-      return NextResponse.json({ ok: false, error: 'not_enabled' }, { status: 400 });
-    }
-
-    // sec_auth_login_totp_locked: rate limit guard
-    const count = pushAttempt((user as any).id, clientIp(req));
-    if (count > 5) {
-      return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
-    }
-
-    let ok = false;
-
-    // sec_auth_login_totp_success / sec_auth_login_totp_invalid_code: TOTP code verification
-    const six = norm6(code);
-    if (/^\d{6}$/.test(six)) {
-      const secret = await decryptStr((user as any).totpSecretEnc);
-      ok = authenticator.check(six, secret);
-    }
-
-    // sec_auth_login_totp_success / sec_auth_login_totp_invalid_code: recoveryCode verification
-    const rc = typeof recoveryCode === 'string' ? recoveryCode.trim() : '';
-    if (!ok && rc.length > 0) {
-      const h = crypto.createHash('sha256').update(rc).digest('hex');
-      const list: string[] = ((user as any).recoveryCodes as any) ?? [];
-      const idx = Array.isArray(list) ? list.findIndex((x) => x === h) : -1;
-      if (idx >= 0) {
-        ok = true;
-        // sec_auth_login_totp_success / sec_auth_login_totp_security: recoveryCode is single-use
-        const next = list.slice(0, idx).concat(list.slice(idx + 1));
-        await prisma.user.update({
-          where: { id: (user as any).id },
-          data: { recoveryCodes: next },
-        });
+    let valid = false;
+    let consumedRecoveryHash: string | null = null;
+    if (typeof input.code === 'string') {
+      const normalized = input.code.replace(/[０-９]/g, ch =>
+        String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+      if (/^\d{6}$/.test(normalized)) {
+        valid = authenticator.check(normalized, await decryptStr(user.totpSecretEnc));
       }
     }
-
-    // sec_auth_login_totp_invalid_code: failed verification response and failure count update
-    if (!ok) {
-      try {
-        await prisma.user.update({
-          where: { id: (user as any).id },
-          data: { totpFailCount: ((user as any).totpFailCount ?? 0) + 1 },
-        });
-      } catch {
-        // ignore
+    if (!valid && typeof input.recoveryCode === 'string') {
+      const hash = createHash('sha256').update(input.recoveryCode.trim()).digest('hex');
+      if (Array.isArray(user.recoveryCodes) && user.recoveryCodes.includes(hash)) {
+        valid = true;
+        consumedRecoveryHash = hash;
       }
+    }
+    if (!valid) {
       return NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
     }
 
-    // sec_auth_login_totp_success / sec_auth_login_totp_security: consume challenge once
-    await prisma.loginChallenge.update({
-      where: { id: String(challengeId) },
-      data: { used: true },
-    });
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    try {
+      await prisma.$transaction(async tx => {
+        const claimed = await tx.loginChallenge.updateMany({
+          where: { id: challenge.id, used: false, expiresAt: { gt: new Date() } },
+          data: { used: true },
+        });
+        if (claimed.count !== 1) throw new Error('CHALLENGE_CONSUMED');
 
-    // sec_auth_login_totp_success: issue login token
-    const { token, expiresAt } = await issueSyncToken((user as any).id, {
-      userAgent: req.headers.get('user-agent') || undefined,
-      ip: clientIp(req),
-    });
+        if (consumedRecoveryHash) {
+          // SQLite serializes writes. Re-read inside transaction to avoid stale recovery lists.
+          const fresh = await tx.user.findUnique({ where: { id: user.id } });
+          const codes = fresh?.recoveryCodes;
+          if (!Array.isArray(codes) || !codes.includes(consumedRecoveryHash)) {
+            throw new Error('RECOVERY_CONSUMED');
+          }
+          await tx.user.update({
+            where: { id: user.id },
+            data: { recoveryCodes: codes.filter(code => code !== consumedRecoveryHash) },
+          });
+        }
+        await tx.authSession.create({
+          data: { userId: user.id, tokenHash: sessionTokenHash(token), expiresAt },
+        });
+        await tx.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date(), totpFailCount: 0 },
+        });
+      });
+    } catch (error) {
+      if (error instanceof Error &&
+          (error.message === 'CHALLENGE_CONSUMED' || error.message === 'RECOVERY_CONSUMED')) {
+        return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+      }
+      throw error;
+    }
 
-    // sec_auth_login_totp_success: update successful login state
-    await prisma.user.update({
-      where: { id: (user as any).id },
-      data: { lastLoginAt: new Date(), totpFailCount: 0 },
-    });
-
-    // sec_auth_login_totp_success: response body and cookie
-    const res = NextResponse.json({ ok: true }, { status: 200 });
-    res.headers.append(
-      'Set-Cookie',
-      `hk_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${90 * 24 * 3600}`,
-    );
-
-    // sec_auth_login_totp_success: token expiry header must be ISO-8601 to satisfy Headers ByteString constraints
-    res.headers.set('X-Token-Expires-At', headerDate(expiresAt));
-
-    return res;
-  } catch (e) {
-    // sec_auth_login_totp_internal_error: unexpected exception mapping
-    console.error('[login/totp] error', e);
-    return NextResponse.json({ ok: false, error: 'server_error' }, { status: 500 });
+    const previous = req.headers.get('cookie')?.split(';').map(v => v.trim())
+      .find(v => v.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
+    await revokeSession(previous);
+    const response = NextResponse.json({ ok: true });
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    return response;
+  } catch (error) {
+    console.error('POST /api/auth/login/totp failed', error);
+    return NextResponse.json({ ok: false, error: 'internal_error' }, { status: 500 });
   }
 }
