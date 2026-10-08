@@ -59,12 +59,13 @@ User/Themeの参照更新はDB transactionで実行し、古い画像はGC候補
 
 | HTTP | error |
 | --- | --- |
-| 400 | invalid_request |
+| 400 | invalid_request (kind mismatch included) |
 | 401 | unauthorized |
-| 404 | not_found |
+| 404 | not_found (cross-user included) |
 | 413 | payload_too_large |
 | 415 | unsupported_media_type |
-| 422 | invalid_image |
+| 409 | conflict (image not READY) |
+| 422 | invalid_image (decode/dimensions) |
 | 500 | internal_error |
 
 ## 7. 安全性
