@@ -83,3 +83,20 @@ Windowsの専用 `relation-validation-v2.db` に対して `python ../../tests/sc
 ## Vitest fixture契約テスト結果（2026-10-08）
 
 Windows `apps/web` にて `npx vitest run tests/user-image.schema.spec.ts` 実行、5 tests PASS（UI-FK-001～005）。これは検証用Prisma fixtureの静的チェックであり、本番DB/APIの受入試験ではない。
+
+## AuthSession独立検証（未実行）
+
+`auth-session.prisma` は認証session専用のisolated Prisma fixture。本番schemaとは独立。
+
+`apps/web` からPowerShellで実行:
+
+```powershell
+git pull
+npx vitest run tests/auth-session.schema.spec.ts
+$env:DATABASE_URL = "file:D:/WORKPLACE/Makes/GitHub/hakomokuroku/tests/schema-validation/auth-session-validation.db"
+npx prisma validate --schema ../../tests/schema-validation/auth-session.prisma
+npx prisma db push --schema ../../tests/schema-validation/auth-session.prisma --skip-generate
+python ../../tests/schema-validation/check_auth_session_sqlite.py "D:\WORKPLACE\Makes\GitHub\hakomokuroku\tests\schema-validation\auth-session-validation.db"
+```
+
+`check_auth_session_sqlite.py` は名前が `auth-session-validation.db` の既存DBのみ受理し、テスト書き込みはrollbackする。新しい専用DB以外では実行しない。結果を確認するまでPASS扱いしない。
