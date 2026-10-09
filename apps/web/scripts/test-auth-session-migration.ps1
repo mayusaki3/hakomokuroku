@@ -12,7 +12,7 @@ try {
     if ((Test-Path $db) -or (Test-Path $temp)) {
         throw 'Refusing to overwrite an existing migration test database or staging folder'
     }
-    $env:DATABASE_URL = 'file:./auth-migration-existing-test.db'
+    $env:DATABASE_URL = 'file:../auth-migration-existing-test.db'
     New-Item -ItemType Directory -Path (Join-Path $temp 'migrations') -Force | Out-Null
     Copy-Item 'prisma/schema.prisma' (Join-Path $temp 'schema.prisma')
     Copy-Item 'prisma/migrations/migration_lock.toml' (Join-Path $temp 'migrations/migration_lock.toml')
@@ -24,6 +24,7 @@ try {
     Assert-Success 'Baseline migration'
     & npx prisma db execute --schema (Join-Path $temp 'schema.prisma') --file (Join-Path $PSScriptRoot 'fixtures/auth-session-before-device.sql')
     Assert-Success 'Baseline fixture'
+    $env:DATABASE_URL = 'file:./auth-migration-existing-test.db'
     & npx prisma migrate deploy --schema prisma/schema.prisma
     Assert-Success 'Device link migration'
     & npx prisma generate
