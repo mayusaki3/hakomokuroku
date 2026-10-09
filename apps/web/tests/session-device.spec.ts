@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({ findUnique: vi.fn(), updateMany: vi.fn(), tran
 vi.mock('@/server/prisma', () => ({
   prisma: {
     $transaction: mocks.transaction,
+    authSession: { updateMany: mocks.updateMany },
   },
 }));
 import { bindSessionDevice, detachDeviceSessions } from '@/server/session-device';
