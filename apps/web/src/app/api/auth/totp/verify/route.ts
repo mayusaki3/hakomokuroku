@@ -11,7 +11,7 @@
 
 import { NextResponse } from 'next/server';
 
-import { prisma } from '@/lib/db';
+import { prisma } from '@/server/prisma';
 import { getCurrentUser } from '@/server/auth';
 import {
   isTotp6,
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
     let me: { id?: string | null } | null = null;
     try {
       // 実装側の関数シグネチャが変わっても対応できるよう、Request を渡す
-      me = (await (getCurrentUser as unknown as (r: Request) => Promise<any>)(req)) ?? null;
+      me = await getCurrentUser(req);
     } catch (e) {
       // getCurrentUser が throw('UNAUTHORIZED') を返すケース
       return mapThrownToResponse(e);
@@ -115,7 +115,7 @@ export async function POST(req: Request) {
         totpSecretEnc: true,
         totpPendingSecretEnc: true,
         totpFailCount: true,
-        totpRecoveryCodes: true,
+        recoveryCodes: true,
       },
     });
 
@@ -158,7 +158,7 @@ export async function POST(req: Request) {
         totpPendingSecretEnc: null,
         // 失敗回数はリセット（null を許容するなら 0 固定）
         totpFailCount: 0,
-        totpRecoveryCodes: hashed,
+        recoveryCodes: hashed,
       },
       select: { id: true },
     });
