@@ -36,7 +36,7 @@ export async function revokeSession(token: string | undefined) {
   });
 }
 
-export async function readSession(): Promise<{
+export async function readSession(_req?: Request): Promise<{
   user: { id: string; userId: string } | null;
 }> {
   const token = cookies().get(SESSION_COOKIE)?.value;
