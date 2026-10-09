@@ -87,7 +87,7 @@ describe('v0.8 session authentication contract', () => {
   });
 
   it.todo('AUTH-S10: account and image APIs enforce session User scope');
-  it.todo('AUTH-S11: registration does not issue a session');
+  // AUTH-S11 is asserted in api.auth.register.spec.ts (success response has no Set-Cookie).
 
   it('AUTH-S12: login failures do not disclose whether user exists', async () => {
     mocks.findUser.mockResolvedValueOnce(null);
