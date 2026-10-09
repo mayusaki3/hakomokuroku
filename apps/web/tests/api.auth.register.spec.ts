@@ -35,6 +35,8 @@ describe('POST /api/auth/register', () => {
     expect(body).toEqual({ ok: true });
 
     expect(prisma.user.create).toHaveBeenCalledTimes(1);
+    // AUTH-S11: registration must not authenticate the new user.
+    expect(res.headers.get('set-cookie')).toBeNull();
     const arg = (prisma.user.create as any).mock.calls[0][0];
     expect(arg.data.userId).toBe('u1');
     expect(typeof arg.data.passwordHash).toBe('string');
