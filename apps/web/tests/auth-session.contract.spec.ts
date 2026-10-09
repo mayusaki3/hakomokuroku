@@ -86,7 +86,7 @@ describe('v0.8 session authentication contract', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
-  it.todo('AUTH-S10: account and image APIs enforce session User scope');
+  // AUTH-S10 is covered by auth-session.scope.spec.ts.
   // AUTH-S11 is asserted in api.auth.register.spec.ts (success response has no Set-Cookie).
 
   it('AUTH-S12: login failures do not disclose whether user exists', async () => {
