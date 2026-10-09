@@ -19,7 +19,7 @@ const cookie = vi.hoisted(() => ({ token: undefined as string | undefined }));
 vi.mock('next/headers', () => ({
   cookies: () => ({ get: (name: string) => name === 'hk_session' && cookie.token ? { value: cookie.token } : undefined }),
 }));
-import { createSession, readSession, revokeSession, sessionTokenHash } from '@/server/auth';
+import { createSession, readSession, revokeSession, sessionTokenHash, readAuthenticatedSession } from '@/server/auth';
 
 const ids: string[] = [];
 async function createUser() {
@@ -37,6 +37,20 @@ describe('AuthSession SQLite integration', () => {
     await prisma.authSession.deleteMany({ where: { userId: { in: ids } } });
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
     await prisma.$disconnect();
+  });
+
+  it('resolves only an active cookie session to its server-side ID', async () => {
+    const user = await createUser();
+    const { token } = await createSession(user.id);
+    const stored = await prisma.authSession.findUniqueOrThrow({
+      where: { tokenHash: sessionTokenHash(token) },
+    });
+    cookie.token = token;
+    expect(await readAuthenticatedSession()).toEqual({ id: stored.id, userId: user.id });
+    await revokeSession(token);
+    expect(await readAuthenticatedSession()).toBeNull();
+    cookie.token = undefined;
+    expect(await readAuthenticatedSession()).toBeNull();
   });
 
   it('persists a hashed token and authenticates its owner', async () => {
