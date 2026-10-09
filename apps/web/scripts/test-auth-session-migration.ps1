@@ -20,16 +20,16 @@ try {
         Copy-Item (Join-Path 'prisma/migrations' $name) (Join-Path $temp 'migrations') -Recurse
     }
 
-    & npx prisma migrate deploy --schema (Join-Path $temp 'schema.prisma')
+    & npx.cmd prisma migrate deploy --schema (Join-Path $temp 'schema.prisma')
     Assert-Success 'Baseline migration'
-    & npx prisma db execute --schema (Join-Path $temp 'schema.prisma') --file (Join-Path $PSScriptRoot 'fixtures/auth-session-before-device.sql')
+    & npx.cmd prisma db execute --schema (Join-Path $temp 'schema.prisma') --file (Join-Path $PSScriptRoot 'fixtures/auth-session-before-device.sql')
     Assert-Success 'Baseline fixture'
     $env:DATABASE_URL = 'file:./auth-migration-existing-test.db'
-    & npx prisma migrate deploy --schema prisma/schema.prisma
+    & npx.cmd prisma migrate deploy --schema prisma/schema.prisma
     Assert-Success 'Device link migration'
-    & npx prisma generate
+    & npx.cmd prisma generate
     Assert-Success 'Prisma client generation'
-    & npx vitest run tests/auth-session.migration.sqlite.spec.ts
+    & npx.cmd vitest run tests/auth-session.migration.sqlite.spec.ts
     Assert-Success 'Existing session migration verification'
 }
 finally {
