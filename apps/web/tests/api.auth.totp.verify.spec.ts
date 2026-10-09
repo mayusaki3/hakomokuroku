@@ -31,10 +31,7 @@ vi.mock('@/server/auth', async (importOriginal) => {
   return { ...actual, getCurrentUser: getCurrentUserMock };
 });
 
-vi.mock('@/lib/db', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return { ...actual, prisma: prismaMock };
-});
+vi.mock('@/server/prisma', () => ({ prisma: prismaMock }));
 
 vi.mock('@/server/totp', async (importOriginal) => {
   const actual = await importOriginal<any>();
@@ -72,7 +69,7 @@ describe('AUTH_TOTP_VERIFY (POST /api/auth/totp/verify)', () => {
       totpSecretEnc: null,
       totpPendingSecretEnc: 'pending-enc',
       totpFailCount: 0,
-      totpRecoveryCodes: [],
+      recoveryCodes: [],
     });
 
     prismaMock.user.update.mockResolvedValue({ id: 'u1' });
@@ -159,7 +156,7 @@ describe('AUTH_TOTP_VERIFY (POST /api/auth/totp/verify)', () => {
       totpSecretEnc: null,
       totpPendingSecretEnc: null,
       totpFailCount: 0,
-      totpRecoveryCodes: [],
+      recoveryCodes: [],
     });
 
     const res = await POST(makeReq({ code: '123456' }));
@@ -176,7 +173,7 @@ describe('AUTH_TOTP_VERIFY (POST /api/auth/totp/verify)', () => {
       totpSecretEnc: 'enc',
       totpPendingSecretEnc: null,
       totpFailCount: 0,
-      totpRecoveryCodes: [],
+      recoveryCodes: [],
     });
 
     const res = await POST(makeReq({ code: '123456' }));
@@ -229,7 +226,7 @@ describe('AUTH_TOTP_VERIFY (POST /api/auth/totp/verify)', () => {
       totpSecretEnc: null,
       totpPendingSecretEnc: 'pending-enc',
       totpFailCount: null,
-      totpRecoveryCodes: [],
+      recoveryCodes: [],
     });
 
     verifyTotpPendingCodeMock.mockResolvedValueOnce(false);
