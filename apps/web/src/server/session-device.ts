@@ -31,3 +31,26 @@ export async function detachDeviceSessions(userId: string, deviceId: string) {
     data: { deviceId: null },
   });
 }
+
+/**
+ * Remove a registered device without revoking its authentication sessions.
+ * Both detachment and deletion are atomic and scoped to the authenticated user.
+ * Call only after the user's authorization to remove the device.
+ */
+export async function removeRegisteredDevice(userId: string, deviceId: string) {
+  return prisma.$transaction(async (tx) => {
+    const device = await tx.device.findUnique({
+      where: { userId_deviceId: { userId, deviceId } },
+      select: { deviceId: true },
+    });
+    if (!device) return false;
+    await tx.authSession.updateMany({
+      where: { userId, deviceId },
+      data: { deviceId: null },
+    });
+    const deleted = await tx.device.deleteMany({
+      where: { userId, deviceId },
+    });
+    return deleted.count === 1;
+  });
+}
