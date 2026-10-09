@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
+import { removeRegisteredDevice } from '@/server/session-device';
 
 const dbUrl = process.env.DATABASE_URL ?? '';
 if (dbUrl !== 'file:./session-device-integration.db') {
@@ -44,12 +45,7 @@ describe('Device removal SQLite integration', () => {
   });
 
   it('removes device and prefixes, detaches sessions without revoking them, and isolates users', async () => {
-    await prisma.$transaction(async (tx) => {
-      const found = await tx.device.findUnique({ where: { userId_deviceId: { userId: alice, deviceId: 'phone' } } });
-      expect(found).not.toBeNull();
-      await tx.authSession.updateMany({ where: { userId: alice, deviceId: 'phone' }, data: { deviceId: null } });
-      await tx.device.deleteMany({ where: { userId: alice, deviceId: 'phone' } });
-    });
+    expect(await removeRegisteredDevice(alice, 'phone')).toBe(true);
     expect(await prisma.device.count({ where: { userId: alice } })).toBe(0);
     expect(await prisma.devicePrefix.count({ where: { userId: alice } })).toBe(0);
     const sessions = await prisma.authSession.findMany({ where: { userId: alice } });
