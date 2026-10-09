@@ -1,6 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
+vi.mock('@/server/prisma', async () => {
+  const { PrismaClient } = await import('@prisma/client');
+  return { prisma: new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } }) };
+});
 import { removeRegisteredDevice } from '@/server/session-device';
 
 const dbUrl = process.env.DATABASE_URL ?? '';
@@ -57,8 +61,7 @@ describe('Device removal SQLite integration', () => {
   });
 
   it('does not delete a foreign user device when scoped to another user', async () => {
-    const result = await prisma.device.deleteMany({ where: { userId: alice, deviceId: 'phone' } });
-    expect(result.count).toBe(0);
+    expect(await removeRegisteredDevice(alice, 'phone')).toBe(false);
     expect(await prisma.device.count({ where: { userId: bob, deviceId: 'phone' } })).toBe(1);
   });
 });
