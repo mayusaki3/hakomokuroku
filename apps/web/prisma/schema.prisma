@@ -74,9 +74,12 @@ model AuthSession {
   expiresAt  DateTime
   revokedAt  DateTime?
   lastSeenAt DateTime?
+  deviceId   String?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [userId, deviceId], references: [userId, deviceId], onDelete: NoAction)
 
+  @@index([userId, deviceId])
   @@index([userId, expiresAt])
   @@index([expiresAt])
 }
@@ -283,6 +286,7 @@ model Device {
 
   user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   prefixes DevicePrefix[]
+  authSessions AuthSession[]
 
   @@id([userId, deviceId])
   @@index([userId, lastUsedAt])
