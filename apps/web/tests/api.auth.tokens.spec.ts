@@ -6,7 +6,7 @@ import { GET } from "@/app/api/auth/tokens/route";
 // 1) prisma モック
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    syncToken: {
+    authSession: {
       findMany: vi.fn(),
     },
   },
@@ -31,7 +31,7 @@ describe("AUTH_TOKENS (GET /api/auth/tokens)", () => {
    */
   it("AUTH_TOKENS-TC-01: 正常：トークン一覧を返す（200）", async () => {
     (requireUserId as any).mockResolvedValue("U1");
-    (prisma.syncToken.findMany as any).mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
+    (prisma.authSession.findMany as any).mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
 
     const req = new Request("http://localhost/api/auth/tokens", {
       method: "GET",
@@ -44,6 +44,7 @@ describe("AUTH_TOKENS (GET /api/auth/tokens)", () => {
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
     expect(body).toEqual([{ id: "t1" }, { id: "t2" }]);
+    expect(prisma.authSession.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "U1" } }));
   });
 
   /**
@@ -53,7 +54,7 @@ describe("AUTH_TOKENS (GET /api/auth/tokens)", () => {
    */
   it("AUTH_TOKENS-TC-02: 正常：0件でも空配列（200）", async () => {
     (requireUserId as any).mockResolvedValue("U1");
-    (prisma.syncToken.findMany as any).mockResolvedValue([]);
+    (prisma.authSession.findMany as any).mockResolvedValue([]);
 
     const req = new Request("http://localhost/api/auth/tokens", {
       method: "GET",
@@ -98,7 +99,7 @@ describe("AUTH_TOKENS (GET /api/auth/tokens)", () => {
    */
   it("AUTH_TOKENS-TC-05: 異常：DB 例外（500 相当）", async () => {
     (requireUserId as any).mockResolvedValue("U1");
-    (prisma.syncToken.findMany as any).mockRejectedValue(new Error("boom"));
+    (prisma.authSession.findMany as any).mockRejectedValue(new Error("boom"));
 
     const req = new Request("http://localhost/api/auth/tokens", {
       method: "GET",
