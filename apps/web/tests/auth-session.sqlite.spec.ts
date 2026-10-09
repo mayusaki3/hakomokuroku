@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/server/prisma';
 import { randomBytes } from 'node:crypto';
 
 // Run ONLY with the dedicated test database. Never use dev.db.
@@ -8,12 +8,10 @@ if (!/^file:.*auth-session-integration\.db(?:\?.*)?$/.test(dbUrl)) {
   throw new Error('AUTH_SESSION_INTEGRATION_DB_REQUIRED: use scripts/test-auth-session-sqlite.ps1');
 }
 
-const prisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
 const cookie = vi.hoisted(() => ({ token: undefined as string | undefined }));
 vi.mock('next/headers', () => ({
   cookies: () => ({ get: (name: string) => name === 'hk_session' && cookie.token ? { value: cookie.token } : undefined }),
 }));
-vi.mock('@/server/prisma', () => ({ prisma }));
 import { createSession, readSession, revokeSession, sessionTokenHash } from '@/server/auth';
 
 const ids: string[] = [];
