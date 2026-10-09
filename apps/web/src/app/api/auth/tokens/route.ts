@@ -37,17 +37,15 @@ export async function GET(req: Request) {
   try {
     // sec_auth_tokens_success
     // sec_auth_tokens_empty
-    const rows = await prisma.syncToken.findMany({
+    const rows = await prisma.authSession.findMany({
       where: { userId },
-      orderBy: { issuedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       select: {
-        tokenHash: true,
-        issuedAt: true,
+        id: true,
+        createdAt: true,
         expiresAt: true,
-        lastUsedAt: true,
-        deviceName: true,
-        userAgent: true,
-        ip: true,
+        lastSeenAt: true,
+        revokedAt: true,
       },
     });
 
