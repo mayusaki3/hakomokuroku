@@ -62,3 +62,23 @@ export async function requireUserId(_req?: Request): Promise<string> {
   if (!user) throw new Error('UNAUTHORIZED');
   return user.id;
 }
+
+/**
+ * Resolve the currently authenticated session, including its database ID.
+ * Never trust a client-supplied session ID for device association.
+ */
+export async function readAuthenticatedSession(): Promise<{
+  id: string;
+  userId: string;
+} | null> {
+  const token = cookies().get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const session = await prisma.authSession.findUnique({
+    where: { tokenHash: sessionTokenHash(token) },
+    include: { user: true },
+  });
+  if (!session || session.revokedAt || session.expiresAt <= new Date() || !session.user.isActive) {
+    return null;
+  }
+  return { id: session.id, userId: session.userId };
+}
