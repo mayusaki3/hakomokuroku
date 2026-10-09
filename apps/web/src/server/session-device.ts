@@ -19,3 +19,15 @@ export async function bindSessionDevice(userId: string, sessionId: string, devic
     return updated.count === 1;
   });
 }
+
+/**
+ * Detach sessions before removing a registered device.
+ * Session tokens remain valid; removing a device is not a logout operation.
+ * Caller must authorize the device removal for this user.
+ */
+export async function detachDeviceSessions(userId: string, deviceId: string) {
+  return prisma.authSession.updateMany({
+    where: { userId, deviceId },
+    data: { deviceId: null },
+  });
+}
