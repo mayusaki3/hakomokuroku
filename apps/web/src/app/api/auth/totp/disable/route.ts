@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/server/prisma';
 import { requireUserId } from '@/server/auth';
 import { verifyTotpCode, verifyRecoveryCode } from '@/server/totp';
 
@@ -90,7 +91,7 @@ export async function POST(req: Request) {
       data: {
         totpEnabled: false,
         totpSecretEnc: null,
-        recoveryCodes: null,
+        recoveryCodes: Prisma.DbNull,
         totpFailCount: 0,
       },
     });
