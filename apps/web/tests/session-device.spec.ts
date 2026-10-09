@@ -6,7 +6,7 @@ vi.mock('@/server/prisma', () => ({
     $transaction: mocks.transaction,
   },
 }));
-import { bindSessionDevice } from '@/server/session-device';
+import { bindSessionDevice, detachDeviceSessions } from '@/server/session-device';
 
 describe('session-device binding ownership', () => {
   beforeEach(() => {
@@ -38,5 +38,25 @@ describe('session-device binding ownership', () => {
   it('does not bind a missing, revoked, expired or foreign session', async () => {
     mocks.updateMany.mockResolvedValue({ count: 0 });
     expect(await bindSessionDevice('owner', 'session-1', 'device-1')).toBe(false);
+  });
+});
+
+describe('session-device detachment', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.updateMany.mockResolvedValue({ count: 2 });
+  });
+
+  it('clears only links for the specified user and device without revoking sessions', async () => {
+    expect(await detachDeviceSessions('owner', 'device-1')).toEqual({ count: 2 });
+    expect(mocks.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'owner', deviceId: 'device-1' },
+      data: { deviceId: null },
+    });
+  });
+
+  it('is safe when no sessions are associated', async () => {
+    mocks.updateMany.mockResolvedValue({ count: 0 });
+    expect(await detachDeviceSessions('owner', 'device-1')).toEqual({ count: 0 });
   });
 });
