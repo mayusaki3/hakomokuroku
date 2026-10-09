@@ -10,7 +10,10 @@ if (!/^file:.*auth-session-integration\.db(?:\?.*)?$/.test(dbUrl)) {
 
 // Use a dedicated client instead of the runtime singleton or test mocks.
 const prisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
-vi.mock('@/server/prisma', () => ({ prisma: new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } }) }));
+vi.mock('@/server/prisma', async () => {
+  const { PrismaClient } = await import('@prisma/client');
+  return { prisma: new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } }) };
+});
 
 const cookie = vi.hoisted(() => ({ token: undefined as string | undefined }));
 vi.mock('next/headers', () => ({
