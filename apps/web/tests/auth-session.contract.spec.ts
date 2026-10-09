@@ -71,11 +71,6 @@ describe('v0.8 session authentication contract', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
-  it.todo('AUTH-S03: valid TOTP consumes challenge and creates session');
-  it.todo('AUTH-S04: challenge cannot be reused');
-  it.todo('AUTH-S05: recovery code is consumed exactly once');
-  it.todo('AUTH-S06: logout revokes the current session');
-  it.todo('AUTH-S07: expired or revoked session cannot authorize requests');
 
   it('AUTH-S08: session cookie is HttpOnly, SameSite=Lax, Path=/, Secure in production', async () => {
     const res = await login(request());
