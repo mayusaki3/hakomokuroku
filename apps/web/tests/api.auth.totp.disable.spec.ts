@@ -4,18 +4,18 @@
 //   docs/ja-JP/05_テストケース集/01_ユーザー認証API/api_auth_totp_disable_testcases.md
 //
 // 方針:
-// - Prisma は @/lib/prisma をモック
+// - Prisma は @/server/prisma をモック
 // - 認証は @/server/auth.requireUserId をモック
 // - 「仕様を正」とし、入力は code / recoveryCode を前提にテストする
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { POST as POST_DISABLE } from '@/app/api/auth/totp/disable/route';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '@/server/prisma';
 import * as auth from '@/server/auth';
 import { verifyTotpCode, verifyRecoveryCode } from '@/server/totp';
 
 // Prisma モック
-vi.mock('@/lib/prisma', () => {
+vi.mock('@/server/prisma', () => {
   const user = {
     findUnique: vi.fn(),
     update: vi.fn(),
