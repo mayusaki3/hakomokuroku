@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 import { verifyPassword } from '@/server/password';
 import { createSession, revokeSession, SESSION_COOKIE, sessionCookieOptions } from '@/server/auth';
+import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
 export async function POST(req: Request): Promise<Response> {
   if (!req.headers.get('content-type')?.includes('application/json')) {
@@ -38,11 +39,19 @@ export async function POST(req: Request): Promise<Response> {
 
     const previous = req.headers.get('cookie')?.split(';').map(v => v.trim())
       .find(v => v.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
-    const { token } = await createSession(user.id);
+    const { token, sessionId } = await createSession(user.id);
+    let deviceCookie: string;
+    try {
+      deviceCookie = await attachLoginDevice(user.id, sessionId, req);
+    } catch (error) {
+      await revokeSession(token);
+      throw error;
+    }
     await revokeSession(previous);
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     const response = NextResponse.json({ ok: true, mfaRequired: false });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    response.cookies.set(DEVICE_COOKIE, deviceCookie, deviceCookieOptions());
     return response;
   } catch (error) {
     console.error('POST /api/auth/login failed', error);
