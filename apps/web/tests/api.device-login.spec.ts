@@ -70,7 +70,7 @@ describe('Login API device registration', () => {
     const cookies = res.headers.get('set-cookie') ?? '';
     expect(cookies).toContain('hk_session=');
     expect(cookies).toContain('hk_device=');
-    expect(cookies).toContain('httponly');
+    expect(cookies.toLowerCase()).toContain('httponly');
   });
 
   it('does not register on invalid password', async () => {
