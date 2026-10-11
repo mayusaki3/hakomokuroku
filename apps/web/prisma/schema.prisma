@@ -280,6 +280,7 @@ model Device {
   userId       String
   deviceId     String
   name         String?
+  credentialHash String?
   activePrefix String
   createdAt    DateTime
   lastUsedAt   DateTime
