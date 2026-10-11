@@ -22,10 +22,10 @@ export function sessionCookieOptions() {
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + SESSION_SECONDS * 1000);
-  await prisma.authSession.create({
+  const session = await prisma.authSession.create({
     data: { userId, tokenHash: sessionTokenHash(token), expiresAt },
   });
-  return { token, expiresAt };
+  return { token, expiresAt, sessionId: session.id };
 }
 
 export async function revokeSession(token: string | undefined) {
