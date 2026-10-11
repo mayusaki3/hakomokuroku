@@ -6,6 +6,7 @@ import { authenticator } from 'otplib';
 import { prisma } from '@/server/prisma';
 import { decryptStr } from '@/server/crypto';
 import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
+import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
 export async function POST(req: Request) {
   if (!req.headers.get('content-type')?.includes('application/json')) {
@@ -57,8 +58,9 @@ export async function POST(req: Request) {
 
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    let sessionId: string;
     try {
-      await prisma.$transaction(async tx => {
+      sessionId = await prisma.$transaction(async tx => {
         const claimed = await tx.loginChallenge.updateMany({
           where: { id: challenge.id, used: false, expiresAt: { gt: new Date() } },
           data: { used: true },
@@ -77,13 +79,14 @@ export async function POST(req: Request) {
             data: { recoveryCodes: codes.filter(code => code !== consumedRecoveryHash) },
           });
         }
-        await tx.authSession.create({
+        const session = await tx.authSession.create({
           data: { userId: user.id, tokenHash: sessionTokenHash(token), expiresAt },
         });
         await tx.user.update({
           where: { id: user.id },
           data: { lastLoginAt: new Date(), totpFailCount: 0 },
         });
+        return session.id;
       });
     } catch (error) {
       if (error instanceof Error &&
@@ -93,11 +96,19 @@ export async function POST(req: Request) {
       throw error;
     }
 
+    let deviceCookie: string;
+    try {
+      deviceCookie = await attachLoginDevice(user.id, sessionId, req);
+    } catch (error) {
+      await revokeSession(token);
+      throw error;
+    }
     const previous = req.headers.get('cookie')?.split(';').map(v => v.trim())
       .find(v => v.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
     await revokeSession(previous);
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
+    response.cookies.set(DEVICE_COOKIE, deviceCookie, deviceCookieOptions());
     return response;
   } catch (error) {
     console.error('POST /api/auth/login/totp failed', error);
