@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 export default function TotpPage() {
   const sp = useSearchParams();
-  const loginId = sp.get('loginId') || '';
+  const challengeId = sp.get('challengeId') || '';
   const next = sp.get('next') || '/';
   const router = useRouter();
 
@@ -33,9 +33,9 @@ export default function TotpPage() {
   // 残り回復コード数（任意のステータスAPIがあれば）
   useEffect(() => {
     (async () => {
-      if (!loginId) return;
+      if (!challengeId) return;
       try {
-        const r = await fetch(`/api/auth/totp/status?loginId=${encodeURIComponent(loginId)}`, {
+        const r = await fetch(`/api/auth/totp/status?challengeId=${encodeURIComponent(challengeId)}`, {
           cache: 'no-store',
         });
         if (!r.ok) return; // ← 404は無視
@@ -43,24 +43,24 @@ export default function TotpPage() {
         if (typeof j.recoveryRemain === 'number') setRemain(j.recoveryRemain);
       } catch {}
     })();
-  }, [loginId]);
+  }, [challengeId]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!loginId) {
+    if (!challengeId) {
       setErr('セッションが無効です。最初からやり直してください。');
       return;
     }
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch('/api/auth/totp/verify', {
+      const r = await fetch('/api/auth/login/totp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          loginId,
+          challengeId,
           code: code.trim() || undefined,
-          recovery: recovery.trim() || undefined,
+          recoveryCode: recovery.trim() || undefined,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -71,6 +71,7 @@ export default function TotpPage() {
       }
       window.dispatchEvent(new Event('hk:me:changed'));
       router.replace(next);
+      router.refresh();
     } catch {
       setErr('ネットワークエラーです');
     } finally {
