@@ -26,7 +26,7 @@ export function middleware(req: NextRequest) {
   }
 
   // 通常画面はセッションCookieが無ければログインから開始する。
-  if (!req.cookies.get('sid')?.value && !pathname.startsWith('/api/')) {
+  if (!req.cookies.get('hk_session')?.value && !pathname.startsWith('/api/')) {
     const url = req.nextUrl.clone();
     url.pathname = '/auth';
     url.search = '';
