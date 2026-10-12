@@ -73,18 +73,20 @@ export default function AuthPage() {
           body: JSON.stringify({ userId, password }),
         });
 
-        // TOTP 誘導（必要時）
+        // Registration does not authenticate; require successful login before navigation.
+        const j = await r2.json().catch(() => null);
+        if (!r2.ok || !j?.ok) throw new Error('登録しましたが、ログインに失敗しました');
         try {
-          const j = await r2.json();
-          if (j?.requireTotp && j?.loginId) {
+          if (j?.mfaRequired && j?.challengeId) {
             router.replace(
-              `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent('/account')}`
+              `/auth/totp?challengeId=${encodeURIComponent(j.challengeId)}&next=${encodeURIComponent('/')}`
             );
             return;
           }
         } catch {}
         window.dispatchEvent(new Event('hk:me:changed'));
-        router.replace('/account');
+        router.replace('/');
+        router.refresh();
       } else {
         const r = await fetch('/api/auth/login', {
           method: 'POST',
@@ -98,7 +100,7 @@ export default function AuthPage() {
         } catch {}
         if (j?.requireTotp && j?.loginId) {
           router.replace(
-            `/auth/totp?loginId=${encodeURIComponent(j.loginId)}&next=${encodeURIComponent(next)}`
+            `/auth/totp?challengeId=${encodeURIComponent(j.challengeId)}&next=${encodeURIComponent(next)}`
           );
           return;
         }
@@ -106,6 +108,7 @@ export default function AuthPage() {
 
         window.dispatchEvent(new Event('hk:me:changed'));
         router.replace(next);
+        router.refresh();
       }
     } catch (e: any) {
       setErr(e?.message || 'エラーが発生しました');
