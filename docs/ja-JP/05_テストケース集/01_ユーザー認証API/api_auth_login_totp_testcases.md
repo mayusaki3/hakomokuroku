@@ -12,7 +12,7 @@ canonical_document: true
 # ログイン2段階認証テスト仕様（POST /api/auth/login/totp）
 
 本書は、ログイン2段階認証 API（POST /api/auth/login/totp）のテスト仕様を定義する。  
-apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
+本書の期待結果をテスト実装の目標契約とする。現行 Vitest（apps/web/tests/api.auth.login.totp.spec.ts）には旧SyncToken方式のモックが残っており、修正・再検証が必要。
 
 ---
 
@@ -26,6 +26,13 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 | AUTH_LOGIN_TOTP-TC-05 | sec_auth_login_totp_invalid_code, sec_auth_login_totp_security |
 | AUTH_LOGIN_TOTP-IMPL-01 | sec_auth_login_totp_locked |
 | AUTH_LOGIN_TOTP-IMPL-02 | sec_auth_login_totp_internal_error |
+| AUTH_LOGIN_TOTP-TC-06 | sec_auth_login_totp_locked, sec_auth_login_totp_invalid_code |
+| AUTH_LOGIN_TOTP-TC-07 | sec_auth_login_totp_locked |
+| AUTH_LOGIN_TOTP-TC-08 | sec_auth_login_totp_locked |
+| AUTH_LOGIN_TOTP-TC-09 | sec_auth_login_totp_locked, sec_auth_login_totp_success |
+| AUTH_LOGIN_TOTP-TC-10 | sec_auth_login_totp_locked |
+| AUTH_LOGIN_TOTP-TC-11 | sec_auth_login_totp_success, sec_auth_login_totp_locked |
+| AUTH_LOGIN_TOTP-TC-12 | sec_auth_login_totp_challenge_validation, sec_auth_login_totp_locked |
 
 ---
 
@@ -56,7 +63,8 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 
 - HTTP 200
 - `ok:true`
-- ログイン Cookie 発行
+- `hk_session` と `hk_device` Cookie 発行（HttpOnly等の属性はセッション・端末仕様に準拠）
+- AuthSessionをDBに作成し、平文tokenをDBに保存しない
 - challenge が使用済みへ更新される
 
 ---
@@ -94,8 +102,7 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 
 #### 期待結果
 
-- HTTP 400 または 404
-- 現実装は 404
+- HTTP 404 + `not_found`
 
 ---
 
@@ -114,8 +121,8 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 
 #### 期待結果
 
-- HTTP 400 / 401 / 422 のいずれか
-- 現実装は 400 + auth_failed
+- ロック未到達なら HTTP 400 + `auth_failed`
+- MFAログイン専用の失敗回数を1加算（現実装は未対応）
 
 ---
 
@@ -131,8 +138,8 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 
 #### 期待結果
 
-- HTTP 401 または 429
-- 現実装は 401 + locked
+- 既存 `User.lockUntil` が未来なら HTTP 401 + `unauthorized`（現実装）
+- 新しいMFAログイン専用ロックが未来なら HTTP 429 + `too_many_attempts`（実装予定）
 
 ---
 
@@ -149,22 +156,37 @@ apps/web/tests/api.auth.login.totp.spec.ts の Vitest を正とする。
 #### 期待結果
 
 - HTTP 500
-- `error=server_error`
+- `error=internal_error`
 
 ---
 
-## 3. ローカル検証手順
+## 3. MFAログイン専用試行制限の追加テスト（未実装）
+
+基準設計: `LLM_WORKSPACE/Worklog/mfa-login-attempt-model-20261013.md`、`LLM_WORKSPACE/Worklog/totp-rate-limit-crosscheck-20261013.md`。既存 `User.totpFailCount`（TOTP初期設定用）と `User.lockUntil` の意味は変更しない。
+
+| testcase_id | 条件・操作 | 期待結果 |
+|---|---|---|
+| AUTH_LOGIN_TOTP-TC-06 | 有効challengeで誤ったTOTPまたはRecovery Codeを1～4回送信 | MFAログイン専用failCountが各回1増加。HTTP 400 `auth_failed`。challenge未消費 |
+| AUTH_LOGIN_TOTP-TC-07 | 有効challengeで5回目の認証失敗 | 専用lockedUntilが15分後に設定され、HTTP 429 `too_many_attempts`。新規パスワードログインも拒否 |
+| AUTH_LOGIN_TOTP-TC-08 | ロック期限直前と期限到達後の試行 | 期限前は拒否、期限到達後は再試行可能。次の失敗は1回目 |
+| AUTH_LOGIN_TOTP-TC-09 | Recovery Codeを誤入力した後、正しいコードで成功 | 誤入力は失敗回数に計上。成功はコードを一度だけ消費し、専用カウンターをリセット |
+| AUTH_LOGIN_TOTP-TC-10 | 同一Userの複数challengeから失敗リクエストを並行送信 | 加算漏れ・ロック閾値回避なし。DB更新は競合安全 |
+| AUTH_LOGIN_TOTP-TC-11 | 失敗1～4回の後、正しいTOTPで成功 | challenge消費とAuthSession作成が成功し、専用failCount=0、lockedUntil=null |
+| AUTH_LOGIN_TOTP-TC-12 | 不正JSON、存在しない・期限切れ・使用済みchallenge、端末関連付け失敗 | MFA失敗回数に計上しない。端末関連付け失敗時に新sessionを失効 |
+
+追加の回帰検証: `/api/auth/totp/verify` および `/api/auth/totp/disable` はMFAログイン専用カウンターを変更しない。既存 `User.lockUntil` は従来どおり別途判定する。セッションCookieはMFA完了前に発行しない。
+
+**実装ゲート:** この表は今後の期待動作であり、現行APIが合格したことを示さない。専用モデルmigration、正式API仕様更新、テスト追加後に実装・検証する。
+
+---
+
+## 4. ローカル検証手順
 
 ```powershell
 pnpm -C apps/web exec vitest --run
 ```
 
-期待結果：
-
-```text
-Test Files  22 passed
-Tests       218 passed
-```
+実際の実行結果を記録すること。過去の固定件数を合格基準として使用しない。
 
 ---
 
