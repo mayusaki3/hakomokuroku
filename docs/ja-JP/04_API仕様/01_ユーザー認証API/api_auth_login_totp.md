@@ -12,7 +12,7 @@ canonical_document: true
 # ログイン2段階認証（POST /api/auth/login/totp）
 
 本書は、ログイン2段階認証 API（POST /api/auth/login/totp）の正式な仕様を定義する。  
-現時点の実装（apps/web/src/app/api/auth/login/totp/route.ts）および Vitest（apps/web/tests/api.auth.login.totp.spec.ts）を正とする。
+本書は目標API契約を定義する。現行実装（apps/web/src/app/api/auth/login/totp/route.ts）と旧Vitestには未対応・不一致があるため、末尾の実装差分を参照する。
 
 ---
 
@@ -88,7 +88,7 @@ Content-Type: application/json
 | code | 任意。全角数字は半角数字へ正規化し、数字6桁として検証する | 400 auth_failed |
 | recoveryCode | 任意。文字列の場合のみ trim して使用する | 400 auth_failed |
 
-現実装では、`challengeId` があれば `code` / `recoveryCode` が未指定でも後続の認証失敗分岐で処理される。
+`code` または `recoveryCode` の少なくとも一方を文字列で指定する。両方とも欠落した場合は400 `invalid_request`。
 
 ---
 
@@ -103,8 +103,8 @@ Content-Type: application/json
 ```
 
 - HTTP 200
-- `Set-Cookie` に `hk_token` を設定する
-- `X-Token-Expires-At` に token 有効期限を ISO-8601 文字列で返す
+- `Set-Cookie` に `hk_session` と `hk_device` を設定する。MFA完了前にはどちらも発行しない
+- `AuthSession` は固定30日有効、DBには平文tokenではなくSHA-256 digestを保存する
 
 ### 6.2 不正リクエスト {#sec_auth_login_totp_invalid_request}
 
@@ -150,14 +150,14 @@ Content-Type: application/json
 ```
 
 - HTTP 400
-- 失敗時は `totpFailCount` を加算する
+- 有効challengeに対する誤ったTOTP/Recovery Codeは、MFAログイン専用の永続化カウンターを加算する（既存 `User.totpFailCount` とは別）
 
 ### 6.6 ロック中 {#sec_auth_login_totp_locked}
 
 ```json
 {
   "ok": false,
-  "error": "locked"
+  "error": "unauthorized"
 }
 ```
 
@@ -179,7 +179,7 @@ Content-Type: application/json
 ```json
 {
   "ok": false,
-  "error": "server_error"
+  "error": "internal_error"
 }
 ```
 
@@ -199,13 +199,16 @@ Content-Type: application/json
 
 ### 7.2 ロック・試行制限 {#sec_auth_login_totp_locked}
 
-- `user.lockUntil > now()` の場合は 401
-- IP と userId 単位の in-memory 試行回数が 5 回を超えた場合は 429
+- 既存 `User.lockUntil > now()` は401 `unauthorized` とする
+- 専用 `MfaLoginAttempt` は `User.id` ごとに永続化し、連続5回の失敗で15分ロックする。ロック中は429 `too_many_attempts`
+- 期限到達後の次の失敗は1回目とし、成功時は失敗回数と専用ロックをクリアする
+- 専用ロック中はパスワードログインも拒否する。初期設定・無効化APIには専用ロックを自動適用しない
+- 失敗計上は並行試行でも加算漏れのない原子的DB更新とする
 
 ### 7.3 TOTP code 検証 {#sec_auth_login_totp_success}
 
 - `code` は全角数字を半角数字へ変換する
-- 数字以外を除去し、先頭6桁を検証対象とする
+- 正規化後に6桁の数字と完全一致する場合のみ検証する（文字削除・先頭6桁への切り詰めは行わない）
 - 6桁数字の場合のみ `decryptStr(user.totpSecretEnc)` と `authenticator.check()` を使って検証する
 
 ### 7.4 recoveryCode 検証 {#sec_auth_login_totp_success}
@@ -217,10 +220,10 @@ Content-Type: application/json
 ### 7.5 成功時更新 {#sec_auth_login_totp_success}
 
 - `LoginChallenge.used=true`
-- `issueSyncToken(user.id, { userAgent, ip })` で token を発行する
+- 同一DB transactionでchallengeを消費し、必要に応じてRecovery Codeを消費し、`AuthSession` を作成する
 - `User.lastLoginAt` を更新する
-- `User.totpFailCount=0` に戻す
-- `Set-Cookie` に `hk_token` を設定する
+- MFAログイン専用の失敗回数とロックをリセットする
+- 端末関連付け後に `hk_session` と `hk_device` を設定する。端末関連付け失敗時は新sessionを失効させ、Cookieを発行しない
 
 ---
 
@@ -229,8 +232,19 @@ Content-Type: application/json
 - challengeId は 1 回限り有効
 - recoveryCode は 1 回使用で失効
 - challenge 不正の詳細をクライアントへ返さない
-- token 有効期限ヘッダーは HTTP Header の ByteString 制約を満たす ASCII 文字列とする
+- 旧 `hk_token` と `X-Token-Expires-At` は使用しない
 - TOTP secret は `decryptStr()` により検証時のみ復号する
+
+---
+
+## 9. 現行実装との差分と移行ゲート
+
+- 現行実装はMFAログイン専用の試行回数テーブルをまだ使用していない。専用ロック（5回・15分）は未実装。
+- 現行実装は `User.lockUntil` を401 `unauthorized` として扱い、500は `internal_error` を返す。
+- 旧VitestはSyncTokenのモックを含み、現行 `AuthSession` と端末Cookieの検証へ更新が必要。
+- `MfaLoginAttempt` の追加migrationは未作成。既存DBのバックアップ・未適用migration確認を経て導入する。
+- テスト仕様: [ログイン2段階認証テスト仕様](../../../05_テストケース集/01_ユーザー認証API/api_auth_login_totp_testcases.md)。
+- 設計根拠: `LLM_WORKSPACE/Worklog/mfa-login-attempt-model-20261013.md`。
 
 ---
 
