@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/server/prisma';
 import { verifyPassword } from '@/server/password';
+import { isMfaLoginLocked } from '@/server/mfa-login-attempt';
 import { createSession, revokeSession, SESSION_COOKIE, sessionCookieOptions } from '@/server/auth';
 import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
@@ -28,6 +29,10 @@ export async function POST(req: Request): Promise<Response> {
     if (!user || !user.isActive || (user.lockUntil && user.lockUntil > new Date()) ||
         !(await verifyPassword(user.passwordHash, input.password))) {
       return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    }
+
+    if (await isMfaLoginLocked(user.id)) {
+      return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
     }
 
     if (user.totpEnabled) {
