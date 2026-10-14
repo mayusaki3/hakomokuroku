@@ -12,7 +12,7 @@ import { PrismaClient } from '@prisma/client';
 
 const directory = await mkdtemp(join(tmpdir(), 'hakomokuroku-mfa-'));
 const databaseFile = join(directory, 'isolated.db');
-const databaseUrl = 'file:' + databaseFile.replace(/\\\\/g, '/');
+const databaseUrl = 'file:' + databaseFile.split('\\').join('/');
 const webRoot = resolve(import.meta.dirname ?? new URL('.', import.meta.url).pathname, '..');
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 
