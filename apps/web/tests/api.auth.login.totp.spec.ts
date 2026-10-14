@@ -48,10 +48,12 @@ const otplibMock = vi.hoisted(() => {
 const prismaMock = vi.hoisted(() => {
   const users = new Map<string, UserRow>();
   const challenges = new Map<string, ChallengeRow>();
+  const attempts = new Map<string, { userId: string; failCount: number; lockedUntil: Date | null }>();
 
   const reset = () => {
     users.clear();
     challenges.clear();
+    attempts.clear();
 
     users.set("db_u1", {
       id: "db_u1",
@@ -75,12 +77,37 @@ const prismaMock = vi.hoisted(() => {
   reset();
 
   return {
-    __state: { users, challenges, reset },
+    __state: { users, challenges, attempts, reset },
     prisma: {
       $transaction: vi.fn(async (fn: any) => fn(prismaMock.prisma)),
       mfaLoginAttempt: {
-        findUnique: vi.fn(async () => null),
-        updateMany: vi.fn(async () => ({ count: 0 })),
+        findUnique: vi.fn(async ({ where }: any) => attempts.get(where.userId) ?? null),
+        findUniqueOrThrow: vi.fn(async ({ where }: any) => {
+          const row = attempts.get(where.userId);
+          if (!row) throw new Error("NOT_FOUND");
+          return { ...row };
+        }),
+        upsert: vi.fn(async ({ where, create }: any) => {
+          if (!attempts.has(where.userId)) {
+            attempts.set(where.userId, { userId: create.userId, failCount: 0, lockedUntil: null });
+          }
+          return { ...attempts.get(where.userId)! };
+        }),
+        update: vi.fn(async ({ where, data }: any) => {
+          const row = attempts.get(where.userId);
+          if (!row) throw new Error("NOT_FOUND");
+          if (typeof data.failCount === "number") row.failCount = data.failCount;
+          else if (data.failCount?.increment) row.failCount += data.failCount.increment;
+          if ("lockedUntil" in data) row.lockedUntil = data.lockedUntil;
+          return { ...row };
+        }),
+        updateMany: vi.fn(async ({ where, data }: any) => {
+          const row = attempts.get(where.userId);
+          if (!row) return { count: 0 };
+          if (typeof data.failCount === "number") row.failCount = data.failCount;
+          if ("lockedUntil" in data) row.lockedUntil = data.lockedUntil;
+          return { count: 1 };
+        }),
       },
       authSession: {
         create: vi.fn(async () => ({ id: "S1" })),
@@ -235,6 +262,7 @@ describe("POST /api/auth/login/totp", () => {
 
     const res = await POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any);
     expect(res.status).toBe(400);
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(1);
   });
 
   it("AUTH_LOGIN_TOTP-IMPL-01: ロック中（lockUntil が未来） -> 401/429", async () => {
