@@ -265,6 +265,46 @@ describe("POST /api/auth/login/totp", () => {
     expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(1);
   });
 
+  it("AUTH_LOGIN_TOTP-TC-07: 5回目の失敗で429、以後ロック中は拒否", async () => {
+    for (let i = 1; i <= 5; i++) {
+      const res = await POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any);
+      expect(res.status).toBe(i === 5 ? 429 : 400);
+    }
+    const attempt = prismaMock.__state.attempts.get("db_u1")!;
+    expect(attempt.failCount).toBe(5);
+    expect(attempt.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    const blocked = await POST(makeJsonRequest({ challengeId: "C1", code: "123456" }) as any);
+    expect(blocked.status).toBe(429);
+    expect(prismaMock.prisma.authSession.create).not.toHaveBeenCalled();
+  });
+
+  it("AUTH_LOGIN_TOTP-TC-11: MFA成功時のみログイン失敗回数をリセット", async () => {
+    prismaMock.__state.attempts.set("db_u1", {
+      userId: "db_u1", failCount: 3, lockedUntil: null,
+    });
+    const user = prismaMock.__state.users.get("db_u1")!;
+    user.totpFailCount = 2;
+    const res = await POST(makeJsonRequest({ challengeId: "C1", code: "123456" }) as any);
+    expect(res.status).toBe(200);
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(0);
+    expect(prismaMock.__state.users.get("db_u1")?.totpFailCount).toBe(2);
+  });
+
+  it("AUTH_LOGIN_TOTP-TC-09: リカバリーコードは一度だけ使用可能", async () => {
+    const recoveryCode = "RECOVERY-ONE";
+    const hash = crypto.createHash("sha256").update(recoveryCode).digest("hex");
+    prismaMock.__state.users.get("db_u1")!.recoveryCodes = [hash];
+    const first = await POST(makeJsonRequest({ challengeId: "C1", recoveryCode }) as any);
+    expect(first.status).toBe(200);
+    expect(prismaMock.__state.users.get("db_u1")?.recoveryCodes).toEqual([]);
+    prismaMock.__state.challenges.set("C2", {
+      id: "C2", userId: "db_u1", used: false, expiresAt: new Date(Date.now() + 60000),
+    });
+    const second = await POST(makeJsonRequest({ challengeId: "C2", recoveryCode }) as any);
+    expect(second.status).toBe(400);
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(1);
+  });
+
   it("AUTH_LOGIN_TOTP-IMPL-01: ロック中（lockUntil が未来） -> 401/429", async () => {
     const u1 = prismaMock.__state.users.get("db_u1")!;
     u1.lockUntil = new Date(Date.now() + 60_000);
