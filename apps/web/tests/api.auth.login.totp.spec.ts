@@ -14,6 +14,7 @@ type UserRow = {
   id: string;
   userId: string;
   totpEnabled: boolean;
+  isActive: boolean;
   totpSecretEnc?: string | null;
   recoveryCodes?: string[] | null;
   totpFailCount?: number | null;
@@ -56,6 +57,7 @@ const prismaMock = vi.hoisted(() => {
       id: "db_u1",
       userId: "U1",
       totpEnabled: true,
+      isActive: true,
       totpSecretEnc: "SECRET_ENC",
       recoveryCodes: [],
       totpFailCount: 0,
@@ -75,7 +77,21 @@ const prismaMock = vi.hoisted(() => {
   return {
     __state: { users, challenges, reset },
     prisma: {
+      $transaction: vi.fn(async (fn: any) => fn(prismaMock.prisma)),
+      mfaLoginAttempt: {
+        findUnique: vi.fn(async () => null),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
+      authSession: {
+        create: vi.fn(async () => ({ id: "S1" })),
+      },
       loginChallenge: {
+        updateMany: vi.fn(async (args: any) => {
+          const row = challenges.get(args.where.id);
+          if (!row || row.used || row.expiresAt <= new Date()) return { count: 0 };
+          row.used = true;
+          return { count: 1 };
+        }),
         findUnique: vi.fn(async (args: any) => {
           const id = args?.where?.id;
           if (typeof id !== "string") return null;
@@ -136,16 +152,18 @@ vi.mock("@/server/prisma", () => {
   return { prisma: prismaMock.prisma };
 });
 
-vi.mock("@/server/auth", () => {
-  return {
-    issueSyncToken: async () => {
-      return {
-        token: "dummy-token",
-        expiresAt: new Date(Date.now() + 3600_000),
-      };
-    },
-  };
-});
+vi.mock("@/server/auth", () => ({
+  SESSION_COOKIE: "hk_session",
+  sessionCookieOptions: () => ({ path: "/", httpOnly: true }),
+  sessionTokenHash: (token: string) => crypto.createHash("sha256").update(token).digest("hex"),
+  revokeSession: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/server/device-login", () => ({
+  DEVICE_COOKIE: "hk_device",
+  deviceCookieOptions: () => ({ path: "/", httpOnly: true }),
+  attachLoginDevice: vi.fn(async () => "device-token"),
+}));
 
 vi.mock("@/server/crypto", () => {
   return {
@@ -176,6 +194,8 @@ describe("POST /api/auth/login/totp", () => {
 
     const json = await readJson(res);
     expect(json?.ok).toBe(true);
+    expect(res.headers.get("set-cookie")).toContain("hk_session=");
+    expect(prismaMock.prisma.authSession.create).toHaveBeenCalledOnce();
   });
 
   it("AUTH_LOGIN_TOTP-TC-02: 必須チェック（challengeId/code 不足） -> 400", async () => {
@@ -214,7 +234,7 @@ describe("POST /api/auth/login/totp", () => {
     vi.mocked(authenticator.check).mockReturnValueOnce(false);
 
     const res = await POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any);
-    expect([400, 401, 422]).toContain(res.status);
+    expect(res.status).toBe(400);
   });
 
   it("AUTH_LOGIN_TOTP-IMPL-01: ロック中（lockUntil が未来） -> 401/429", async () => {
@@ -222,7 +242,7 @@ describe("POST /api/auth/login/totp", () => {
     u1.lockUntil = new Date(Date.now() + 60_000);
 
     const res = await POST(makeJsonRequest({ challengeId: "C1", code: "123456" }) as any);
-    expect([401, 429]).toContain(res.status);
+    expect(res.status).toBe(401);
   });
 
   it("AUTH_LOGIN_TOTP-IMPL-02: 内部例外 -> 500", async () => {
