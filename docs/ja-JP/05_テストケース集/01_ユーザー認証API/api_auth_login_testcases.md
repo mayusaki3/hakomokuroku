@@ -12,7 +12,7 @@ canonical_document: true
 # ログインテスト仕様（POST /api/auth/login）
 
 本書は、ログイン API（POST /api/auth/login）のテスト仕様を定義する。  
-apps/web/tests/api.auth.login.spec.ts の Vitest を正とする。
+本書の期待結果をテスト実装の目標契約とする。既存Vitestには旧Cookie・モックが残っているため更新が必要。
 
 ---
 
@@ -26,6 +26,10 @@ apps/web/tests/api.auth.login.spec.ts の Vitest を正とする。
 | API_AUTH_LOGIN-TC-04 | sec_auth_login_user_lookup, sec_auth_login_auth_failed, sec_auth_login_security |
 | API_AUTH_LOGIN-TC-05 | sec_auth_login_auth_failed, sec_auth_login_security |
 | API_AUTH_LOGIN-TC-07 | sec_auth_login_locked |
+| API_AUTH_LOGIN-TC-06 | sec_auth_login_mfa_challenge |
+| API_AUTH_LOGIN-TC-08 | sec_auth_login_locked |
+| API_AUTH_LOGIN-TC-09 | sec_auth_login_success_basic, sec_auth_login_security |
+| API_AUTH_LOGIN-TC-10 | sec_auth_login_mfa_challenge, sec_auth_login_security |
 
 ---
 
@@ -46,7 +50,9 @@ apps/web/tests/api.auth.login.spec.ts の Vitest を正とする。
 
 - HTTP 200
 - `ok:true`
-- `Set-Cookie` に `sid=` を含む
+- `mfaRequired:false`
+- `Set-Cookie` に `hk_session` と `hk_device` を含む
+- AuthSession作成、端末紐付けが成功している
 
 ---
 
@@ -147,18 +153,86 @@ apps/web/tests/api.auth.login.spec.ts の Vitest を正とする。
 
 ---
 
+### API_AUTH_LOGIN-TC-06 正常：TOTP有効ユーザー
+
+#### 対応 sec_id
+
+- sec_auth_login_mfa_challenge
+
+#### 条件
+
+- TOTP有効、正しいuserId/password
+
+#### 期待結果
+
+- HTTP 200、`ok:true`、`mfaRequired:true`、`challengeId` を返す
+- 期限5分のLoginChallengeを作成
+- AuthSessionを作成せず、`hk_session` と `hk_device` を発行しない
+
+---
+
+### API_AUTH_LOGIN-TC-08 異常：MFA専用ロック中（実装予定）
+
+#### 対応 sec_id
+
+- sec_auth_login_locked
+
+#### 条件
+
+- `MfaLoginAttempt.lockedUntil > now()`
+
+#### 期待結果
+
+- HTTP 429、`too_many_attempts`
+- LoginChallenge・AuthSession・Cookieを発行しない
+- 既存 `User.lockUntil` は変更しない
+
+---
+
+### API_AUTH_LOGIN-TC-09 異常：端末紐付け失敗
+
+#### 対応 sec_id
+
+- sec_auth_login_success_basic
+- sec_auth_login_security
+
+#### 条件
+
+- TOTP無効、パスワード一致、`attachLoginDevice` が失敗
+
+#### 期待結果
+
+- HTTP 500 `internal_error`
+- 作成した新AuthSessionを失効
+- Cookieを発行しない
+
+---
+
+### API_AUTH_LOGIN-TC-10 セキュリティ：MFA前の既存session
+
+#### 対応 sec_id
+
+- sec_auth_login_mfa_challenge
+- sec_auth_login_security
+
+#### 条件
+
+- 有効な既存`hk_session`を持つブラウザで、TOTP有効ユーザーのパスワード認証が成功
+
+#### 期待結果
+
+- MFA完了前は新AuthSessionとCookieを発行しない
+- 既存sessionはこの時点では失効させない
+
+---
+
 ## 3. ローカル検証手順
 
 ```powershell
 pnpm -C apps/web exec vitest --run
 ```
 
-期待結果：
-
-```text
-Test Files  22 passed
-Tests       218 passed
-```
+テスト実行結果を記録すること。過去の固定件数を合格条件にしない。
 
 ---
 
