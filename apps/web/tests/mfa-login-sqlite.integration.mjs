@@ -8,12 +8,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
 const directory = await mkdtemp(join(tmpdir(), 'hakomokuroku-mfa-'));
 const databaseFile = join(directory, 'isolated.db');
-const databaseUrl = pathToFileURL(databaseFile).href;
+const databaseUrl = 'file:' + databaseFile.replace(/\\\\/g, '/');
 const webRoot = resolve(import.meta.dirname ?? new URL('.', import.meta.url).pathname, '..');
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 
@@ -46,12 +45,12 @@ async function failOnce(userId, now) {
 
 try {
   // The child process receives ONLY the isolated DATABASE_URL.
-  const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = spawnSync(cmd, ['exec', 'prisma', 'db', 'push', '--schema', 'prisma/schema.prisma', '--skip-generate'], {
+  const cmd = process.execPath;
+  const prismaCli = resolve(webRoot, 'node_modules/prisma/build/index.js');
+  const result = spawnSync(cmd, [prismaCli, 'db', 'push', '--schema', 'prisma/schema.prisma', '--skip-generate'], {
     cwd: webRoot,
     env: { ...process.env, DATABASE_URL: databaseUrl },
     encoding: 'utf8',
-    shell: process.platform === 'win32',
   });
   if (result.status !== 0) {
     throw new Error('Isolated schema setup failed:\n' + result.stdout + '\n' + result.stderr);
