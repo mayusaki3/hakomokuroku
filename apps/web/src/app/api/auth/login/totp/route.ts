@@ -94,7 +94,7 @@ export async function POST(req: Request) {
         });
         await tx.user.update({
           where: { id: user.id },
-          data: { lastLoginAt: new Date(), totpFailCount: 0 },
+          data: { lastLoginAt: new Date() },
         });
         await tx.mfaLoginAttempt.updateMany({
           where: { userId: user.id },
