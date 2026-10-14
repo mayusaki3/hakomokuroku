@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { authenticator } from 'otplib';
 import { prisma } from '@/server/prisma';
 import { decryptStr } from '@/server/crypto';
+import { isMfaLoginLocked, recordMfaLoginFailure } from '@/server/mfa-login-attempt';
 import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
 import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
@@ -36,6 +37,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
     }
 
+    if (await isMfaLoginLocked(user.id)) {
+      return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
+    }
+
     let valid = false;
     let consumedRecoveryHash: string | null = null;
     if (typeof input.code === 'string') {
@@ -53,7 +58,10 @@ export async function POST(req: Request) {
       }
     }
     if (!valid) {
-      return NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
+      const locked = await recordMfaLoginFailure(user.id);
+      return locked
+        ? NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 })
+        : NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
     }
 
     const token = randomBytes(32).toString('base64url');
@@ -79,6 +87,8 @@ export async function POST(req: Request) {
             data: { recoveryCodes: codes.filter(code => code !== consumedRecoveryHash) },
           });
         }
+        const attempt = await tx.mfaLoginAttempt.findUnique({ where: { userId: user.id } });
+        if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) throw new Error('MFA_LOCKED');
         const session = await tx.authSession.create({
           data: { userId: user.id, tokenHash: sessionTokenHash(token), expiresAt },
         });
@@ -86,9 +96,16 @@ export async function POST(req: Request) {
           where: { id: user.id },
           data: { lastLoginAt: new Date(), totpFailCount: 0 },
         });
+        await tx.mfaLoginAttempt.updateMany({
+          where: { userId: user.id },
+          data: { failCount: 0, lockedUntil: null },
+        });
         return session.id;
       });
     } catch (error) {
+      if (error instanceof Error && error.message === 'MFA_LOCKED') {
+        return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
+      }
       if (error instanceof Error &&
           (error.message === 'CHALLENGE_CONSUMED' || error.message === 'RECOVERY_CONSUMED')) {
         return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
