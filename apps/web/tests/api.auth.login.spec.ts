@@ -59,9 +59,13 @@ const prismaMock = vi.hoisted(() => {
   return {
     __state: { users, reset },
     prisma: {
+      mfaLoginAttempt: { findUnique: vi.fn(async () => null) },
+      loginChallenge: { create: vi.fn(async () => ({ id: "C1" })) },
+      authSession: { create: vi.fn(async () => ({ id: "S1" })) },
       user: {
         findUnique: vi.fn(async (args: any) => findUser(args?.where)),
         findFirst: vi.fn(async (args: any) => findUser(args?.where)),
+        update: vi.fn(async (args: any) => findUser(args?.where)),
       },
     },
   };
@@ -71,13 +75,15 @@ vi.mock("@/server/prisma", () => {
   return { prisma: prismaMock.prisma };
 });
 
-vi.mock("@/server/auth", () => {
-  return {
-    verifyPassword: (plain: string, hash: string) => {
-      return plain === "P@ssw0rd" && hash === "HASH_OK";
-    },
-  };
-});
+vi.mock("@/server/password", () => ({
+  verifyPassword: vi.fn(async (hash: string, plain: string) => hash === "HASH_OK" && plain === "P@ssw0rd"),
+}));
+
+vi.mock("@/server/device-login", () => ({
+  DEVICE_COOKIE: "hk_device",
+  deviceCookieOptions: () => ({ path: "/", httpOnly: true }),
+  attachLoginDevice: vi.fn(async () => "device-token"),
+}));
 
 describe("POST /api/auth/login", () => {
   beforeEach(() => {
@@ -93,7 +99,7 @@ describe("POST /api/auth/login", () => {
 
     const json = await readJson(res);
     expect(json?.ok).toBe(true);
-    expect(res.headers.get("set-cookie")).toContain("sid=");
+    expect(res.headers.get("set-cookie")).toContain("hk_session=");
   });
 
   it("API_AUTH_LOGIN-TC-02: userId / password の必須チェック (不足なら 400)", async () => {
