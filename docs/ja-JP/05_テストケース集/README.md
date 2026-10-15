@@ -21,6 +21,7 @@ API仕様と原則同じ分類番号を使用する。
 ## 01 ユーザー認証API
 - [ログイン](./01_ユーザー認証API/api_auth_login_testcases.md)
 - [TOTPログイン](./01_ユーザー認証API/api_auth_login_totp_testcases.md)
+- [MFAログイン試行制限 検証記録（2026-10-15）](./01_ユーザー認証API/mfa_login_attempt_validation_20261015.md)
 - [ログアウト](./01_ユーザー認証API/api_auth_logout_testcases.md)
 - [認証状態取得](./01_ユーザー認証API/api_auth_me_testcases.md)
 - [ユーザー登録](./01_ユーザー認証API/api_auth_register_testcases.md)
