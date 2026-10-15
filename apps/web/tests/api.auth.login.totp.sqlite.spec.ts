@@ -105,6 +105,18 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     expect(challenges.filter(challenge => challenge.used)).toHaveLength(1);
   });
 
+  it('invalid challenge does not increase MFA failure count', async () => {
+    await user('mfa_api_invalid');
+    await challenge('invalid-used', 'mfa_api_invalid');
+    await challenge('invalid-expired', 'mfa_api_invalid');
+    await db.loginChallenge.update({ where: { id: 'invalid-used' }, data: { used: true } });
+    await db.loginChallenge.update({ where: { id: 'invalid-expired' },
+      data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await POST(request('invalid-used', '000000'))).status).toBe(404);
+    expect((await POST(request('invalid-expired', '000000'))).status).toBe(404);
+    expect(await db.mfaLoginAttempt.findUnique({ where: { userId: 'mfa_api_invalid' } })).toBeNull();
+  });
+
   it('expired lock allows a fresh failure and then successful login', async () => {
     await user('mfa_api_expired');
     await challenge('expired1', 'mfa_api_expired');
