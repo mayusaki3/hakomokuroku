@@ -116,6 +116,10 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     await db.loginChallenge.update({ where: { id: 'invalid-used' }, data: { used: true } });
     await db.loginChallenge.update({ where: { id: 'invalid-expired' },
       data: { expiresAt: new Date(Date.now() - 1000) } });
+    const malformed = new Request('http://localhost/api/auth/login/totp', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{invalid',
+    });
+    expect((await POST(malformed)).status).toBe(400);
     expect((await POST(request('invalid-used', '000000'))).status).toBe(404);
     expect((await POST(request('invalid-expired', '000000'))).status).toBe(404);
     expect(await db.mfaLoginAttempt.findUnique({ where: { userId: 'mfa_api_invalid' } })).toBeNull();
