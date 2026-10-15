@@ -29,6 +29,7 @@ vi.mock('@/server/device-login', () => ({
 const db = new PrismaClient({ datasources: { db: { url: dbUrl } } });
 vi.mock('@/server/prisma', () => ({ prisma: db }));
 const { POST } = await import('../src/app/api/auth/login/totp/route');
+const { isMfaLoginLocked, recordMfaLoginFailure } = await import('../src/server/mfa-login-attempt');
 function request(challengeId: string, code: string, recoveryCode?: string): Request {
   return new Request('http://localhost/api/auth/login/totp', {
     method: 'POST',
@@ -142,6 +143,35 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].revokedAt).not.toBeNull();
     expect(await db.mfaLoginAttempt.findUnique({ where: { userId: id } })).toBeNull();
+  });
+
+  it('lock expiry is exclusive at the exact millisecond boundary', async () => {
+    const id = 'mfa_api_boundary';
+    await user(id);
+    const expiry = new Date('2026-10-15T00:15:00.000Z');
+    await db.mfaLoginAttempt.create({
+      data: { userId: id, failCount: 5, lockedUntil: expiry },
+    });
+    expect(await isMfaLoginLocked(id, new Date(expiry.getTime() - 1))).toBe(true);
+    expect(await isMfaLoginLocked(id, expiry)).toBe(false);
+    expect(await isMfaLoginLocked(id, new Date(expiry.getTime() + 1))).toBe(false);
+    expect(await recordMfaLoginFailure(id, expiry)).toBe(false);
+    const attempt = await db.mfaLoginAttempt.findUniqueOrThrow({ where: { userId: id } });
+    expect(attempt.failCount).toBe(1);
+    expect(attempt.lockedUntil).toBeNull();
+  });
+
+  it('failure just before lock expiry does not extend the lock', async () => {
+    const id = 'mfa_api_boundary_before';
+    await user(id);
+    const expiry = new Date('2026-10-15T00:15:00.000Z');
+    await db.mfaLoginAttempt.create({
+      data: { userId: id, failCount: 5, lockedUntil: expiry },
+    });
+    expect(await recordMfaLoginFailure(id, new Date(expiry.getTime() - 1))).toBe(true);
+    const attempt = await db.mfaLoginAttempt.findUniqueOrThrow({ where: { userId: id } });
+    expect(attempt.failCount).toBe(5);
+    expect(attempt.lockedUntil).toEqual(expiry);
   });
 
   it('expired lock allows a fresh failure and then successful login', async () => {
