@@ -305,6 +305,35 @@ describe("POST /api/auth/login/totp", () => {
     expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(1);
   });
 
+  it("AUTH_LOGIN_TOTP-TC-13: ユーザーAのロックはユーザーBに影響しない", async () => {
+    prismaMock.__state.users.set("db_u2", {
+      id: "db_u2", userId: "U2", totpEnabled: true, isActive: true,
+      totpSecretEnc: "SECRET_ENC", recoveryCodes: [], totpFailCount: 0, lockUntil: null,
+    });
+    prismaMock.__state.challenges.set("C2", {
+      id: "C2", userId: "db_u2", used: false, expiresAt: new Date(Date.now() + 60000),
+    });
+    for (let i = 0; i < 5; i++) {
+      await POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any);
+    }
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(5);
+    const blocked = await POST(makeJsonRequest({ challengeId: "C1", code: "123456" }) as any);
+    expect(blocked.status).toBe(429);
+    const other = await POST(makeJsonRequest({ challengeId: "C2", code: "123456" }) as any);
+    expect(other.status).toBe(200);
+    expect(prismaMock.__state.attempts.has("db_u2")).toBe(false);
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(5);
+  });
+
+  it("AUTH_LOGIN_TOTP-TC-10: 並列5件の失敗はすべて加算される", async () => {
+    const responses = await Promise.all(Array.from({ length: 5 }, () =>
+      POST(makeJsonRequest({ challengeId: "C1", code: "000000" }) as any)));
+    expect(responses.map(res => res.status).sort()).toEqual([400, 400, 400, 400, 429]);
+    expect(prismaMock.__state.attempts.get("db_u1")?.failCount).toBe(5);
+    expect(prismaMock.__state.attempts.get("db_u1")?.lockedUntil).toBeInstanceOf(Date);
+    expect(prismaMock.prisma.authSession.create).not.toHaveBeenCalled();
+  });
+
   it("AUTH_LOGIN_TOTP-IMPL-01: ロック中（lockUntil が未来） -> 401/429", async () => {
     const u1 = prismaMock.__state.users.get("db_u1")!;
     u1.lockUntil = new Date(Date.now() + 60_000);
