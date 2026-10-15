@@ -1,0 +1,135 @@
+/**
+ * Two independent Next.js HTTP server processes sharing one isolated SQLite DB.
+ * Run from repository root: node apps/web/tests/run-mfa-http-two-servers-sqlite.mjs [--repeat=20]
+ * Requires an existing production Next.js build: pnpm --dir apps/web build
+ * Each server is a distinct process; both use the same built app and test database.
+ */
+import { createHash, randomBytes } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const require = createRequire(join(root, 'package.json'));
+const { PrismaClient } = require('@prisma/client');
+const repeatText = process.argv.find(arg => arg.startsWith('--repeat='));
+const repeat = repeatText ? Number(repeatText.slice(9)) : 1;
+if (!Number.isSafeInteger(repeat) || repeat < 1 || repeat > 100)
+  throw new Error('--repeat must be an integer between 1 and 100');
+
+try { await stat(resolve(root, '.next/BUILD_ID')); }
+catch { throw new Error('Production build missing. Run: pnpm --dir apps/web build'); }
+
+async function freePort() {
+  return new Promise((ok, fail) => {
+    const server = createServer();
+    server.once('error', fail);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close(() => ok(address.port));
+    });
+  });
+}
+
+const directory = await mkdtemp(join(tmpdir(), 'hakomokuroku-mfa-two-http-'));
+const databaseUrl = 'file:' + join(directory, 'isolated.db').replaceAll('\\', '/');
+const env = {
+  ...process.env, DATABASE_URL: databaseUrl,
+  TOTP_SECRET_KEY: randomBytes(32).toString('base64'),
+  NODE_ENV: 'production',
+};
+const servers = [];
+let db;
+try {
+  const setup = spawnSync(process.execPath, [
+    resolve(root, 'node_modules/prisma/build/index.js'), 'db', 'push',
+    '--schema', 'prisma/schema.prisma', '--skip-generate',
+  ], { cwd: root, env, stdio: 'inherit' });
+  if (setup.error || setup.status !== 0) throw new Error('Isolated Prisma setup failed');
+  db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const ports = [await freePort(), await freePort()];
+  if (ports[0] === ports[1]) throw new Error('Port allocation collision');
+  for (const port of ports) {
+    const child = spawn(process.execPath, [
+      resolve(root, 'node_modules/next/dist/bin/next'), 'start',
+      '-p', String(port), '-H', '127.0.0.1',
+    ], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const entry = { child, port, output: '' };
+    const capture = chunk => { entry.output = (entry.output + chunk.toString()).slice(-12000); };
+    child.stdout.on('data', capture);
+    child.stderr.on('data', capture);
+    servers.push(entry);
+  }
+  const endpoints = servers.map(s => `http://127.0.0.1:${s.port}/api/auth/login/totp`);
+  for (const [index, endpoint] of endpoints.entries()) {
+    let ready = false;
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline) {
+      if (servers[index].child.exitCode !== null) break;
+      try {
+        const response = await fetch(endpoint, { signal: AbortSignal.timeout(1500) });
+        if (response.status === 405) { ready = true; break; }
+      } catch { /* startup */ }
+      await new Promise(done => setTimeout(done, 250));
+    }
+    if (!ready) throw new Error(`Server ${index + 1} not ready: ${servers[index].output}`);
+  }
+  for (let iteration = 1; iteration <= repeat; iteration++) {
+    const id = `mfa_two_http_${iteration}`;
+    const recovery = 'RECOVERY-' + randomBytes(16).toString('hex');
+    const recoveryHash = createHash('sha256').update(recovery).digest('hex');
+    await db.user.create({ data: {
+      id, userId: id, passwordHash: 'isolated', isActive: true,
+      totpEnabled: true, totpSecretEnc: 'unused-for-recovery',
+      recoveryCodes: [recoveryHash],
+    } });
+    const challenges = [`two-${iteration}-a`, `two-${iteration}-b`];
+    for (const challengeId of challenges) {
+      await db.loginChallenge.create({ data: {
+        id: challengeId, userId: id, expiresAt: new Date(Date.now() + 600000),
+      } });
+    }
+    const results = await Promise.all(endpoints.map(async (endpoint, index) => {
+      const response = await fetch(endpoint, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ challengeId: challenges[index], recoveryCode: recovery }),
+        signal: AbortSignal.timeout(30000),
+      });
+      return { server: index + 1, status: response.status, body: await response.json() };
+    }));
+    const statuses = results.map(r => r.status).sort((a, b) => a - b);
+    const sessions = await db.authSession.findMany({ where: { userId: id } });
+    const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
+    const user = await db.user.findUniqueOrThrow({ where: { id } });
+    const pass = JSON.stringify(statuses) === '[200,404]' &&
+      sessions.length === 1 && sessions[0].revokedAt === null &&
+      sessions[0].deviceId !== null && used === 1 &&
+      Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0;
+    console.log(JSON.stringify({
+      iteration, pass, statuses, results, sessions: sessions.length,
+      activeSessions: sessions.filter(s => !s.revokedAt).length,
+      usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
+    }));
+    if (!pass) {
+      process.exitCode = 1;
+      break;
+    }
+  }
+} catch (error) {
+  console.error(error);
+  process.exitCode = 1;
+} finally {
+  if (process.exitCode) for (const server of servers)
+    console.error(`Server ${server.port} output:\n${server.output}`);
+  for (const server of servers) server.child.kill();
+  await Promise.all(servers.map(server => Promise.race([
+    new Promise(done => server.child.once('close', done)),
+    new Promise(done => setTimeout(done, 3000)),
+  ])));
+  if (db) await db.$disconnect();
+  await rm(directory, { recursive: true, force: true });
+}
