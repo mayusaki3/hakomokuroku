@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 // Must be invoked only by the isolated-db launcher. Never run against dev.db.
 const dbUrl = process.env.DATABASE_URL ?? '';
@@ -24,11 +25,11 @@ vi.mock('@/server/device-login', () => ({
 const db = new PrismaClient({ datasources: { db: { url: dbUrl } } });
 vi.mock('@/server/prisma', () => ({ prisma: db }));
 const { POST } = await import('../src/app/api/auth/login/totp/route');
-function request(challengeId: string, code: string): Request {
+function request(challengeId: string, code: string, recoveryCode?: string): Request {
   return new Request('http://localhost/api/auth/login/totp', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ challengeId, code }),
+    body: JSON.stringify({ challengeId, code, ...(recoveryCode ? { recoveryCode } : {}) }),
   });
 }
 async function user(id: string) {
@@ -65,6 +66,43 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     expect(attempt?.failCount).toBe(5);
     expect(attempt?.lockedUntil?.getTime()).toBeGreaterThan(Date.now());
     expect((await POST(request('a1', '123456'))).status).toBe(429);
+  });
+
+  it('concurrent failures across distinct challenges share one user lock', async () => {
+    await user('mfa_api_multi');
+    const ids = Array.from({ length: 5 }, (_, i) => `multi${i + 1}`);
+    for (const id of ids) await challenge(id, 'mfa_api_multi');
+    const statuses = await Promise.all(ids.map(async id =>
+      (await POST(request(id, '000000'))).status));
+    expect(statuses.sort()).toEqual([400, 400, 400, 400, 429]);
+    const attempt = await db.mfaLoginAttempt.findUniqueOrThrow({
+      where: { userId: 'mfa_api_multi' },
+    });
+    expect(attempt.failCount).toBe(5);
+    expect(attempt.lockedUntil?.getTime()).toBeGreaterThan(Date.now());
+    for (const id of ids) {
+      expect((await db.loginChallenge.findUniqueOrThrow({ where: { id } })).used).toBe(false);
+    }
+  });
+
+  it('a recovery code is consumed at most once across concurrent challenges', async () => {
+    const id = 'mfa_api_recovery';
+    const code = 'ISOLATED-RECOVERY-CODE';
+    const hash = createHash('sha256').update(code).digest('hex');
+    await user(id);
+    await db.user.update({ where: { id }, data: { recoveryCodes: [hash] } });
+    await challenge('recovery1', id);
+    await challenge('recovery2', id);
+    const statuses = await Promise.all([
+      POST(request('recovery1', '000000', code)),
+      POST(request('recovery2', '000000', code)),
+    ]).then(responses => responses.map(response => response.status));
+    expect(statuses.filter(status => status === 200)).toHaveLength(1);
+    expect(statuses.filter(status => status === 404)).toHaveLength(1);
+    expect((await db.authSession.count({ where: { userId: id } }))).toBe(1);
+    expect((await db.user.findUniqueOrThrow({ where: { id } })).recoveryCodes).toEqual([]);
+    const challenges = await db.loginChallenge.findMany({ where: { userId: id } });
+    expect(challenges.filter(challenge => challenge.used)).toHaveLength(1);
   });
 
   it('expired lock allows a fresh failure and then successful login', async () => {
