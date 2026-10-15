@@ -67,6 +67,30 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     expect((await POST(request('a1', '123456'))).status).toBe(429);
   });
 
+  it('expired lock allows a fresh failure and then successful login', async () => {
+    await user('mfa_api_expired');
+    await challenge('expired1', 'mfa_api_expired');
+    await db.mfaLoginAttempt.create({
+      data: {
+        userId: 'mfa_api_expired',
+        failCount: 5,
+        lockedUntil: new Date(Date.now() - 1000),
+      },
+    });
+    expect((await POST(request('expired1', '000000'))).status).toBe(400);
+    const afterFailure = await db.mfaLoginAttempt.findUniqueOrThrow({
+      where: { userId: 'mfa_api_expired' },
+    });
+    expect(afterFailure.failCount).toBe(1);
+    expect(afterFailure.lockedUntil).toBeNull();
+    expect((await POST(request('expired1', '123456'))).status).toBe(200);
+    const afterSuccess = await db.mfaLoginAttempt.findUniqueOrThrow({
+      where: { userId: 'mfa_api_expired' },
+    });
+    expect(afterSuccess.failCount).toBe(0);
+    expect(afterSuccess.lockedUntil).toBeNull();
+  });
+
   it('user B can log in while A is locked', async () => {
     const response = await POST(request('b1', '123456'));
     expect(response.status).toBe(200);
