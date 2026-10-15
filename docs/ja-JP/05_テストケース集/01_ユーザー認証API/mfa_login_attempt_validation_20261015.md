@@ -88,6 +88,19 @@ node apps/web/tests/run-mfa-multiprocess-sqlite.mjs --repeat=20
 
 各回5つの独立Node.jsプロセス・PrismaClientから、同一の一時SQLite DBへ失敗加算を行った。全回で `failCount=5`、`lockedUntil` 設定、失敗0件を確認した。実施結果は開発者提示のローカル実行ログに基づく。**HTTP/TOTPハンドラー全体の複数プロセス競合を検証したものではない。** また高負荷・SQLite busyの強制再現は未実施。
 
+### 2.4 単一Next.js HTTPサーバー経由のRecovery Code競合検証（2026-10-15）
+
+`apps/web/tests/run-mfa-http-sqlite.mjs` により、独立した一時SQLite DBと実際のNext.js HTTPサーバーを用いて、同一Recovery Codeの2リクエスト同時使用を検証した。
+
+```powershell
+node apps/web/tests/run-mfa-http-sqlite.mjs
+# 1/1 PASS
+node apps/web/tests/run-mfa-http-sqlite.mjs --repeat=20
+# 20/20 PASS
+```
+
+各回でHTTP応答 `[200,404]`、発行セッション1件（有効1件）、使用済みチャレンジ1件、Recovery Code残数0件を確認。開発者提示のWindowsローカル実行ログに基づく。**複数Next.jsサーバープロセス間のHTTP競合は未検証。**
+
 ## 3. 評価
 
 この検証環境と20回の試行では、並列5件の失敗加算漏れ、閾値回避、SQLiteロック競合によるHTTP 500は観測されなかった。ロック解除後のカウンター初期化、ユーザー分離、正常ログインによるリセットも期待どおりだった。
