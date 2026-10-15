@@ -16,10 +16,14 @@ vi.mock('@/server/crypto', async importOriginal => {
 vi.mock('otplib', () => ({
   authenticator: { check: (code: string) => code === '123456' },
 }));
+const deviceTestState = vi.hoisted(() => ({ fail: false }));
 vi.mock('@/server/device-login', () => ({
   DEVICE_COOKIE: 'hk_device',
   deviceCookieOptions: () => ({ path: '/', httpOnly: true }),
-  attachLoginDevice: async () => 'isolated-device',
+  attachLoginDevice: async () => {
+    if (deviceTestState.fail) throw new Error('TEST_DEVICE_FAILURE');
+    return 'isolated-device';
+  },
 }));
 
 const db = new PrismaClient({ datasources: { db: { url: dbUrl } } });
@@ -115,6 +119,25 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     expect((await POST(request('invalid-used', '000000'))).status).toBe(404);
     expect((await POST(request('invalid-expired', '000000'))).status).toBe(404);
     expect(await db.mfaLoginAttempt.findUnique({ where: { userId: 'mfa_api_invalid' } })).toBeNull();
+  });
+
+  it('device attach failure revokes newly issued session', async () => {
+    const id = 'mfa_api_device_failure';
+    await user(id);
+    await challenge('device-failure1', id);
+    deviceTestState.fail = true;
+    let response: Response;
+    try {
+      response = await POST(request('device-failure1', '123456'));
+    } finally {
+      deviceTestState.fail = false;
+    }
+    expect(response.status).toBe(500);
+    expect(response.headers.get('set-cookie')).toBeNull();
+    const sessions = await db.authSession.findMany({ where: { userId: id } });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].revokedAt).not.toBeNull();
+    expect(await db.mfaLoginAttempt.findUnique({ where: { userId: id } })).toBeNull();
   });
 
   it('expired lock allows a fresh failure and then successful login', async () => {
