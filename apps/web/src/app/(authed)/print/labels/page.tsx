@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { makeQrSvg } from '@/lib/qr';
-import QrLabel24 from '@/components/QrLabel24';
+import QrLabel24 from '@/app/components/QrLabel24';
 
 export default function LabelsA4Page() {
   const sp = useSearchParams();
