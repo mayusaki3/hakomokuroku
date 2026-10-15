@@ -1,6 +1,5 @@
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { POST } from '../src/app/api/auth/login/totp/route';
 
 // Must be invoked only by the isolated-db launcher. Never run against dev.db.
 const dbUrl = process.env.DATABASE_URL ?? '';
@@ -23,6 +22,8 @@ vi.mock('@/server/device-login', () => ({
 }));
 
 const db = new PrismaClient({ datasources: { db: { url: dbUrl } } });
+vi.mock('@/server/prisma', () => ({ prisma: db }));
+const { POST } = await import('../src/app/api/auth/login/totp/route');
 function request(challengeId: string, code: string): Request {
   return new Request('http://localhost/api/auth/login/totp', {
     method: 'POST',
