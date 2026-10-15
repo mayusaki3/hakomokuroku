@@ -75,6 +75,19 @@ node apps/web/tests/run-mfa-api-sqlite.mjs --repeat=20
 
 従来の8項目も全20回でPASS。ローカルWindows実行ログによる結果であり、CI実行結果ではない。
 
+### 2.3 複数Node.jsプロセス競合検証（2026-10-15）
+
+`apps/web/tests/run-mfa-multiprocess-sqlite.mjs` をWindows PowerShellから実行した。
+
+```powershell
+node apps/web/tests/run-mfa-multiprocess-sqlite.mjs
+# 1回 PASS（5/5プロセス成功）
+node apps/web/tests/run-mfa-multiprocess-sqlite.mjs --repeat=20
+# 20/20回 PASS（計100/100プロセス成功）
+```
+
+各回5つの独立Node.jsプロセス・PrismaClientから、同一の一時SQLite DBへ失敗加算を行った。全回で `failCount=5`、`lockedUntil` 設定、失敗0件を確認した。実施結果は開発者提示のローカル実行ログに基づく。**HTTP/TOTPハンドラー全体の複数プロセス競合を検証したものではない。** また高負荷・SQLite busyの強制再現は未実施。
+
 ## 3. 評価
 
 この検証環境と20回の試行では、並列5件の失敗加算漏れ、閾値回避、SQLiteロック競合によるHTTP 500は観測されなかった。ロック解除後のカウンター初期化、ユーザー分離、正常ログインによるリセットも期待どおりだった。
@@ -85,7 +98,7 @@ node apps/web/tests/run-mfa-api-sqlite.mjs --repeat=20
 
 | 項目 | 状態 |
 |---|---|
-| 複数Node.jsプロセス・複数PrismaClient間の競合 | 未検証 |
+| 複数Node.jsプロセス・複数PrismaClient間のMFA失敗加算 | 独立プロセス5本×20回で検証済み（100/100成功）。HTTP API全体は未検証 |
 | 高負荷・長時間連続・SQLite busy条件の強制再現 | 未検証 |
 | 実際のTOTP暗号化・復号と時刻窓 | 本統合テストではモック |
 | 実際の端末登録・Cookie・セッション関連付けの全経路 | 本統合テストではモック |
