@@ -12,7 +12,7 @@ canonical_document: true
 # ログイン2段階認証テスト仕様（POST /api/auth/login/totp）
 
 本書は、ログイン2段階認証 API（POST /api/auth/login/totp）のテスト仕様を定義する。  
-本書の期待結果をテスト実装の目標契約とする。現行 Vitest（apps/web/tests/api.auth.login.totp.spec.ts）には旧SyncToken方式のモックが残っており、修正・再検証が必要。
+本書の期待結果をテスト実装の目標契約とする。認証API・MFA単体テストおよびSQLite実DB統合テストの実行結果は、別途検証記録に記載する。
 
 ---
 
@@ -122,7 +122,7 @@ canonical_document: true
 #### 期待結果
 
 - ロック未到達なら HTTP 400 + `auth_failed`
-- MFAログイン専用の失敗回数を1加算（現実装は未対応）
+- MFAログイン専用の失敗回数を1加算
 
 ---
 
@@ -139,7 +139,7 @@ canonical_document: true
 #### 期待結果
 
 - 既存 `User.lockUntil` が未来なら HTTP 401 + `unauthorized`（現実装）
-- 新しいMFAログイン専用ロックが未来なら HTTP 429 + `too_many_attempts`（実装予定）
+- MFAログイン専用ロックが未来なら HTTP 429 + `too_many_attempts`
 
 ---
 
@@ -160,7 +160,7 @@ canonical_document: true
 
 ---
 
-## 3. MFAログイン専用試行制限の追加テスト（未実装）
+## 3. MFAログイン専用試行制限の追加テスト
 
 基準設計: `LLM_WORKSPACE/Worklog/mfa-login-attempt-model-20261013.md`、`LLM_WORKSPACE/Worklog/totp-rate-limit-crosscheck-20261013.md`。既存 `User.totpFailCount`（TOTP初期設定用）と `User.lockUntil` の意味は変更しない。
 
@@ -176,7 +176,17 @@ canonical_document: true
 
 追加の回帰検証: `/api/auth/totp/verify` および `/api/auth/totp/disable` はMFAログイン専用カウンターを変更しない。既存 `User.lockUntil` は従来どおり別途判定する。セッションCookieはMFA完了前に発行しない。
 
-**実装ゲート:** この表は今後の期待動作であり、現行APIが合格したことを示さない。専用モデルmigration、正式API仕様更新、テスト追加後に実装・検証する。
+**実装・検証状態:** 専用モデルとmigration、APIの試行制限処理は実装済み。各ケースの実測済み範囲と未検証範囲は下表および[検証記録（2026-10-15）](./mfa_login_attempt_validation_20261015.md)を参照する。SQLite実DB統合テストはTOTP判定と端末登録をモックしており、実運用全経路の合格を意味しない。
+
+| testcase_id | 確認済み範囲 | 残る検証 |
+|---|---|---|
+| TC-06 | 単体テスト・実DBでの失敗加算 | 実TOTP/Recovery Codeの全経路 |
+| TC-07 | 単体テスト・実DBで5回目429と15分ロック | パスワードログインとの実DB結合 |
+| TC-08 | 実DBで期限切れ後の失敗1回目と正常ログイン | 期限直前・期限一致の厳密な境界 |
+| TC-09 | 単体テストでRecovery Codeの一度きり消費 | 実DBでのRecovery Code同時消費 |
+| TC-10 | 実DBで同一challengeへの5並列失敗×20回 | 複数challenge・複数プロセス・高負荷 |
+| TC-11 | 単体テスト・実DBで成功後のカウンターリセット | 実端末登録とCookieの結合 |
+| TC-12 | 一部の異常系を単体テストで確認 | 実DBでの非加算・端末関連付け失敗時の後処理 |
 
 ---
 
@@ -186,7 +196,14 @@ canonical_document: true
 pnpm -C apps/web exec vitest --run
 ```
 
-実際の実行結果を記録すること。過去の固定件数を合格基準として使用しない。
+SQLite実DB API統合テストは次の専用ランナーで実施する。通常のVitest一括実行に含めないこと。
+
+```powershell
+node apps/web/tests/run-mfa-api-sqlite.mjs
+node apps/web/tests/run-mfa-api-sqlite.mjs --repeat=20
+```
+
+実際の実行結果を記録すること。過去の固定件数を合格基準として使用しない。結果と制約は[検証記録（2026-10-15）](./mfa_login_attempt_validation_20261015.md)を参照する。
 
 ---
 
