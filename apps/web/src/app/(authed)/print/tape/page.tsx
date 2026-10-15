@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import QrLabel24 from '@/components/QrLabel24';
+import QrLabel24 from '@/app/components/QrLabel24';
 import { makeQrSvg } from '@/lib/qr';
 
 export default function TapePrintPage() {
