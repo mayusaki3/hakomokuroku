@@ -29,7 +29,7 @@ type ParseErr =
   | 'BAD_BASE64'; // base64 decode 失敗
 
 /** dataURL の解析・正規化（schema/mime/base64 ヘッダの検証と空白除去＋decode 検証） */
-export function parseAndNormalizeDataURL(
+function parseAndNormalizeDataURL(
   input: unknown
 ): { ok: true; value: ParseOk } | { ok: false; error: ParseErr } {
   // 入力は文字列必須
@@ -71,7 +71,7 @@ export function parseAndNormalizeDataURL(
 }
 
 /** DB: アイコン更新（テスト期待の select / data 形を満たす） */
-export async function updateUserIcon(
+async function updateUserIcon(
   userId: string,
   dataURL: string
 ): Promise<{ id: string; iconDataUrl?: string } | { count: number }> {
@@ -79,12 +79,12 @@ export async function updateUserIcon(
     where: { id: userId },
     data: { iconDataUrl: dataURL },
     // テストで toHaveBeenCalledWith / select 内容を確認する想定
-    select: { id: true, displayName: true, iconDataUrl: true },
+    select: { id: true, iconDataUrl: true },
   }) as any;
 }
 
 /** spy 用の経由点 */
-export const __hooks = {
+const __hooks = {
   requireUserId,
   parseAndNormalizeDataURL,
   updateUserIcon,
