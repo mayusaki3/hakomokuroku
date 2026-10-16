@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { BrowserQRCodeReader } from '@zxing/browser';
+import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { extractBoxCodeFromText } from '@/lib/qrpayload';
 import { getBoxByCode } from '@/lib/db';
 
@@ -9,7 +9,7 @@ export default function ScanPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<BrowserQRCodeReader | null>(null);
-  const stopRef = useRef<ReturnType<BrowserQRCodeReader['decodeFromVideoDevice']> | null>(null);
+  const stopRef = useRef<IScannerControls | null>(null);
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | 'auto'>('auto');
