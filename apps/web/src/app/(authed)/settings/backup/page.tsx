@@ -33,7 +33,7 @@ export default function BackupSettingsPage() {
     setMsg('');
     try {
       const res = await pullFromServer();
-      setMsg(`PULL 成功: boxes=${res.boxes}, items=${res.items}, locations=${res.locations}`);
+      setMsg(`PULL 成功: boxes=${res.received.boxes}, items=${res.received.items}, locations=${res.received.locations}`);
     } catch (e: any) {
       setMsg(`PULL 失敗: ${e?.message ?? e}`);
     } finally {
@@ -46,7 +46,7 @@ export default function BackupSettingsPage() {
     setMsg('');
     try {
       const res = await pushToServer();
-      setMsg(`PUSH 成功: boxes=${res.boxes}, items=${res.items}, locations=${res.locations}`);
+      setMsg(`PUSH 成功: boxes=${res.sent.boxes}, items=${res.sent.items}, locations=${res.sent.locations}`);
     } catch (e: any) {
       setMsg(`PUSH 失敗: ${e?.message ?? e}`);
     } finally {
