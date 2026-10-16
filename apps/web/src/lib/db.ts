@@ -199,3 +199,70 @@ export async function moveItems(itemIds: string[], targetBoxId: string) {
     return count;
   });
 }
+
+/** Legacy local-Dexie UI helpers. These do not write to the server sync database. */
+export async function getBoxByCode(code: string): Promise<Box | undefined> {
+  return db.boxes.where('code').equals(code.trim()).first();
+}
+
+export async function isBoxCodeTaken(code: string): Promise<boolean> {
+  return Boolean(await getBoxByCode(code));
+}
+
+export async function createBox(input: Pick<Box, 'code' | 'name'> & Partial<Pick<Box, 'location' | 'tags'>>): Promise<string> {
+  const code = input.code.trim();
+  if (!code) throw new Error('箱コードが必要です');
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  await db.transaction('rw', db.boxes, async () => {
+    if (await isBoxCodeTaken(code)) throw new Error('この箱コードは既に使われています');
+    await db.boxes.add({
+      id, code, name: input.name.trim() || code,
+      location: input.location ?? null, tags: input.tags ?? [],
+      createdAt: now, updatedAt: now,
+    });
+  });
+  return id;
+}
+
+export async function updateBox(id: string, changes: Partial<Pick<Box, 'name' | 'location' | 'tags'>>): Promise<void> {
+  const updated = await db.boxes.update(id, { ...changes, updatedAt: new Date().toISOString() });
+  if (!updated) throw new Error('箱が見つかりません');
+}
+
+export async function createItem(
+  boxId: string,
+  input: Pick<Item, 'name'> & Partial<Pick<Item, 'tags' | 'note'>>
+): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.transaction('rw', db.boxes, db.items, async () => {
+    if (!(await db.boxes.get(boxId))) throw new Error('箱が見つかりません');
+    await db.items.add({
+      id, boxId, name: input.name, tags: input.tags ?? [], note: input.note ?? null,
+      thumbs: [], createdAt: now, updatedAt: now,
+    });
+  });
+  return id;
+}
+
+export async function addImagesToItem(input: {
+  boxId: string;
+  itemId: string;
+  images: Array<{ blob: Blob; thumbBlob: Blob; w: number; h: number; exif?: unknown }>;
+}): Promise<void> {
+  const item = await db.items.get(input.itemId);
+  if (!item || item.boxId !== input.boxId) throw new Error('アイテムが見つかりません');
+  const thumbs = await Promise.all(input.images.map(async ({ thumbBlob }) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(thumbBlob);
+    });
+  }));
+  await db.items.update(input.itemId, {
+    thumbs: [...(item.thumbs ?? []), ...thumbs],
+    updatedAt: new Date().toISOString(),
+  });
+}
