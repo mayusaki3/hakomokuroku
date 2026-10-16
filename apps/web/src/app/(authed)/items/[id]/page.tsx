@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { useParams, useRouter } from 'next/navigation';
 import { useDexieLive } from '@/lib/live';
 import { downscaleToWebp, makeThumbWebp } from '@/lib/image';
-import { findBoxByCodeOrId, moveItem } from '@/lib/db';
+import { findBoxByCodeOrId, moveItem, listImagesByItemOrdered, addImagesToItem, removeImage, setImageOrder, removeItem } from '@/lib/db';
 
 type ImgRow = { id: string; url?: string; blob?: Blob; w: number; h: number };
 
@@ -187,6 +187,7 @@ export default function ItemDetailPage() {
                 <a href={r.url} target="_blank">
                   <img
                     src={r.url}
+                    alt={`アイテム画像 ${i + 1}`}
                     style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }}
                   />
                 </a>
