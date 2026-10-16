@@ -1,15 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import ListRow from '@/app/components/ListRow';
-
-type Item = {
-  id: string;
-  boxId: string;
-  name: string;
-  tags?: string[];
-  thumbs?: string[];
-  updatedAt?: string;
-};
+import type { Item } from '@/lib/db';
 
 export default function ItemsPage() {
   const [items, setItems] = useState<Item[]>([]);
