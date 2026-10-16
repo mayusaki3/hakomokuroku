@@ -71,17 +71,25 @@ export default function TotpSetupPage() {
           body: JSON.stringify({}), // サーバ側で userId から生成
         });
         if (!res.ok) {
-          setError('セットアップに失敗しました');
+          setErr('セットアップに失敗しました');
           return;
         }
         const data = await res.json();
         if (!data?.otpauthUrl || typeof data.otpauthUrl !== 'string') {
-          setError('QRコードURLが空です');
+          setErr('QRコードURLが空です');
           return;
         }
-        setOtpAuthUrl(data.otpauthUrl);
+        setUrl(data.otpauthUrl);
+        try {
+          const account = decodeURIComponent(new URL(data.otpauthUrl).searchParams.get('secret') ?? '');
+          setSecret(account);
+        } catch {
+          setErr('セットアップURLが不正です');
+        }
       } catch {
-        setError('セットアップに失敗しました');
+        setErr('セットアップに失敗しました');
+      } finally {
+        setLoading(false);
       }
     })();
   }, []);
