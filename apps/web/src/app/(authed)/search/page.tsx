@@ -33,7 +33,6 @@ function scoreItem(it: Item, q: string) {
   let score = 0;
   if (it.name.toLowerCase().includes(s)) score += 4;
   if ((it.tags ?? []).some((t) => t.toLowerCase().includes(s))) score += 3;
-  if ((it.features ?? '').toLowerCase().includes(s)) score += 2;
   if ((it.note ?? '').toLowerCase().includes(s)) score += 1;
   return score;
 }
@@ -79,14 +78,14 @@ export default function SearchPage() {
     const bs = boxes
       .map((b) => ({ b, score: scoreBox(b, q) }))
       .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score || b.b.updatedAt - a.b.updatedAt);
+      .sort((a, b) => b.score - a.score || b.b.updatedAt.localeCompare(a.b.updatedAt));
 
     // アイテムは所属箱も調べたいので boxMap を作る
     const map = new Map(boxes.map((b) => [b.id, b]));
     const is = items
       .map((it) => ({ it, box: map.get(it.boxId), score: scoreItem(it, q) }))
       .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score || (b.it.updatedAt ?? 0) - (a.it.updatedAt ?? 0));
+      .sort((a, b) => b.score - a.score || b.it.updatedAt.localeCompare(a.it.updatedAt));
 
     return { boxHits: bs, itemHits: is };
   }, [boxes, items, q]);
