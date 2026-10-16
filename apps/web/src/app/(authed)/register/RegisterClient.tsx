@@ -6,6 +6,7 @@ import { newBoxCode } from '@/lib/codegen';
 import { fileToThumbDataUrl, parseTags } from '@/lib/img';
 import { useEffect } from 'react';
 import QrLabel24 from '@/app/components/QrLabel24';
+import { makeQrSvg } from '@/lib/qr';
 
 type BoxDraft = Box & { photoFiles?: File[] }; // 写真は step2 で扱う
 type ItemDraft = Item & { photoFiles?: File[] };
@@ -53,6 +54,20 @@ export default function RegisterClient({
   const [box, setBox] = useState<BoxDraft>(emptyBoxDraft());
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [loc, setLoc] = useState<LocDraft | null>(null);
+  const [qrSvg, setQrSvg] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setQrSvg('');
+    if (box.code) {
+      makeQrSvg(box.code).then((svg) => {
+        if (active) setQrSvg(svg);
+      }).catch(() => {
+        if (active) setQrSvg('');
+      });
+    }
+    return () => { active = false; };
+  }, [box.code]);
 
   const itemPhotoInputRef = useRef<HTMLInputElement>(null);
   const boxPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -434,7 +449,7 @@ export default function RegisterClient({
           <h3>4. QR ラベル発行</h3>
           {box.code ? (
             <div style={{ border: '1px dashed #ddd', padding: 12, display: 'inline-block' }}>
-              <QrLabel24 code={box.code} name={box.name || '(無題)'} />
+              {qrSvg ? <QrLabel24 code={box.code} name={box.name || '(無題)'} qrSvg={qrSvg} /> : <span>QR生成中…</span>}
             </div>
           ) : (
             <div style={{ color: '#666' }}>先に「箱登録」でコードを生成してください。</div>
