@@ -72,9 +72,6 @@ export default function ScanPage() {
     try {
       stopRef.current?.stop();
     } catch {}
-    try {
-      readerRef.current?.reset();
-    } catch {}
     setStatus('stopped');
   };
 
