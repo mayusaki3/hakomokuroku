@@ -58,7 +58,9 @@ export default function ThemeEditorPage() {
   // CSSプレビューは下書きを参照（保存前でも見た目確認可、ただしグローバル適用はしない）
   const previewStyle: React.CSSProperties = useMemo(() => {
     const style: Record<string, string> = {};
-    Object.entries(draftVars || {}).forEach(([k, v]) => (style[`--${k}`] = v));
+    Object.entries(draftVars || {}).forEach(([k, v]) => {
+      if (v !== undefined) style[`--${k}`] = v;
+    });
     const wall = draftVars?.['hk-wallpaper-image'] || draftWall || ''; // vars優先
     style['--hk-wallpaper-image'] = wall
       ? wall.startsWith('url(')
@@ -150,7 +152,10 @@ export default function ThemeEditorPage() {
       return;
     }
     setT(payload);
-    persistActiveTheme(payload.vars || {}, payload.id);
+    persistActiveTheme(
+      Object.fromEntries(Object.entries(payload.vars || {}).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      payload.id
+    );
     router.push('/settings');
   };
 
