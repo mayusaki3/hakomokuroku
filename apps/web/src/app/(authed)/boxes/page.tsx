@@ -1,16 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import ListRow from '@/app/components/ListRow';
-
-type Box = {
-  id: string;
-  code: string;
-  name: string;
-  location?: string | null;
-  tags?: string[];
-  thumbs?: string[];
-  updatedAt?: string;
-};
+import type { Box } from '@/lib/db';
 
 export default function BoxesPage() {
   const [boxes, setBoxes] = useState<Box[]>([]);
