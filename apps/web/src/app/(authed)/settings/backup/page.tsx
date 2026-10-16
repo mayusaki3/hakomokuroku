@@ -3,20 +3,18 @@
 import { useEffect, useState, useMemo } from 'react';
 import { loadSyncSettings, saveSyncSettings } from '@/lib/sync-settings';
 import { pullFromServer, pushToServer } from '@/lib/sync';
-import { useSyncSettings, computeDefaultBaseUrl } from '@/lib/sync-settings';
+import { computeDefaultBaseUrl } from '@/lib/sync-settings';
 
 export default function BackupSettingsPage() {
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState<'idle' | 'pull' | 'push' | 'save'>('idle');
   const [msg, setMsg] = useState<string>('');
-  const { settings, update, refresh } = useSyncSettings();
-  const computed = computeDefaultBaseUrl();
 
   // 初期値読込
   useEffect(() => {
     const s = loadSyncSettings();
-    setEndpoint(s.endpoint || computed);
+    setEndpoint(s.baseUrl || computeDefaultBaseUrl());
     setToken(s.token || '');
   }, []);
 
@@ -25,7 +23,7 @@ export default function BackupSettingsPage() {
   const onSave = async () => {
     setBusy('save');
     setMsg('');
-    saveSyncSettings({ endpoint, token });
+    saveSyncSettings({ baseUrl: endpoint, token });
     setBusy('idle');
     setMsg('保存しました');
   };
