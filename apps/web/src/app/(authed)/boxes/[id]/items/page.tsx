@@ -24,12 +24,7 @@ export default function BoxItemsPage() {
       const items = await db.items.where('boxId').equals(boxId).reverse().sortBy('updatedAt');
       const rows = await Promise.all(
         items.map(async (it) => {
-          const img = await db.images
-            .where('itemId')
-            .equals(it.id)
-            .reverse()
-            .sortBy('createdAt')
-            .then((xs) => xs[0]);
+          const img = await db.images.where('itemId').equals(it.id).toArray().then(xs => xs.sort((a, b) => a.sortOrder - b.sortOrder)[0]);
           return {
             id: it.id,
             name: it.name,
@@ -110,6 +105,7 @@ export default function BoxItemsPage() {
               {r.thumbUrl ? (
                 <img
                   src={r.thumbUrl}
+                  alt={r.name}
                   style={{ width: '100%', height: 140, objectFit: 'cover', display: 'block' }}
                 />
               ) : (
