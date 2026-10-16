@@ -31,6 +31,18 @@ export interface Item {
   updatedAt: string; // ISO
 }
 
+export interface ItemImage {
+  id: string;
+  itemId: string;
+  blob: Blob;
+  thumbBlob: Blob;
+  w: number;
+  h: number;
+  exif?: unknown;
+  sortOrder: number;
+  createdAt: string;
+}
+
 export interface BoxLocation {
   id: string;
   boxId: string;
@@ -58,6 +70,7 @@ export interface Tag {
 class HKDB extends Dexie {
   boxes!: Table<Box, string>;
   items!: Table<Item, string>;
+  images!: Table<ItemImage, string>;
   boxLocations!: Table<BoxLocation, string>;
   tags!: Table<Tag, string>;
 
@@ -69,6 +82,13 @@ class HKDB extends Dexie {
       items: 'id, boxId, updatedAt, aiState, name',
       boxLocations: 'id, boxId, updatedAt, aiState',
       tags: 'id, [name+kind], enabled',
+    });
+    this.version(2).stores({
+      boxes: 'id, code, updatedAt, aiState',
+      items: 'id, boxId, updatedAt, aiState, name',
+      boxLocations: 'id, boxId, updatedAt, aiState',
+      tags: 'id, [name+kind], enabled',
+      images: 'id, itemId, createdAt, [itemId+sortOrder]',
     });
   }
 }
@@ -251,18 +271,43 @@ export async function addImagesToItem(input: {
   itemId: string;
   images: Array<{ blob: Blob; thumbBlob: Blob; w: number; h: number; exif?: unknown }>;
 }): Promise<void> {
-  const item = await db.items.get(input.itemId);
-  if (!item || item.boxId !== input.boxId) throw new Error('アイテムが見つかりません');
-  const thumbs = await Promise.all(input.images.map(async ({ thumbBlob }) => {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(thumbBlob);
-    });
-  }));
-  await db.items.update(input.itemId, {
-    thumbs: [...(item.thumbs ?? []), ...thumbs],
-    updatedAt: new Date().toISOString(),
+  await db.transaction('rw', db.items, db.images, async () => {
+    const item = await db.items.get(input.itemId);
+    if (!item || item.boxId !== input.boxId) throw new Error('アイテムが見つかりません');
+    const existing = await db.images.where('itemId').equals(input.itemId).toArray();
+    let order = existing.reduce((max, image) => Math.max(max, image.sortOrder), -1) + 1;
+    const now = new Date().toISOString();
+    for (const image of input.images) {
+      await db.images.add({ ...image, id: crypto.randomUUID(), itemId: input.itemId, sortOrder: order++, createdAt: now });
+    }
+    await db.items.update(input.itemId, { updatedAt: now });
+  });
+}
+
+export async function listImagesByItemOrdered(itemId: string): Promise<ItemImage[]> {
+  const images = await db.images.where('itemId').equals(itemId).toArray();
+  return images.sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt));
+}
+
+export async function removeImage(id: string): Promise<void> {
+  await db.images.delete(id);
+}
+
+export async function setImageOrder(itemId: string, imageIds: string[]): Promise<void> {
+  await db.transaction('rw', db.images, async () => {
+    const current = await db.images.where('itemId').equals(itemId).toArray();
+    if (current.length !== imageIds.length ||
+        new Set(imageIds).size !== imageIds.length ||
+        current.some(image => !imageIds.includes(image.id))) {
+      throw new Error('画像の並び順が不正です');
+    }
+    for (const [sortOrder, id] of imageIds.entries()) await db.images.update(id, { sortOrder });
+  });
+}
+
+export async function removeItem(itemId: string): Promise<void> {
+  await db.transaction('rw', db.items, db.images, async () => {
+    await db.images.where('itemId').equals(itemId).delete();
+    await db.items.delete(itemId);
   });
 }
