@@ -40,7 +40,7 @@ export default function RegisterBoxPage() {
       },
     });
     await setDraftStep('items');
-    location.assign('/register/items');
+    window.location.assign('/register/items');
   }
 
   if (loading) return <div>読み込み中…</div>;
