@@ -37,7 +37,7 @@ export async function GET(req: Request, { params }: { params: { code: string } }
   );
   if (!ok) return NextResponse.json({ error: 'bad-signature' }, { status: 403 });
 
-  const box = await prisma.box.findUnique({ where: { code: params.code } });
+  const box = await prisma.box.findFirst({ where: { code: params.code, deletedAt: null } });
   if (!box) return NextResponse.json({ error: 'not-found' }, { status: 404 });
 
   // 箱詳細へ 302 リダイレクト（Next のSPA遷移でもOK）
