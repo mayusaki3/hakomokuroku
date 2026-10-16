@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/server/prisma';
+import { getCurrentUser } from '@/server/auth';
 const ALLOW_SKEW = 5 * 60; // 5分以内
 
 function b64urlToBytes(b64: string) {
@@ -39,8 +38,13 @@ export async function GET(req: Request, { params }: { params: { code: string } }
   );
   if (!ok) return NextResponse.json({ error: 'bad-signature' }, { status: 403 });
 
-  const box = await prisma.box.findUnique({ where: { code: params.code } });
-  if (!box) return NextResponse.json({ error: 'not-found' }, { status: 404 });
+  const user = await getCurrentUser(req);
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  const box = await prisma.box.findUnique({
+    where: { userId_code: { userId: user.id, code: params.code } },
+  });
+  if (!box || box.deletedAt) return NextResponse.json({ error: 'not-found' }, { status: 404 });
 
   // ここで箱ページへサーバーリダイレクトしてもよい（SSR表示等）
   return NextResponse.json({ ok: true, code: params.code, boxId: box.id });
