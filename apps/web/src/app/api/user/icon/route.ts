@@ -16,7 +16,7 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { prisma } from '@/server/prisma';
 import { requireUserId } from '@/server/auth';
 
 type ParseOk = { mime: string; b64: string; normalized: string };
