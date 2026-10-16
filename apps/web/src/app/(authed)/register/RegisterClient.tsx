@@ -106,7 +106,7 @@ export default function RegisterClient({
   const onPickItemPhotos = async (idx: number, files: FileList | null) => {
     if (!files || !files.length) return;
     const arr = Array.from(files);
-    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, { max: 480 })));
+    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, 480)));
     setItems((list) => list.map((it, i) => (i === idx ? { ...it, thumbs, photoFiles: arr } : it)));
   };
 
@@ -132,7 +132,7 @@ export default function RegisterClient({
   const onPickBoxPhotos = async (files: FileList | null) => {
     if (!files || !files.length) return;
     const arr = Array.from(files);
-    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, { max: 480 })));
+    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, 480)));
     setBox((b) => ({ ...b, thumbs }));
   };
 
@@ -159,7 +159,7 @@ export default function RegisterClient({
   const onPickLocPhotos = async (files: FileList | null) => {
     if (!files || !files.length) return;
     const arr = Array.from(files);
-    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, { max: 480 })));
+    const thumbs = await Promise.all(arr.map((f) => fileToThumbDataUrl(f, 480)));
     setLoc((l) => {
       const base = l ?? emptyLocDraft(box.id);
       return { ...base, thumbs };
