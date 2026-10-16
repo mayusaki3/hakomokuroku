@@ -49,14 +49,11 @@ export default function NewItemPage() {
     try {
       const itemId = await createItem(boxId, {
         name: name.trim(),
-        quantity: undefined,
         tags: tags
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean),
-        features: undefined,
         note: note.trim() || undefined,
-        imageIds: [],
       });
 
       // 画像の縮小＆サムネ生成 → IndexedDB 保存
@@ -145,6 +142,7 @@ export default function NewItemPage() {
                   }}
                 >
                   <img
+                    alt={`選択した画像 ${i + 1}`}
                     src={p.url}
                     style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }}
                   />
