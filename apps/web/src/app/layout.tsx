@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import Header from '@/app/components/Header';
 import ContentArea from '@/app/components/layout/ContentArea';
 import MobileTabBar from '@/app/components/MobileTabBar';
@@ -30,7 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <ThemeRuntimeApplier />
-        <Header />
+        <Suspense fallback={null}>
+          <Header />
+        </Suspense>
 
         <TokenMirror />
 
@@ -41,7 +44,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ContentArea>{children}</ContentArea>
         </div>
 
-        <MobileTabBar />
+        <Suspense fallback={null}>
+          <MobileTabBar />
+        </Suspense>
         <SWRegister />
 
         {/* 開発時のみ露出 */}
