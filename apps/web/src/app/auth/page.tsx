@@ -1,12 +1,12 @@
 // apps/web/src/app/auth/page.tsx
 'use client';
 
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 type Mode = 'login' | 'register';
 
-export default function AuthPage() {
+function AuthPageContent() {
   // 画面表示時にテーマをデフォルトへ戻す
   useEffect(() => {
     try {
@@ -196,4 +196,8 @@ export default function AuthPage() {
         </section>
     </div>
   );
+}
+
+export default function AuthPage() {
+  return <Suspense fallback={null}><AuthPageContent /></Suspense>;
 }
