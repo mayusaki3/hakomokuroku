@@ -19,10 +19,16 @@ Status: design / tests first. Target: two independent Next.js production process
 | MFA-RACE-005 | A different invalid code submitted concurrently with a valid code | Invalid code must not be classified as a benign race |
 | MFA-RACE-006 | Valid recovery code submitted again after process restart | Reuse rejected and counted; no new session |
 | MFA-RACE-007 | Concurrent valid code requests with different challenges across two processes | Both process orderings preserve consistency; no 500 or double redemption |
+| MFA-RACE-008 | Both HTTP requests are dispatched concurrently but one server starts handling only after the other's commit | Must be treated as a replay, not automatically exempted merely because client-side dispatch was concurrent |
+| MFA-RACE-009 | Both requests are recorded by the server before either is allowed to verify or consume the code | Losing request does not increment failures; use an explicit cross-process synchronization barrier in the test harness |
+| MFA-RACE-010 | Invalid code request enters the barrier alongside a valid code request | Invalid code increments failure count even though a successful redemption overlaps |
 
 ## Design constraints
 - A missing hash from the user's remaining recoveryCodes list is **not sufficient** to identify a race.
-- The test harness must distinguish a request initiated before redemption from a later replay; use persisted redemption evidence with a timestamp or equivalent atomic, unambiguous evidence.
+- The test harness must distinguish a request **observed by the server** before redemption from a later replay; use persisted redemption evidence with a timestamp or equivalent atomic, unambiguous evidence. Client-side concurrent `Promise.all` is insufficient.
+- Persisting a consumed hash alone is insufficient: the system must also have a trustworthy, server-side request-start ordering relative to the commit. Design this without letting an attacker supply timestamps or forge an in-flight request.
+- If there is no reliable ordering evidence, fail closed and count the invalid authentication attempt rather than suppressing lockout protection.
+- The race test must coordinate the two independent server processes with a test-only barrier at a defined pre-validation point. Do not enable this barrier in production configuration.
 - Do not exempt all missing recovery codes from rate limiting.
 - Keep error responses from disclosing whether a supplied recovery code was ever valid; 400/404 response compatibility requires review.
 - Production implementation must be preceded by automated regression tests for MFA-RACE-001 through MFA-RACE-006.
