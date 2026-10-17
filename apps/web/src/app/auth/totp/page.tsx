@@ -1,10 +1,10 @@
 // apps/web/src/app/auth/totp/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function TotpPage() {
+function TotpPage() {
   const sp = useSearchParams();
   const challengeId = sp.get('challengeId') || '';
   const next = sp.get('next') || '/';
@@ -166,5 +166,13 @@ export default function TotpPage() {
         </form>
       </section>
     </main>
+  );
+}
+
+export default function TotpPagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <TotpPage />
+    </Suspense>
   );
 }
