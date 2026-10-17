@@ -1,38 +1,36 @@
-// ユーザー名と「現在のセッション」デバイス名を更新する。
+// ユーザー名と現在のセッションに紐づくデバイス名を更新する。
 // body: { userName?: string, deviceName?: string }
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies, headers } from 'next/headers';
-import { prisma } from '@/lib/prisma';
-import { sha256hex } from '@/server/crypto';
-import { readSession } from '@/server/auth';
+import { prisma } from '@/server/prisma';
+import { readAuthenticatedSession } from '@/server/auth';
 
 export async function PUT(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const { userName, deviceName } = body ?? {};
-
-    const raw = cookies().get('st')?.value;
-    if (!raw) return NextResponse.json({ ok: false }, { status: 401 });
-    const tokenHash = sha256hex(raw);
-    const session = await readSession(tokenHash);
+    const session = await readAuthenticatedSession();
     if (!session) return NextResponse.json({ ok: false }, { status: 401 });
 
-    // ユーザー名の更新（任意項目）
+    const body = await req.json().catch(() => ({}));
+    const { userName, deviceName } = body ?? {};
     if (typeof userName === 'string') {
       await prisma.user.update({
         where: { id: session.userId },
         data: { userName },
       });
     }
-
-    // このセッションの deviceName を更新（他デバイスには影響しない）
     if (typeof deviceName === 'string') {
-      await prisma.syncToken.update({
+      const current = await prisma.authSession.findUnique({
         where: { id: session.id },
-        data: { deviceName },
+        select: { deviceId: true },
       });
+      if (current?.deviceId) {
+        await prisma.device.updateMany({
+          where: { userId: session.userId, deviceId: current.deviceId },
+          data: { name: deviceName },
+        });
+      } else {
+        return NextResponse.json({ ok: false, error: 'device_not_associated' }, { status: 409 });
+      }
     }
-
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false, error: 'internal' }, { status: 500 });
