@@ -1,15 +1,21 @@
-// apps/web/src/app/api/settings/vision/get/route.ts
 import { NextResponse } from 'next/server';
 import { requireUserId } from '@/server/auth';
 import { prisma } from '@/server/prisma';
+
 export async function GET(req: Request) {
   const uid = await requireUserId(req);
-  const s = await prisma.userSetting.findFirst({ where: { userId: uid } }).catch(() => null);
+  const setting = await prisma.userSetting.findUnique({ where: { userId: uid } });
+  const values = setting?.uiSettings;
+  const ui = values && typeof values === 'object' && !Array.isArray(values) ? values : {};
+  const field = (key: string) => {
+    const value = (ui as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value : '';
+  };
   return NextResponse.json({
-    provider: s?.visionProvider ?? 'none',
-    apiKey: s?.visionApiKey ?? '',
-    promptName: s?.visionPromptName ?? '',
-    promptTags: s?.visionPromptTags ?? '',
-    promptNote: s?.visionPromptNote ?? '',
+    provider: field('visionProvider') || 'none',
+    apiKey: field('visionApiKey'),
+    promptName: field('visionPromptName'),
+    promptTags: field('visionPromptTags'),
+    promptNote: field('visionPromptNote'),
   });
 }
