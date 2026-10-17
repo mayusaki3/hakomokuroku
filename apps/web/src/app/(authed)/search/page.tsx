@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Box, Item, db } from '@/lib/db';
 import { useDexieLive } from '@/lib/live';
@@ -37,7 +37,7 @@ function scoreItem(it: Item, q: string) {
   return score;
 }
 
-export default function SearchPage() {
+function SearchPage() {
   const sp = useSearchParams();
   const router = useRouter();
   const [q, setQ] = useState(sp.get('q') ?? '');
@@ -262,5 +262,13 @@ export default function SearchPage() {
         </>
       )}
     </main>
+  );
+}
+
+export default function SearchPagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <SearchPage />
+    </Suspense>
   );
 }
