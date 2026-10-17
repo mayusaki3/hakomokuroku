@@ -105,7 +105,11 @@ try {
     const sessions = await db.authSession.findMany({ where: { userId: id } });
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
     const user = await db.user.findUniqueOrThrow({ where: { id } });
-    const pass = JSON.stringify(statuses) === '[200,404]' &&
+    const winner = results.filter(r => r.status === 200 && r.body?.ok === true);
+    const loser = results.filter(r =>
+      (r.status === 404 && r.body?.error === 'not_found') ||
+      (r.status === 400 && r.body?.error === 'auth_failed'));
+    const pass = winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
       Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0;
