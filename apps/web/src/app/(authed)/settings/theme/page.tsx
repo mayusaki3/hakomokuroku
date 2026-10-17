@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ContentCard from '@/app/components/layout/ContentCard';
 import { Save, X, Image as ImageIcon, Camera, Trash2 } from 'lucide-react';
@@ -8,7 +8,7 @@ import { Save, X, Image as ImageIcon, Camera, Trash2 } from 'lucide-react';
 type Vars = Partial<Record<string, string>>;
 type ThemeDef = { id?: string; name: string; vars: Vars; wallpaperThumb?: string | null };
 
-export default function ThemeEditorPage() {
+function ThemeEditorPage() {
   const router = useRouter();
   const sp = useSearchParams();
   const mode = sp.get('mode'); // 'new' | null
@@ -445,5 +445,13 @@ export default function ThemeEditorPage() {
         </div>
       </ContentCard>
     </>
+  );
+}
+
+export default function ThemeEditorPagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <ThemeEditorPage />
+    </Suspense>
   );
 }
