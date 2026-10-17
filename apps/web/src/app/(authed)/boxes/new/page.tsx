@@ -1,11 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { createBox, isBoxCodeTaken } from '@/lib/db';
 import { generateBoxCode } from '@/lib/id';
 import { useRouter } from 'next/navigation';
 import { useSearchParams } from 'next/navigation';
 
-export default function NewBoxPage() {
+function NewBoxPage() {
   const router = useRouter();
   const [code, setCode] = useState(generateBoxCode());
   const [name, setName] = useState('新しい箱');
@@ -121,5 +121,13 @@ export default function NewBoxPage() {
         </div>
       </form>
     </main>
+  );
+}
+
+export default function NewBoxPagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <NewBoxPage />
+    </Suspense>
   );
 }
