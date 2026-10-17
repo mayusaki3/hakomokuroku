@@ -8,7 +8,7 @@ function json(body: any, status: number) {
   });
 }
 
-const DEFAULT_THEME_ID = 'default';
+const DEFAULT_THEME_ID = 'builtin:system';
 
 export async function GET() {
   try {
@@ -20,11 +20,11 @@ export async function GET() {
     }
 
     // ログイン済みは DB 参照。なければ既定
-    const row = await prisma.themeActive.findUnique({
+    const row = await prisma.userSetting.findUnique({
       where: { userId: user.id },
-      select: { themeId: true },
+      select: { activeTheme: true },
     });
-    const themeId = row?.themeId ?? DEFAULT_THEME_ID;
+    const themeId = row?.activeTheme ?? DEFAULT_THEME_ID;
     return json({ ok: true, active: { themeId } }, 200);
   } catch {
     // DB 例外は 500/503 想定。ここでは 500 固定（テスト側は [500,503] 許容）
