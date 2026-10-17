@@ -17,6 +17,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(root, 'package.json'));
 const { PrismaClient } = require('@prisma/client');
 const repeatText = process.argv.find(arg => arg.startsWith('--repeat='));
+const scenario = process.argv.includes('--scenario=replay') ? 'replay' : 'race';
 const repeat = repeatText ? Number(repeatText.slice(9)) : 1;
 if (!Number.isSafeInteger(repeat) || repeat < 1 || repeat > 100)
   throw new Error('--repeat must be an integer between 1 and 100');
@@ -93,14 +94,17 @@ try {
         id: challengeId, userId: id, expiresAt: new Date(Date.now() + 600000),
       } });
     }
-    const results = await Promise.all(endpoints.map(async (endpoint, index) => {
+    const submit = async (endpoint, index, code = recovery) => {
       const response = await fetch(endpoint, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: challenges[index], recoveryCode: recovery }),
+        body: JSON.stringify({ challengeId: challenges[index], recoveryCode: code }),
         signal: AbortSignal.timeout(30000),
       });
       return { server: index + 1, status: response.status, body: await response.json() };
-    }));
+    };
+    const results = scenario === 'replay'
+      ? [await submit(endpoints[0], 0), await submit(endpoints[1], 1)]
+      : await Promise.all(endpoints.map((endpoint, index) => submit(endpoint, index)));
     const statuses = results.map(r => r.status).sort((a, b) => a - b);
     const sessions = await db.authSession.findMany({ where: { userId: id } });
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
@@ -110,13 +114,14 @@ try {
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
       (r.status === 400 && r.body?.error === 'auth_failed'));
+    const expectedFailures = scenario === 'replay' ? 1 : 0;
     const pass = winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
       Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0 &&
-      (attempt?.failCount ?? 0) === 0 && attempt?.lockedUntil == null;
+      (attempt?.failCount ?? 0) === expectedFailures && attempt?.lockedUntil == null;
     console.log(JSON.stringify({
-      iteration, pass, statuses, results, sessions: sessions.length,
+      iteration, scenario, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
       usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
       mfaFailCount: attempt?.failCount ?? 0,
