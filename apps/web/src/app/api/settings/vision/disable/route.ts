@@ -6,8 +6,8 @@ export async function POST(req: Request) {
   const uid = await requireUserId(req);
   await prisma.userSetting.upsert({
     where: { userId: uid },
-    update: { visionProvider: 'none' },
-    create: { userId: uid, visionProvider: 'none' },
+    update: { uiSettings: { visionProvider: 'none' } },
+    create: { userId: uid, uiSettings: { visionProvider: 'none' } },
   });
   return NextResponse.json({ ok: true });
 }
