@@ -1,10 +1,10 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { makeQrSvg } from '@/lib/qr';
 import QrLabel24 from '@/app/components/QrLabel24';
 
-export default function LabelsA4Page() {
+function LabelsA4Page() {
   const sp = useSearchParams();
 
   // ベース情報
@@ -134,5 +134,13 @@ export default function LabelsA4Page() {
         }
       `}</style>
     </main>
+  );
+}
+
+export default function LabelsA4PagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <LabelsA4Page />
+    </Suspense>
   );
 }
