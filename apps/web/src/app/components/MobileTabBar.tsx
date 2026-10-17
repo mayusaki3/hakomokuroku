@@ -3,6 +3,7 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
+import type { ReadonlyURLSearchParams } from 'next/navigation';
 
 function preserveParams(sp: ReadonlyURLSearchParams, href: string, keys = ['q', 'qr']) {
   const params = new URLSearchParams();
