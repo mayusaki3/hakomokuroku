@@ -105,6 +105,7 @@ try {
     const sessions = await db.authSession.findMany({ where: { userId: id } });
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
     const user = await db.user.findUniqueOrThrow({ where: { id } });
+    const attempt = await db.mfaLoginAttempt.findUnique({ where: { userId: id } });
     const winner = results.filter(r => r.status === 200 && r.body?.ok === true);
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
@@ -117,6 +118,8 @@ try {
       iteration, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
       usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
+      mfaFailCount: attempt?.failCount ?? 0,
+      mfaLockedUntil: attempt?.lockedUntil ?? null,
     }));
     if (!pass) {
       process.exitCode = 1;
