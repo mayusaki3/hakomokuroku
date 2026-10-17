@@ -4,6 +4,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { authenticator } from 'otplib';
 import { prisma } from '@/server/prisma';
+import { waitForMfaRaceTestBarrier } from '@/server/mfa-race-test-barrier';
 import { decryptStr } from '@/server/crypto';
 import { isMfaLoginLocked, recordMfaLoginFailure } from '@/server/mfa-login-attempt';
 import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
@@ -40,6 +41,10 @@ export async function POST(req: Request) {
     if (await isMfaLoginLocked(user.id)) {
       return NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 });
     }
+
+    // Diagnostic barrier: both servers have passed challenge/user/lock checks.
+    // No effect unless the isolated test process sets its secret and directory.
+    await waitForMfaRaceTestBarrier(req, challenge.id);
 
     let valid = false;
     let consumedRecoveryHash: string | null = null;
