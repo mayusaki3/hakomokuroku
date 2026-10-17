@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useCurrentHeaderTitle } from './HeaderTitleContext';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
+import type { ReadonlyURLSearchParams } from 'next/navigation';
 
 type Me = { iconDataUrl?: string | null };
 
