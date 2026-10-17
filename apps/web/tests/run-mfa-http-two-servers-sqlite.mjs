@@ -19,7 +19,7 @@ const { PrismaClient } = require('@prisma/client');
 const repeatText = process.argv.find(arg => arg.startsWith('--repeat='));
 const scenarioArg = process.argv.find(arg => arg.startsWith('--scenario='));
 const scenario = scenarioArg?.slice('--scenario='.length) ?? 'race';
-if (!['race', 'replay', 'barrier', 'invalid-barrier'].includes(scenario))
+if (!['race', 'replay', 'barrier', 'invalid-barrier', 'invalid-first', 'valid-first'].includes(scenario))
   throw new Error('Unknown scenario');
 const repeat = repeatText ? Number(repeatText.slice(9)) : 1;
 if (!Number.isSafeInteger(repeat) || repeat < 1 || repeat > 100)
@@ -115,11 +115,15 @@ try {
       });
       return { server: index + 1, status: response.status, body: await response.json() };
     };
-    const results = scenario === 'replay'
-      ? [await submit(endpoints[0], 0), await submit(endpoints[1], 1)]
-      : await Promise.all(endpoints.map((endpoint, index) =>
+    const invalidCode = 'INVALID-' + randomBytes(16).toString('hex');
+    const results = scenario === 'replay' || scenario === 'valid-first'
+      ? [await submit(endpoints[0], 0), await submit(endpoints[1], 1,
+          scenario === 'valid-first' ? invalidCode : recovery)]
+      : scenario === 'invalid-first'
+        ? [await submit(endpoints[1], 1, invalidCode), await submit(endpoints[0], 0)]
+        : await Promise.all(endpoints.map((endpoint, index) =>
           submit(endpoint, index, scenario === 'invalid-barrier' && index === 1
-            ? 'INVALID-' + randomBytes(16).toString('hex') : recovery)));
+            ? invalidCode : recovery)));
     const statuses = results.map(r => r.status).sort((a, b) => a - b);
     const sessions = await db.authSession.findMany({ where: { userId: id } });
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
@@ -129,17 +133,25 @@ try {
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
       (r.status === 400 && r.body?.error === 'auth_failed'));
-    const expectedFailures = scenario === 'replay' || scenario === 'invalid-barrier' ? 1 : 0;
+    const expectedFailures = scenario === 'replay' || scenario === 'valid-first' ? 1 : 0;
+    // In invalid-first the subsequent successful login resets the counter.
+    // In invalid-barrier either transaction may commit last; 0 or 1 is valid
+    // until a durable failure-event log can prove that the failure was recorded.
     const pass = winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
       Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0 &&
-      (attempt?.failCount ?? 0) === expectedFailures && attempt?.lockedUntil == null;
+      (scenario === 'invalid-barrier'
+        ? [0, 1].includes(attempt?.failCount ?? 0)
+        : (attempt?.failCount ?? 0) === expectedFailures) &&
+      attempt?.lockedUntil == null;
     console.log(JSON.stringify({
       iteration, scenario, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
       usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
       mfaFailCount: attempt?.failCount ?? 0,
+      failureCountInterpretation: scenario === 'invalid-barrier'
+        ? 'concurrent-reset-order-undetermined' : 'deterministic',
       mfaLockedUntil: attempt?.lockedUntil ?? null,
     }));
     if (!pass) {
