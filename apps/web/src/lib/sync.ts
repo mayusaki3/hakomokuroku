@@ -6,7 +6,7 @@ const LS_LAST_PUSH = 'hk.sync.lastPushAt';
 
 // --- Pull（カーソル方式） ---
 export async function doPull() {
-  const { endpoint, token } = loadSyncSettings();
+  const { baseUrl: endpoint, token } = loadSyncSettings();
   if (!endpoint || !token) throw new Error('同期設定が未設定です');
 
   const cursor = typeof window !== 'undefined' ? localStorage.getItem(LS_CURSOR) || '' : '';
@@ -47,7 +47,7 @@ export async function doPull() {
 
 // --- Push（簡易差分：lastPushAt 以降、なければ全件） ---
 export async function doPush() {
-  const { endpoint, token } = loadSyncSettings();
+  const { baseUrl: endpoint, token } = loadSyncSettings();
   if (!endpoint || !token) throw new Error('同期設定が未設定です');
 
   const since = typeof window !== 'undefined' ? localStorage.getItem(LS_LAST_PUSH) || '' : '';
