@@ -17,7 +17,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(root, 'package.json'));
 const { PrismaClient } = require('@prisma/client');
 const repeatText = process.argv.find(arg => arg.startsWith('--repeat='));
-const scenario = process.argv.includes('--scenario=replay') ? 'replay' : 'race';
+const scenarioArg = process.argv.find(arg => arg.startsWith('--scenario='));
+const scenario = scenarioArg?.slice('--scenario='.length) ?? 'race';
+if (!['race', 'replay', 'barrier', 'invalid-barrier'].includes(scenario))
+  throw new Error('Unknown scenario');
 const repeat = repeatText ? Number(repeatText.slice(9)) : 1;
 if (!Number.isSafeInteger(repeat) || repeat < 1 || repeat > 100)
   throw new Error('--repeat must be an integer between 1 and 100');
@@ -38,8 +41,11 @@ async function freePort() {
 
 const directory = await mkdtemp(join(tmpdir(), 'hakomokuroku-mfa-two-http-'));
 const databaseUrl = 'file:' + join(directory, 'isolated.db').replaceAll('\\', '/');
+const testSecret = randomBytes(32).toString('hex');
 const env = {
   ...process.env, DATABASE_URL: databaseUrl,
+  MFA_RACE_TEST_SECRET: testSecret,
+  MFA_RACE_TEST_DIR: join(directory, 'barriers'),
   TOTP_SECRET_KEY: randomBytes(32).toString('base64'),
   NODE_ENV: 'production',
 };
@@ -95,8 +101,15 @@ try {
       } });
     }
     const submit = async (endpoint, index, code = recovery) => {
+      const barrier = scenario === 'barrier' || scenario === 'invalid-barrier';
       const response = await fetch(endpoint, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: {
+          'content-type': 'application/json',
+          ...(barrier ? {
+            'x-mfa-race-test-secret': testSecret,
+            'x-mfa-race-test-group': 'iteration-' + iteration,
+          } : {}),
+        },
         body: JSON.stringify({ challengeId: challenges[index], recoveryCode: code }),
         signal: AbortSignal.timeout(30000),
       });
@@ -104,7 +117,9 @@ try {
     };
     const results = scenario === 'replay'
       ? [await submit(endpoints[0], 0), await submit(endpoints[1], 1)]
-      : await Promise.all(endpoints.map((endpoint, index) => submit(endpoint, index)));
+      : await Promise.all(endpoints.map((endpoint, index) =>
+          submit(endpoint, index, scenario === 'invalid-barrier' && index === 1
+            ? 'INVALID-' + randomBytes(16).toString('hex') : recovery)));
     const statuses = results.map(r => r.status).sort((a, b) => a - b);
     const sessions = await db.authSession.findMany({ where: { userId: id } });
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
@@ -114,7 +129,7 @@ try {
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
       (r.status === 400 && r.body?.error === 'auth_failed'));
-    const expectedFailures = scenario === 'replay' ? 1 : 0;
+    const expectedFailures = scenario === 'replay' || scenario === 'invalid-barrier' ? 1 : 0;
     const pass = winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
