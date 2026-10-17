@@ -55,6 +55,16 @@ export interface BoxLocation {
   updatedAt: string; // ISO
 }
 
+export interface RegisterDraft {
+  id: string;
+  step: 'box' | 'items' | 'box-photos' | 'label' | 'location';
+  box: Partial<Box>;
+  items: Array<Partial<Item>>;
+  location: Partial<BoxLocation>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type TagKind = 'BOX' | 'ITEM' | 'SHARED';
 
 export interface Tag {
@@ -73,6 +83,7 @@ class HKDB extends Dexie {
   images!: Table<ItemImage, string>;
   boxLocations!: Table<BoxLocation, string>;
   tags!: Table<Tag, string>;
+  drafts!: Table<RegisterDraft, string>;
 
   constructor() {
     super('hk-local-v1');
@@ -89,6 +100,14 @@ class HKDB extends Dexie {
       boxLocations: 'id, boxId, updatedAt, aiState',
       tags: 'id, [name+kind], enabled',
       images: 'id, itemId, createdAt, [itemId+sortOrder]',
+    });
+    this.version(3).stores({
+      boxes: 'id, code, updatedAt, aiState',
+      items: 'id, boxId, updatedAt, aiState, name',
+      boxLocations: 'id, boxId, updatedAt, aiState',
+      tags: 'id, [name+kind], enabled',
+      images: 'id, itemId, createdAt, [itemId+sortOrder]',
+      drafts: 'id, updatedAt',
     });
   }
 }
