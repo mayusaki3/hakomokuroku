@@ -113,7 +113,8 @@ try {
     const pass = winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
-      Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0;
+      Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0 &&
+      (attempt?.failCount ?? 0) === 0 && attempt?.lockedUntil == null;
     console.log(JSON.stringify({
       iteration, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
