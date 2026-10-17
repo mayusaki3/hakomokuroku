@@ -1,10 +1,10 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import QrLabel24 from '@/app/components/QrLabel24';
 import { makeQrSvg } from '@/lib/qr';
 
-export default function TapePrintPage() {
+function TapePrintPage() {
   const sp = useSearchParams();
   const code = sp.get('code') || 'BX-00000';
   const name = sp.get('name') || '箱名';
@@ -69,5 +69,13 @@ export default function TapePrintPage() {
         }
       `}</style>
     </main>
+  );
+}
+
+export default function TapePrintPagePageBoundary() {
+  return (
+    <Suspense fallback={null}>
+      <TapePrintPage />
+    </Suspense>
   );
 }
