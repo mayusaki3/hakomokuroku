@@ -37,3 +37,50 @@ Status: design / tests first. Target: two independent Next.js production process
 
 ## Current implementation risk
 In `/api/auth/login/totp`, the initial user recoveryCodes read can occur after the other server has committed its redemption. The invalid branch then calls `recordMfaLoginFailure`; depending on request timing this can happen after the successful transaction reset failCount. A post-hoc check of only `lastLoginAt` or challenge creation time is not enough to prove the submitted code was the consumed code.
+
+## Event-ordering design decision (2026-10-18)
+
+The 20-iteration runs of `invalid-first`, `valid-first`, `invalid-barrier` and `barrier` all passed. In `invalid-barrier`, the final failure counter varied between 0 and 1. That is compatible with different serialization orders; it does **not** establish that every failed attempt was counted.
+
+### Required durable evidence
+
+A future schema change must provide two separate concepts:
+
+1. **Attempt admission**: an immutable, server-generated attempt ID associated with a user, login challenge, and the SHA-256 hash of the submitted recovery code. The database must assign a trustworthy ordering point *before* validation and before any successful consumption. A wall-clock timestamp alone is insufficient across server processes.
+2. **Redemption event**: an immutable record of the recovery-code hash, consuming attempt ID, and the database ordering point at which the code was consumed. Its creation, recovery-code removal, challenge claim, session creation and successful-login counter reset must be atomic.
+
+A loser may be classified as a benign duplicate **only if** the submitted hash equals the recorded consumed hash **and** its persisted admission ordering point precedes the consuming transaction's ordering point. Otherwise it is a failed authentication attempt. No request-supplied timestamp, client token or client-controlled attempt ID can establish this ordering.
+
+The ordering primitive must be validated against SQLite's actual transaction/locking behavior, including transaction retries and process termination. A database sequence allocated in a transaction that later rolls back cannot be treated as a committed admission event. Avoid a read-then-write transaction that fails with SQLITE_BUSY under competing writers.
+
+### Failure counter semantics
+
+- A committed invalid attempt increases the counter; a subsequent committed successful login resets it.
+- A committed successful login followed by an invalid attempt leaves the counter incremented.
+- When both overlap, final counter 0 or 1 may be valid **only when durable event ordering proves which commit happened last**.
+- A benign duplicate rejection does not create a failure event or increment the counter.
+- A post-redemption replay must create a failure event and increment the counter even when it uses a different still-valid challenge.
+- Preserve five failures / 15-minute lockout, and ensure that a success cannot bypass a lock committed before its own decision point.
+
+### Additional regression tests before production implementation
+
+| ID | Scenario | Expected |
+| --- | --- | --- |
+| MFA-RACE-011 | Invalid attempt commits before valid login | Failure event retained, current failCount 0 after successful reset |
+| MFA-RACE-012 | Valid login commits before invalid attempt | Failure event retained, current failCount 1 |
+| MFA-RACE-013 | Valid and invalid requests overlap | Exactly one failure event; final counter matches persisted event order |
+| MFA-RACE-014 | Same valid code admitted twice before redemption | One success, one benign duplicate, no failure event for duplicate |
+| MFA-RACE-015 | Same code admitted only after redemption | Rejected as replay, exactly one failure event |
+| MFA-RACE-016 | Competing requests under SQLite lock contention and process restart | No duplicate session, no lost event, no unhandled 500 |
+| MFA-RACE-017 | Unrelated invalid code overlaps consumed valid code | Failure recorded, never exempted based only on timing |
+| MFA-RACE-018 | Five invalid attempts interleaved with a successful login | Lockout and reset follow committed event order |
+
+### Implementation gates
+
+1. Add schema and migration for durable admission/redemption/failure events with bounded retention and no plaintext recovery codes.
+2. Add tests that query persisted event rows and verify ordering, not only `failCount`.
+3. Implement transaction-safe admission and consumption; then make the route consult persisted evidence before suppressing failure increments.
+4. Re-run `race`, `barrier`, `replay`, `invalid-first`, `valid-first`, `invalid-barrier` plus MFA-RACE-011 through MFA-RACE-018 against two real server processes.
+5. Do not remove the existing failure-count assertions or weaken replay detection to make concurrency tests pass.
+
+**Security note:** Do not store recovery codes in plaintext or emit submitted hashes in logs. Plan retention and cleanup for admission records; preserve enough redemption evidence for replay classification without retaining unbounded per-request history.
