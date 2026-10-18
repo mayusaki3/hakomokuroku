@@ -50,6 +50,8 @@ model User {
   updatedAt   DateTime  @updatedAt
 
   mfaLoginAttempt MfaLoginAttempt?
+  mfaAuthEvents   MfaAuthEvent[]
+  mfaRedemptions  MfaRecoveryRedemption[]
   authSessions    AuthSession[]
   boxes           Box[]
   items           Item[]
@@ -93,6 +95,44 @@ model MfaLoginAttempt {
   updatedAt   DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// All committed MFA events share one SQLite AUTOINCREMENT ordering domain.
+// A rolled-back event ID is not durable evidence. Do not infer ordering from
+// createdAt: independently running servers may have different wall clocks.
+// Event kinds: ADMISSION, REDEMPTION, FAILURE, SUCCESS.
+// Recovery hashes are SHA-256 digests, never plaintext recovery codes.
+model MfaAuthEvent {
+  id          Int      @id @default(autoincrement())
+  userId      String
+  challengeId String
+  kind        String
+  codeHash    String?
+  admissionId Int?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, id])
+  @@index([userId, challengeId])
+  @@index([createdAt])
+}
+
+// The unique key prevents a recovery code from being redeemed twice.
+// Keep the redemption and its event in the same transaction as code removal,
+// challenge claim, session creation and successful-login counter reset.
+model MfaRecoveryRedemption {
+  id          String   @id @default(cuid())
+  userId      String
+  codeHash    String
+  admissionId Int
+  eventId     Int      @unique
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+  @@index([userId, createdAt])
 }
 
 model LoginChallenge {
