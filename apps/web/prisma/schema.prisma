@@ -92,7 +92,7 @@ model MfaLoginAttempt {
   userId      String    @id
   failCount   Int       @default(0)
   lockedUntil DateTime?
-  updatedAt   DateTime  @updatedAt
+  updatedAt   DateTime  @default(now()) @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
