@@ -328,16 +328,16 @@ model FullResyncSnapshotEntity {
 }
 
 model Device {
-  userId       String
-  deviceId     String
-  name         String?
+  userId         String
+  deviceId       String
+  name           String?
   credentialHash String?
-  activePrefix String
-  createdAt    DateTime
-  lastUsedAt   DateTime
+  activePrefix   String
+  createdAt      DateTime
+  lastUsedAt     DateTime
 
-  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  prefixes DevicePrefix[]
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prefixes     DevicePrefix[]
   authSessions AuthSession[]
 
   @@id([userId, deviceId])
