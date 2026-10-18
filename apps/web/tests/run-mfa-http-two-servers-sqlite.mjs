@@ -129,6 +129,47 @@ try {
     const used = await db.loginChallenge.count({ where: { userId: id, used: true } });
     const user = await db.user.findUniqueOrThrow({ where: { id } });
     const attempt = await db.mfaLoginAttempt.findUnique({ where: { userId: id } });
+    // Durable event assertions are deliberately test-first: the current route
+    // does not yet persist these rows, so these checks must fail until integration.
+    const events = await db.mfaAuthEvent.findMany({
+      where: { userId: id }, orderBy: { id: 'asc' },
+    });
+    const redemptions = await db.mfaRecoveryRedemption.findMany({
+      where: { userId: id },
+    });
+    const admissions = events.filter(e => e.kind === 'ADMISSION');
+    const successes = events.filter(e => e.kind === 'SUCCESS');
+    const failures = events.filter(e => e.kind === 'FAILURE');
+    const redemptionEvents = events.filter(e => e.kind === 'REDEMPTION');
+    const invalidHash = createHash('sha256').update(invalidCode.trim()).digest('hex');
+    const redemption = redemptions[0];
+    const redeemedEvent = redemptionEvents[0];
+    const admissionById = new Map(admissions.map(e => [e.id, e]));
+    const durableRedemptionValid = redemptions.length === 1 &&
+      redemptionEvents.length === 1 &&
+      redemption?.codeHash === recoveryHash &&
+      redemption?.eventId === redeemedEvent?.id &&
+      redemption?.admissionId === redeemedEvent?.admissionId &&
+      admissionById.get(redemption?.admissionId)?.codeHash === recoveryHash &&
+      redemption.admissionId < redemption.eventId;
+    const expectedFailureEvents = scenario === 'invalid-barrier' ||
+      scenario === 'invalid-first' || scenario === 'valid-first' ||
+      scenario === 'replay' ? 1 : 0;
+    const durableFailuresValid = failures.length === expectedFailureEvents &&
+      (expectedFailureEvents === 0 || failures[0].codeHash ===
+        (scenario === 'replay' ? recoveryHash : invalidHash));
+    const eventOrderValid = admissions.length === 2 &&
+      successes.length === 1 &&
+      durableRedemptionValid && durableFailuresValid &&
+      events.every((event, index) => index === 0 || events[index - 1].id < event.id) &&
+      (scenario !== 'barrier' ||
+        admissions.every(e => e.id < redeemedEvent.id));
+    // A successful login resets the counter; later committed failures increment it.
+    // Benign duplicate requests have no FAILURE event.
+    const lastSuccess = successes[0]?.id ?? -1;
+    const failuresAfterSuccess = failures.filter(e => e.id > lastSuccess).length;
+    const durableCounterValid = eventOrderValid &&
+      (attempt?.failCount ?? 0) === failuresAfterSuccess;
     const winner = results.filter(r => r.status === 200 && r.body?.ok === true);
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
@@ -137,7 +178,7 @@ try {
     // In invalid-first the subsequent successful login resets the counter.
     // In invalid-barrier either transaction may commit last; 0 or 1 is valid
     // until a durable failure-event log can prove that the failure was recorded.
-    const pass = winner.length === 1 && loser.length === 1 &&
+    const pass = eventOrderValid && durableCounterValid &&\n      winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
       Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0 &&
@@ -149,7 +190,7 @@ try {
       iteration, scenario, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
       usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
-      mfaFailCount: attempt?.failCount ?? 0,
+      mfaFailCount: attempt?.failCount ?? 0,\n      durableEvents: events.map(e => ({ id: e.id, kind: e.kind, admissionId: e.admissionId })),\n      redemptionCount: redemptions.length, failureEventCount: failures.length,\n      eventOrderValid, durableCounterValid,
       failureCountInterpretation: scenario === 'invalid-barrier'
         ? 'concurrent-reset-order-undetermined' : 'deterministic',
       mfaLockedUntil: attempt?.lockedUntil ?? null,
