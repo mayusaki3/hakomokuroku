@@ -178,7 +178,8 @@ try {
     // In invalid-first the subsequent successful login resets the counter.
     // In invalid-barrier either transaction may commit last; 0 or 1 is valid
     // until a durable failure-event log can prove that the failure was recorded.
-    const pass = eventOrderValid && durableCounterValid &&\n      winner.length === 1 && loser.length === 1 &&
+    const pass = eventOrderValid && durableCounterValid &&
+      winner.length === 1 && loser.length === 1 &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null && used === 1 &&
       Array.isArray(user.recoveryCodes) && user.recoveryCodes.length === 0 &&
