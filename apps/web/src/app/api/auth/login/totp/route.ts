@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
   try {
     const challenge = await prisma.loginChallenge.findUnique({ where: { id: input.challengeId } });
-    if (!challenge || challenge.used || challenge.expiresAt <= new Date()) {
+    if (!challenge || challenge.expiresAt <= new Date()) {
       return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
     }
     const user = await prisma.user.findUnique({ where: { id: challenge.userId } });
@@ -53,6 +53,13 @@ export async function POST(req: Request) {
     });
     await waitForMfaRaceTestBarrier(req, challenge.id);
 
+    // An already-used challenge may carry a recovery-code replay. Record its
+    // admission and evaluate it against the committed redemption order.
+    // For TOTP-only requests retain the existing not_found response.
+    if (challenge.used && !recoveryHash) {
+      return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+    }
+
     let valid = false;
     let consumedRecoveryHash: string | null = null;
     if (typeof input.code === 'string') {
@@ -63,11 +70,12 @@ export async function POST(req: Request) {
       }
     }
     if (!valid && typeof input.recoveryCode === 'string') {
-      if (recoveryHash && Array.isArray(user.recoveryCodes) && user.recoveryCodes.includes(recoveryHash)) {
+      if (!challenge.used && recoveryHash && Array.isArray(user.recoveryCodes) && user.recoveryCodes.includes(recoveryHash)) {
         valid = true;
         consumedRecoveryHash = recoveryHash;
       }
     }
+    if (challenge.used) valid = false;
     if (!valid) {
       const locked = await prisma.$transaction(async tx => {
         if (recoveryHash) {
