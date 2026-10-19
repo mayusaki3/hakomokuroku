@@ -135,7 +135,10 @@ describe('Login API device registration', () => {
     const res = await totpLogin(request('/api/auth/login/totp', { challengeId: 'challenge', code: '000000' }));
     expect(res.status).toBe(400);
     expect(mocks.attach).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.sessionCreate).not.toHaveBeenCalled();
+    expect(mocks.authEventTxCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: 'FAILURE' }),
+    }));
   });
 
   it('revokes the TOTP session when device association fails', async () => {
