@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   revokeSession: vi.fn(),
   verifyPassword: vi.fn(),
-  readSession: vi.fn(), mfaFind: vi.fn(),
+  readSession: vi.fn(), mfaFind: vi.fn(), attachDevice: vi.fn(),
 }));
 vi.mock('@/server/prisma', () => ({
   prisma: {
@@ -15,6 +15,11 @@ vi.mock('@/server/prisma', () => ({
     loginChallenge: { create: mocks.createChallenge },
     mfaLoginAttempt: { findUnique: mocks.mfaFind },
   },
+}));
+vi.mock('@/server/device-login', () => ({
+  DEVICE_COOKIE: 'hk_device',
+  deviceCookieOptions: () => ({ httpOnly: true, path: '/', sameSite: 'lax' }),
+  attachLoginDevice: mocks.attachDevice,
 }));
 vi.mock('@/server/password', () => ({ verifyPassword: mocks.verifyPassword }));
 vi.mock('@/server/auth', () => ({
@@ -44,6 +49,7 @@ const activeUser = {
 describe('v0.8 session authentication contract', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.attachDevice.mockResolvedValue('device-id.device-secret');
     mocks.mfaFind.mockResolvedValue(null);
     mocks.findUser.mockResolvedValue({ ...activeUser });
     mocks.verifyPassword.mockResolvedValue(true);
