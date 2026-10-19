@@ -102,6 +102,7 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
       POST(request('recovery1', '000000', code)),
       POST(request('recovery2', '000000', code)),
     ]).then(responses => responses.map(response => response.status));
+    console.log('Recovery concurrent statuses:', statuses);
     expect(statuses.filter(status => status === 200)).toHaveLength(1);
     expect(statuses.filter(status => status === 404)).toHaveLength(1);
     expect((await db.authSession.count({ where: { userId: id } }))).toBe(1);
