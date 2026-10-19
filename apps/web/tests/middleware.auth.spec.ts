@@ -17,8 +17,8 @@ describe('middleware 起動時認証導線', () => {
     expect(res.headers.get('location')).toBe('http://localhost/auth?next=%2Fboxes%3Fq%3Dusb');
   });
 
-  it('MIDDLEWARE_AUTH-TC-03: sid があれば通常画面を通す', () => {
-    const req = new NextRequest('http://localhost/', { headers: { cookie: 'sid=dummy' } });
+  it('MIDDLEWARE_AUTH-TC-03: hk_session があれば通常画面を通す', () => {
+    const req = new NextRequest('http://localhost/', { headers: { cookie: 'hk_session=dummy' } });
     expect(middleware(req).headers.get('location')).toBeNull();
   });
 
