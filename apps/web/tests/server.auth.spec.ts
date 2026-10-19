@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 // next/headers の cookies をモック
 vi.mock('next/headers', () => ({
@@ -8,7 +8,7 @@ vi.mock('next/headers', () => ({
 import { cookies } from 'next/headers';
 import { getUser, requireUserId } from '@/server/auth';
 
-const mockedCookies = cookies as unknown as vi.Mock;
+const mockedCookies = cookies as unknown as Mock;
 
 function mockSidCookie(value: string | undefined) {
   mockedCookies.mockReturnValue({
