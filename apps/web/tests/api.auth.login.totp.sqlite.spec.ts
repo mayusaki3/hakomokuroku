@@ -104,7 +104,22 @@ describe('MFA API with isolated SQLite (no Prisma mock)', () => {
     ]).then(responses => responses.map(response => response.status));
     console.log('Recovery concurrent statuses:', statuses);
     expect(statuses.filter(status => status === 200)).toHaveLength(1);
-    expect(statuses.filter(status => status === 404)).toHaveLength(1);
+    const loserStatus = statuses.find(status => status !== 200);
+    const redemption = await db.mfaRecoveryRedemption.findUniqueOrThrow({
+      where: { userId_codeHash: { userId: id, codeHash: hash } },
+    });
+    const admissions = await db.mfaAuthEvent.findMany({
+      where: { userId: id, kind: 'ADMISSION' }, orderBy: { id: 'asc' },
+    });
+    const failures = await db.mfaAuthEvent.findMany({
+      where: { userId: id, kind: 'FAILURE' },
+    });
+    const laterAdmissions = admissions.filter(event => event.id > redemption.eventId);
+    expect(admissions).toHaveLength(2);
+    expect(loserStatus).toBe(laterAdmissions.length === 1 ? 400 : 404);
+    expect(failures).toHaveLength(laterAdmissions.length);
+    expect((await db.mfaLoginAttempt.findUnique({ where: { userId: id } }))?.failCount ?? 0)
+      .toBe(laterAdmissions.length);
     expect((await db.authSession.count({ where: { userId: id } }))).toBe(1);
     expect((await db.user.findUniqueOrThrow({ where: { id } })).recoveryCodes).toEqual([]);
     const challenges = await db.loginChallenge.findMany({ where: { userId: id } });
