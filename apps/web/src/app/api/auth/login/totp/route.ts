@@ -6,7 +6,7 @@ import { authenticator } from 'otplib';
 import { prisma } from '@/server/prisma';
 import { waitForMfaRaceTestBarrier } from '@/server/mfa-race-test-barrier';
 import { decryptStr } from '@/server/crypto';
-import { isMfaLoginLocked, recordMfaLoginFailure } from '@/server/mfa-login-attempt';
+import { isMfaLoginLocked } from '@/server/mfa-login-attempt';
 import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
 import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
@@ -44,6 +44,13 @@ export async function POST(req: Request) {
 
     // Diagnostic barrier: both servers have passed challenge/user/lock checks.
     // No effect unless the isolated test process sets its secret and directory.
+    const recoveryHash = typeof input.recoveryCode === 'string'
+      ? createHash('sha256').update(input.recoveryCode.trim()).digest('hex')
+      : null;
+    const admission = await prisma.mfaAuthEvent.create({
+      data: { userId: user.id, challengeId: challenge.id, kind: 'ADMISSION',
+        codeHash: recoveryHash },
+    });
     await waitForMfaRaceTestBarrier(req, challenge.id);
 
     let valid = false;
@@ -56,14 +63,37 @@ export async function POST(req: Request) {
       }
     }
     if (!valid && typeof input.recoveryCode === 'string') {
-      const hash = createHash('sha256').update(input.recoveryCode.trim()).digest('hex');
-      if (Array.isArray(user.recoveryCodes) && user.recoveryCodes.includes(hash)) {
+      if (recoveryHash && Array.isArray(user.recoveryCodes) && user.recoveryCodes.includes(recoveryHash)) {
         valid = true;
-        consumedRecoveryHash = hash;
+        consumedRecoveryHash = recoveryHash;
       }
     }
     if (!valid) {
-      const locked = await recordMfaLoginFailure(user.id);
+      const locked = await prisma.$transaction(async tx => {
+        if (recoveryHash) {
+          const redeemed = await tx.mfaRecoveryRedemption.findUnique({
+            where: { userId_codeHash: { userId: user.id, codeHash: recoveryHash } },
+          });
+          if (redeemed && admission.id < redeemed.eventId) return false;
+        }
+        await tx.mfaLoginAttempt.upsert({
+          where: { userId: user.id }, create: { userId: user.id, failCount: 0 },
+          update: {},
+        });
+        const current = await tx.mfaLoginAttempt.findUniqueOrThrow({ where: { userId: user.id } });
+        const now = new Date();
+        if (current.lockedUntil && current.lockedUntil > now) return true;
+        const nextCount = (current.lockedUntil ? 0 : current.failCount) + 1;
+        const lockedUntil = nextCount >= 5 ? new Date(now.getTime() + 15 * 60 * 1000) : null;
+        await tx.mfaLoginAttempt.update({
+          where: { userId: user.id }, data: { failCount: nextCount, lockedUntil },
+        });
+        await tx.mfaAuthEvent.create({
+          data: { userId: user.id, challengeId: challenge.id, kind: 'FAILURE',
+            codeHash: recoveryHash, admissionId: admission.id },
+        });
+        return lockedUntil !== null;
+      });
       return locked
         ? NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 })
         : NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
@@ -94,6 +124,16 @@ export async function POST(req: Request) {
         }
         const attempt = await tx.mfaLoginAttempt.findUnique({ where: { userId: user.id } });
         if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) throw new Error('MFA_LOCKED');
+        if (consumedRecoveryHash) {
+          const event = await tx.mfaAuthEvent.create({
+            data: { userId: user.id, challengeId: challenge.id, kind: 'REDEMPTION',
+              codeHash: consumedRecoveryHash, admissionId: admission.id },
+          });
+          await tx.mfaRecoveryRedemption.create({
+            data: { userId: user.id, codeHash: consumedRecoveryHash,
+              admissionId: admission.id, eventId: event.id },
+          });
+        }
         const session = await tx.authSession.create({
           data: { userId: user.id, tokenHash: sessionTokenHash(token), expiresAt },
         });
@@ -104,6 +144,10 @@ export async function POST(req: Request) {
         await tx.mfaLoginAttempt.updateMany({
           where: { userId: user.id },
           data: { failCount: 0, lockedUntil: null },
+        });
+        await tx.mfaAuthEvent.create({
+          data: { userId: user.id, challengeId: challenge.id, kind: 'SUCCESS',
+            codeHash: consumedRecoveryHash, admissionId: admission.id },
         });
         return session.id;
       });
