@@ -3,7 +3,8 @@
 // - 仕様書: docs/ja-JP/05_テストケース集/02_ユーザー情報API/api_user_icon_testcases.md
 // - テスト番号: API_USER_ICON-TC-01 〜 TC-19
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 
 // 認証モジュールはモック可能にする
 vi.mock('@/server/auth', () => ({
@@ -11,7 +12,7 @@ vi.mock('@/server/auth', () => ({
 }));
 
 // Prisma クライアントもモックする
-vi.mock('@/lib/db', () => {
+vi.mock('@/server/prisma', () => {
   return {
     prisma: {
       user: {
@@ -21,17 +22,18 @@ vi.mock('@/lib/db', () => {
   };
 });
 
-import { PUT as PUT_ICON, __hooks, updateUserIcon } from '@/app/api/user/icon/route';
+import { PUT as PUT_ICON } from '@/app/api/user/icon/route';
 import { requireUserId } from '@/server/auth';
-import { prisma } from '@/lib/db';
+import { prisma } from '@/server/prisma';
 
 // 型が厳しいときに any キャストで逃がすためのエイリアス
-const requireUserIdMock = requireUserId as unknown as vi.Mock;
+const requireUserIdMock = vi.mocked(requireUserId);
 
 // 各テスト前にモック状態をクリア
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   /**
@@ -44,10 +46,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue({ id: 'U1', iconUrl: '/icons/u1.png' } as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -73,7 +75,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-02: 未ログイン（セッションなし）', async () => {
     requireUserIdMock.mockResolvedValue(null);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -91,7 +93,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-03: 認証処理が例外なら 401/403', async () => {
     requireUserIdMock.mockRejectedValue(new Error('auth boom'));
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -109,7 +111,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-04: icon 未指定は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}), // icon なし
@@ -130,7 +132,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-05: icon が文字列以外なら 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 12345 }),
@@ -152,7 +154,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     // Content-Type ヘッダ無し
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
     });
@@ -169,7 +171,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-07: 壊れた JSON は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: '{bad json',
@@ -190,7 +192,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-08: data: スキームでない dataURL は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'not-a-dataurl' }),
@@ -217,7 +219,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     ];
 
     for (const icon of badMimeList) {
-      const req = new Request('http://t/api/user/icon', {
+      const req = new NextRequest('http://t/api/user/icon', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ icon }),
@@ -236,7 +238,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-10: Base64 不正は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -267,7 +269,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     });
 
     try {
-      const req = new Request('http://t/api/user/icon', {
+      const req = new NextRequest('http://t/api/user/icon', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -295,7 +297,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-12: Base64 部分が空なら 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -319,13 +321,13 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue({ id: 'U1', iconUrl: '/icons/u1.png' } as any);
 
     const icon =
       'data:image/png;base64,QUFB\nQkJC   Q0ND'; // "AAABB BCC" 的なダミー
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon }),
@@ -349,10 +351,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue({ id: 'U1', iconUrl: '/icons/u1.png' } as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -376,10 +378,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
 
     const err = new Error('db error');
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockRejectedValue(err);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -405,10 +407,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue(null as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -438,10 +440,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     err.meta = { cause: 'record to update not found' };
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockRejectedValue(err);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -469,10 +471,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     err.code = 'P9999'; // not-found ではないコード想定
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockRejectedValue(err);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -498,12 +500,12 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
 
     // updateUserIcon が同期的に例外を投げるケースを想定
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockImplementation(() => {
         throw new Error('unexpected');
       });
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -527,7 +529,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-20: dataURL フォーマット不正（;base64, 区切りなし）は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -554,10 +556,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue({ count: 0 } as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -586,13 +588,13 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
 
     // parseAndNormalizeDataURL を例外を投げる実装に差し替え
     const parseSpy = vi
-      .spyOn(__hooks, 'parseAndNormalizeDataURL')
+      .spyOn(Buffer, 'from')
       .mockImplementation(() => {
         throw new Error('parse failed');
       });
 
     try {
-      const req = new Request('http://t/api/user/icon', {
+      const req = new NextRequest('http://t/api/user/icon', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -619,10 +621,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockResolvedValue({ count: 1 } as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -648,10 +650,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     err.name = 'NotFoundError';
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockRejectedValue(err);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -677,10 +679,10 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     const err: any = new Error('record not found in db');
     // code や meta は付けない（message のみ not found）
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       .mockRejectedValue(err);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -704,7 +706,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
    it('API_USER_ICON-TC-26: Content-Type text/plain なら 400/415', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'text/plain' }, // ヘッダありだが不正
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -723,12 +725,12 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     requireUserIdMock.mockResolvedValue('U1');
 
     const updateSpy = vi
-      .spyOn(__hooks, 'updateUserIcon')
+      .mocked(prisma.user.update)
       // 非オブジェクトを投げる
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .mockRejectedValue('some error' as any);
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
@@ -757,7 +759,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
     (Buffer as any).from = vi.fn(() => Buffer.alloc(0));
 
     try {
-      const req = new Request('http://t/api/user/icon', {
+      const req = new NextRequest('http://t/api/user/icon', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -784,7 +786,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
   it('API_USER_ICON-TC-29: Content-Type ヘッダなしは 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
 
-    const req = new Request('http://t/api/user/icon', {
+    const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
       body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
     });
@@ -811,7 +813,7 @@ describe('updateUserIcon 単体', () => {
     const dataURL = 'data:image/png;base64,AAAA';
 
     // モックされた prisma.user.update を取得
-    const prismaUpdateMock = prisma.user.update as unknown as vi.Mock;
+    const prismaUpdateMock = vi.mocked(prisma.user.update);
 
     // 戻り値も適当にモック
     prismaUpdateMock.mockResolvedValue({
@@ -820,13 +822,16 @@ describe('updateUserIcon 単体', () => {
       iconDataUrl: dataURL,
     } as any);
 
-    const result = await updateUserIcon(userId, dataURL);
+    requireUserIdMock.mockResolvedValue(userId);
+    const res = await PUT_ICON(new NextRequest('http://t/api/user/icon', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ icon: dataURL }) }));
+    expect(res.status).toBe(200);
+    const result = (await res.json()).me;
 
     expect(prismaUpdateMock).toHaveBeenCalledTimes(1);
     expect(prismaUpdateMock).toHaveBeenCalledWith({
       where: { id: userId },
       data: { iconDataUrl: dataURL },
-      select: { id: true, displayName: true, iconDataUrl: true },
+      select: { id: true, iconDataUrl: true },
     });
 
     expect((result as any).id).toBe(userId);
