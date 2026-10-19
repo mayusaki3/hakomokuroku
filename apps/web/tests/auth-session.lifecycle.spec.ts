@@ -10,7 +10,7 @@ const m = vi.hoisted(() => ({
   sessionFind: vi.fn(),
   sessionRevoke: vi.fn(),
   decrypt: vi.fn(),
-  totpCheck: vi.fn(),
+  totpCheck: vi.fn(), mfaFind: vi.fn(), mfaUpsert: vi.fn(), mfaFindOrThrow: vi.fn(), mfaUpdate: vi.fn(),
 }));
 vi.mock('next/headers', () => ({ cookies: () => ({ get: m.cookiesGet }) }));
 vi.mock('@/server/prisma', () => ({
@@ -18,10 +18,12 @@ vi.mock('@/server/prisma', () => ({
     loginChallenge: { findUnique: m.challengeFind, updateMany: m.challengeClaim },
     user: { findUnique: m.userFind, update: m.userUpdate },
     authSession: { create: m.sessionCreate, findUnique: m.sessionFind, updateMany: m.sessionRevoke },
+    mfaLoginAttempt: { findUnique: m.mfaFind },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       loginChallenge: { updateMany: m.challengeClaim },
       user: { findUnique: m.userFind, update: m.userUpdate },
       authSession: { create: m.sessionCreate },
+      mfaLoginAttempt: { upsert: m.mfaUpsert, findUniqueOrThrow: m.mfaFindOrThrow, update: m.mfaUpdate },
     }),
   },
 }));
@@ -43,6 +45,9 @@ function req(body: Record<string, string>) {
 describe('AuthSession lifecycle contracts', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    m.mfaFind.mockResolvedValue(null);
+    m.mfaFindOrThrow.mockResolvedValue({ failCount: 0, lockedUntil: null });
+    m.mfaUpdate.mockResolvedValue({ failCount: 1, lockedUntil: null });
     m.cookiesGet.mockReturnValue(undefined);
     m.challengeFind.mockResolvedValue({
       id: 'ch1', userId: 'u1', used: false, expiresAt: new Date(Date.now() + 60000),
