@@ -4,13 +4,15 @@ const mocks = vi.hoisted(() => ({
   user: vi.fn(), password: vi.fn(), createSession: vi.fn(), revokeSession: vi.fn(),
   attach: vi.fn(), challengeCreate: vi.fn(), challengeFind: vi.fn(),
   userUpdate: vi.fn(), transaction: vi.fn(), claim: vi.fn(), sessionCreate: vi.fn(),
-  decrypt: vi.fn(), check: vi.fn(), mfaFind: vi.fn(), mfaUpsert: vi.fn(), mfaUpdate: vi.fn(), mfaFindOrThrow: vi.fn(),
+  decrypt: vi.fn(), check: vi.fn(), mfaFind: vi.fn(), mfaUpsert: vi.fn(), mfaUpdate: vi.fn(), mfaFindOrThrow: vi.fn(), authEventCreate: vi.fn(), authEventTxCreate: vi.fn(), mfaUpdateMany: vi.fn(), recoveryCreate: vi.fn(), recoveryFind: vi.fn(),
 }));
 vi.mock('@/server/prisma', () => ({
   prisma: {
     user: { findUnique: mocks.user, update: mocks.userUpdate },
     loginChallenge: { create: mocks.challengeCreate, findUnique: mocks.challengeFind },
     mfaLoginAttempt: { findUnique: mocks.mfaFind },
+    mfaAuthEvent: { create: mocks.authEventCreate },
+    mfaRecoveryRedemption: { findUnique: mocks.recoveryFind },
     $transaction: mocks.transaction,
   },
 }));
@@ -44,6 +46,10 @@ const challenge = { id: 'challenge', userId: user.id, used: false, expiresAt: ne
 describe('Login API device registration', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.authEventCreate.mockResolvedValue({ id: 1 });
+    mocks.authEventTxCreate.mockResolvedValue({ id: 2 });
+    mocks.mfaUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.recoveryFind.mockResolvedValue(null);
     mocks.mfaFind.mockResolvedValue(null);
     mocks.mfaFindOrThrow.mockResolvedValue({ failCount: 0, lockedUntil: null });
     mocks.mfaUpdate.mockResolvedValue({ failCount: 1, lockedUntil: null });
@@ -62,7 +68,9 @@ describe('Login API device registration', () => {
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => callback({
       loginChallenge: { updateMany: mocks.claim },
       authSession: { create: mocks.sessionCreate },
-      mfaLoginAttempt: { upsert: mocks.mfaUpsert, findUniqueOrThrow: mocks.mfaFindOrThrow, update: mocks.mfaUpdate },
+      mfaLoginAttempt: { upsert: mocks.mfaUpsert, findUniqueOrThrow: mocks.mfaFindOrThrow, update: mocks.mfaUpdate, findUnique: mocks.mfaFind, updateMany: mocks.mfaUpdateMany },
+      mfaAuthEvent: { create: mocks.authEventTxCreate },
+      mfaRecoveryRedemption: { create: mocks.recoveryCreate, findUnique: mocks.recoveryFind },
       user: { update: mocks.userUpdate, findUnique: mocks.user },
     }));
   });
