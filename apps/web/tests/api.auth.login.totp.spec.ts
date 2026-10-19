@@ -51,6 +51,7 @@ const prismaMock = vi.hoisted(() => {
   const attempts = new Map<string, { userId: string; failCount: number; lockedUntil: Date | null }>();
   const events: Array<{ id: number; userId: string; challengeId: string; kind: string; codeHash: string | null; admissionId: number | null }> = [];
   const redemptions = new Map<string, { eventId: number; admissionId: number }>();
+  let transactionQueue: Promise<unknown> = Promise.resolve();
 
   const reset = () => {
     users.clear();
@@ -58,6 +59,7 @@ const prismaMock = vi.hoisted(() => {
     attempts.clear();
     events.length = 0;
     redemptions.clear();
+    transactionQueue = Promise.resolve();
 
     users.set("db_u1", {
       id: "db_u1",
@@ -83,7 +85,11 @@ const prismaMock = vi.hoisted(() => {
   return {
     __state: { users, challenges, attempts, events, redemptions, reset },
     prisma: {
-      $transaction: vi.fn(async (fn: any) => fn(prismaMock.prisma)),
+      $transaction: vi.fn((fn: any) => {
+        const result = transactionQueue.then(() => fn(prismaMock.prisma));
+        transactionQueue = result.then(() => undefined, () => undefined);
+        return result;
+      }),
       mfaAuthEvent: {
         create: vi.fn(async ({ data }: any) => {
           const row = { id: events.length + 1, userId: data.userId,
