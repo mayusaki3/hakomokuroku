@@ -10,6 +10,36 @@ import { isMfaLoginLocked } from '@/server/mfa-login-attempt';
 import { SESSION_COOKIE, sessionCookieOptions, sessionTokenHash, revokeSession } from '@/server/auth';
 import { attachLoginDevice, DEVICE_COOKIE, deviceCookieOptions } from '@/server/device-login';
 
+async function recordCredentialFailure(
+  userId: string, challengeId: string, recoveryHash: string | null, admissionId: number,
+): Promise<boolean> {
+  return prisma.$transaction(async tx => {
+        if (recoveryHash) {
+          const redeemed = await tx.mfaRecoveryRedemption.findUnique({
+            where: { userId_codeHash: { userId: userId, codeHash: recoveryHash } },
+          });
+          if (redeemed && admissionId < redeemed.eventId) return false;
+        }
+        await tx.mfaLoginAttempt.upsert({
+          where: { userId: userId }, create: { userId: userId, failCount: 0 },
+          update: {},
+        });
+        const current = await tx.mfaLoginAttempt.findUniqueOrThrow({ where: { userId: userId } });
+        const now = new Date();
+        if (current.lockedUntil && current.lockedUntil > now) return true;
+        const nextCount = (current.lockedUntil ? 0 : current.failCount) + 1;
+        const lockedUntil = nextCount >= 5 ? new Date(now.getTime() + 15 * 60 * 1000) : null;
+        await tx.mfaLoginAttempt.update({
+          where: { userId: userId }, data: { failCount: nextCount, lockedUntil },
+        });
+        await tx.mfaAuthEvent.create({
+          data: { userId: userId, challengeId: challengeId, kind: 'FAILURE',
+            codeHash: recoveryHash, admissionId: admissionId },
+        });
+        return lockedUntil !== null;
+  });
+}
+
 export async function POST(req: Request) {
   if (!req.headers.get('content-type')?.includes('application/json')) {
     return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 });
@@ -77,31 +107,7 @@ export async function POST(req: Request) {
     }
     if (challenge.used) valid = false;
     if (!valid) {
-      const locked = await prisma.$transaction(async tx => {
-        if (recoveryHash) {
-          const redeemed = await tx.mfaRecoveryRedemption.findUnique({
-            where: { userId_codeHash: { userId: user.id, codeHash: recoveryHash } },
-          });
-          if (redeemed && admission.id < redeemed.eventId) return false;
-        }
-        await tx.mfaLoginAttempt.upsert({
-          where: { userId: user.id }, create: { userId: user.id, failCount: 0 },
-          update: {},
-        });
-        const current = await tx.mfaLoginAttempt.findUniqueOrThrow({ where: { userId: user.id } });
-        const now = new Date();
-        if (current.lockedUntil && current.lockedUntil > now) return true;
-        const nextCount = (current.lockedUntil ? 0 : current.failCount) + 1;
-        const lockedUntil = nextCount >= 5 ? new Date(now.getTime() + 15 * 60 * 1000) : null;
-        await tx.mfaLoginAttempt.update({
-          where: { userId: user.id }, data: { failCount: nextCount, lockedUntil },
-        });
-        await tx.mfaAuthEvent.create({
-          data: { userId: user.id, challengeId: challenge.id, kind: 'FAILURE',
-            codeHash: recoveryHash, admissionId: admission.id },
-        });
-        return lockedUntil !== null;
-      });
+      const locked = await recordCredentialFailure(user.id, challenge.id, recoveryHash, admission.id);
       return locked
         ? NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 })
         : NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
@@ -165,6 +171,19 @@ export async function POST(req: Request) {
       }
       if (error instanceof Error &&
           (error.message === 'CHALLENGE_CONSUMED' || error.message === 'RECOVERY_CONSUMED')) {
+        // A request can read an unused challenge before another process claims it.
+        // Classify the loser by its durable admission order, not the stale read.
+        if (recoveryHash) {
+          const redeemed = await prisma.mfaRecoveryRedemption.findUnique({
+            where: { userId_codeHash: { userId: user.id, codeHash: recoveryHash } },
+          });
+          if (redeemed && admission.id > redeemed.eventId) {
+            const locked = await recordCredentialFailure(user.id, challenge.id, recoveryHash, admission.id);
+            return locked
+              ? NextResponse.json({ ok: false, error: 'too_many_attempts' }, { status: 429 })
+              : NextResponse.json({ ok: false, error: 'auth_failed' }, { status: 400 });
+          }
+        }
         return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
       }
       throw error;
