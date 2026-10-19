@@ -182,7 +182,7 @@ model Box {
 model Item {
   userId          String
   id              String
-  boxId           String
+  boxId           String?
   name            String
   tags            Json
   note            String?
@@ -197,7 +197,7 @@ model Item {
   syncSeq         BigInt?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  box  Box  @relation(fields: [userId, boxId], references: [userId, id])
+  box  Box? @relation(fields: [userId, boxId], references: [userId, id])
 
   @@id([userId, id])
   @@index([userId, serverUpdatedAt])
