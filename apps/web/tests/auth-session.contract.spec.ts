@@ -7,12 +7,13 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   revokeSession: vi.fn(),
   verifyPassword: vi.fn(),
-  readSession: vi.fn(),
+  readSession: vi.fn(), mfaFind: vi.fn(),
 }));
 vi.mock('@/server/prisma', () => ({
   prisma: {
     user: { findUnique: mocks.findUser, update: mocks.updateUser },
     loginChallenge: { create: mocks.createChallenge },
+    mfaLoginAttempt: { findUnique: mocks.mfaFind },
   },
 }));
 vi.mock('@/server/password', () => ({ verifyPassword: mocks.verifyPassword }));
@@ -43,6 +44,7 @@ const activeUser = {
 describe('v0.8 session authentication contract', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.mfaFind.mockResolvedValue(null);
     mocks.findUser.mockResolvedValue({ ...activeUser });
     mocks.verifyPassword.mockResolvedValue(true);
     mocks.createSession.mockResolvedValue({ token: 'new-token', expiresAt: new Date(Date.now() + 60000) });
