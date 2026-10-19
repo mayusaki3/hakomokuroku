@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({ requireUserId: vi.fn(), update: vi.fn() }));
 vi.mock('@/server/auth', () => ({ requireUserId: m.requireUserId }));
-vi.mock('@/lib/prisma', () => ({ prisma: { user: { update: m.update } } }));
-vi.mock('@/lib/db', () => ({ prisma: { user: { update: m.update } } }));
+vi.mock('@/server/prisma', () => ({ prisma: { user: { update: m.update } } }));
 
 import { PUT as profile } from '@/app/api/user/profile/route';
 import { PUT as icon } from '@/app/api/user/icon/route';
+import { NextRequest } from 'next/server';
 
 function req(path: string, body: object) {
-  return new Request('http://localhost' + path, {
+  return new NextRequest('http://localhost' + path, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }) as Parameters<typeof profile>[0];
