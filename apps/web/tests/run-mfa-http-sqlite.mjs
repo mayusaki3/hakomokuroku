@@ -89,7 +89,22 @@ try {
     const sessions = await prisma.authSession.findMany({ where: { userId: id } });
     const challenges = await prisma.loginChallenge.findMany({ where: { userId: id } });
     const updated = await prisma.user.findUniqueOrThrow({ where: { id } });
-    const pass = JSON.stringify(statuses) === JSON.stringify([200, 404]) &&
+    const redemption = await prisma.mfaRecoveryRedemption.findUnique({
+      where: { userId_codeHash: { userId: id, codeHash: hash } },
+    });
+    const admissions = await prisma.mfaAuthEvent.findMany({
+      where: { userId: id, kind: 'ADMISSION' },
+    });
+    const failures = await prisma.mfaAuthEvent.count({
+      where: { userId: id, kind: 'FAILURE' },
+    });
+    const laterAdmissions = redemption
+      ? admissions.filter(event => event.id > redemption.eventId).length : -1;
+    const attempt = await prisma.mfaLoginAttempt.findUnique({ where: { userId: id } });
+    const expectedStatuses = laterAdmissions === 1 ? [200, 400] : [200, 404];
+    const pass = redemption !== null && admissions.length === 2 &&
+      JSON.stringify(statuses) === JSON.stringify(expectedStatuses) &&
+      failures === laterAdmissions && (attempt?.failCount ?? 0) === laterAdmissions &&
       sessions.length === 1 && sessions[0].revokedAt === null &&
       sessions[0].deviceId !== null &&
       challenges.filter(challenge => challenge.used).length === 1 &&
@@ -99,6 +114,7 @@ try {
       activeSessions: sessions.filter(session => !session.revokedAt).length,
       usedChallenges: challenges.filter(challenge => challenge.used).length,
       recoveryCodesRemaining: updated.recoveryCodes?.length,
+      laterAdmissions, failures, failCount: attempt?.failCount ?? 0,
     }));
     if (!pass) {
       console.error('Server output:', stdout, stderr);
