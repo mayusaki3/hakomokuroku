@@ -1,72 +1,49 @@
-// apps/web/tests/api.settings.theme.active.spec.ts
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Prisma はグローバルセットアップでモック済み
-vi.mock('@/server/auth', () => ({
-  getUser: vi.fn(),
-}));
+vi.mock('@/server/auth', () => ({ getUser: vi.fn() }));
+vi.mock('@/server/prisma', () => ({ prisma: { userSetting: { findUnique: vi.fn() } } }));
 
-import { GET as GET_ACTIVE } from '@/app/api/settings/theme/active/route';
-import { prisma } from '@/server/prisma'; // モック済み
-import { getUser } from '@/server/auth'; // モック関数
+import { GET } from '@/app/api/settings/theme/active/route';
+import { prisma } from '@/server/prisma';
+import { getUser } from '@/server/auth';
+
+const mockedGetUser = vi.mocked(getUser);
+const findUnique = vi.mocked(prisma.userSetting.findUnique);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe('GET /api/settings/theme/active', () => {
-  it('API_SETTINGS_THEME_ACTIVE-TC-01: 未ログインは既定テーマを返す', async () => {
-    (getUser as any).mockResolvedValue({ user: null });
-    (prisma.themeActive.findUnique as any).mockResolvedValue(null);
-
-    const res = await GET_ACTIVE();
+  it('returns the built-in system theme without authentication or a DB query', async () => {
+    mockedGetUser.mockResolvedValue({ user: null });
+    const res = await GET();
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
-
-    // 実装の既定IDに合わせて調整（例: 'default'）
-    expect(body.active?.themeId).toBe('default');
+    expect(await res.json()).toEqual({ ok: true, active: { themeId: 'builtin:system' } });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('API_SETTINGS_THEME_ACTIVE-TC-02: ログイン済みは DB のアクティブテーマを返す', async () => {
-    (getUser as any).mockResolvedValue({ user: { id: 'U1' } });
-    (prisma.themeActive.findUnique as any).mockResolvedValue({ themeId: 'T1' });
-
-    const res = await GET_ACTIVE();
+  it('returns the authenticated user setting', async () => {
+    mockedGetUser.mockResolvedValue({ user: { id: 'U1', userId: 'alice' } });
+    findUnique.mockResolvedValue({ activeTheme: 'T1' } as any);
+    const res = await GET();
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
-    expect(body.active?.themeId).toBe('T1');
+    expect(await res.json()).toEqual({ ok: true, active: { themeId: 'T1' } });
+    expect(findUnique).toHaveBeenCalledWith({ where: { userId: 'U1' }, select: { activeTheme: true } });
   });
-});
 
-// 未ログイン→既定テーマ（DB参照なしの分岐を通す）
-it('API_SETTINGS_THEME_ACTIVE-TC-01: 未ログインは既定テーマを返す（ハンドラ直呼び）', async () => {
-  (getUser as any).mockResolvedValue({ user: null });
-  // 念のためDBは呼ばれない前提だが、呼ばれても null で良い
-  (prisma.themeActive.findUnique as any).mockResolvedValue(null);
+  it('falls back to the built-in theme when no setting exists', async () => {
+    mockedGetUser.mockResolvedValue({ user: { id: 'U1', userId: 'alice' } });
+    findUnique.mockResolvedValue(null);
+    const res = await GET();
+    expect(await res.json()).toEqual({ ok: true, active: { themeId: 'builtin:system' } });
+  });
 
-  const res = await GET_ACTIVE();
-  const body = await res.json();
-  expect(res.status).toBe(200);
-  expect(body.ok).toBe(true);
-  expect(body.active?.themeId).toBe('default'); // 実装の既定に合わせる
-});
-
-it('API_SETTINGS_THEME_ACTIVE-TC-03: ログイン済み + DBなし → 既定テーマ', async () => {
-  (getUser as any).mockResolvedValue({ user: { id: 'U1' } });
-  (prisma.themeActive.findUnique as any).mockResolvedValue(null);
-  const res = await GET_ACTIVE();
-  const body = await res.json();
-  expect(res.status).toBe(200);
-  expect(body.ok).toBe(true);
-  expect(body.active?.themeId).toBe('default'); // 実装の既定値に合わせる
-});
-
-// DB例外→catchへ
-it('API_SETTINGS_THEME_ACTIVE-TC-04: DB 例外は 500 系', async () => {
-  (getUser as any).mockResolvedValue({ user: { id: 'U1' } });
-  (prisma.themeActive.findUnique as any).mockRejectedValue(new Error('db error'));
-  const res = await GET_ACTIVE();
-  expect([500, 503]).toContain(res.status);
+  it('returns 500 on database failure', async () => {
+    mockedGetUser.mockResolvedValue({ user: { id: 'U1', userId: 'alice' } });
+    findUnique.mockRejectedValue(new Error('db error'));
+    const res = await GET();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, error: 'db error' });
+  });
 });
