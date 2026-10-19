@@ -8,7 +8,7 @@
 // - 認証は @/server/auth.requireUserId をモック
 // - 「仕様を正」とし、入力は code / recoveryCode を前提にテストする
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { POST as POST_DISABLE } from '@/app/api/auth/totp/disable/route';
 import { prisma } from '@/server/prisma';
 import * as auth from '@/server/auth';
@@ -94,7 +94,7 @@ describe('POST /api/auth/totp/disable', () => {
 
   it('AUTH_TOTP_DISABLE-TC-03: 異常：未ログイン（401）', async () => {
     // requireUserId が 401 相当を投げる
-    const spy = auth.requireUserId as unknown as vi.Mock;
+    const spy = auth.requireUserId as unknown as Mock;
     const e: any = new Error('Unauthorized');
     e.status = 401;
     spy.mockRejectedValueOnce(e);
