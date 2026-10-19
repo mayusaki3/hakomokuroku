@@ -1,72 +1,66 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// next/headers の cookies をモック
-vi.mock('next/headers', () => ({
-  cookies: vi.fn(),
-}));
+vi.mock('next/headers', () => ({ cookies: vi.fn() }));
+vi.mock('@/server/prisma', () => ({ prisma: { authSession: { findUnique: vi.fn() } } }));
 
 import { cookies } from 'next/headers';
-import { getUser, requireUserId } from '@/server/auth';
+import { prisma } from '@/server/prisma';
+import { getUser, requireUserId, sessionTokenHash } from '@/server/auth';
 
-const mockedCookies = cookies as unknown as Mock;
+const mockedCookies = vi.mocked(cookies);
+const findUnique = vi.mocked(prisma.authSession.findUnique);
 
-function mockSidCookie(value: string | undefined) {
-  mockedCookies.mockReturnValue({
-    get: vi.fn().mockReturnValue(
-      value === undefined ? undefined : { value },
-    ),
-  });
+function setCookie(value?: string) {
+  mockedCookies.mockReturnValue({ get: vi.fn().mockReturnValue(value ? { value } : undefined) } as any);
 }
 
-describe('server/auth ユーティリティ', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
+beforeEach(() => {
+  vi.resetAllMocks();
+  findUnique.mockResolvedValue(null);
+});
+
+describe('server/auth utilities', () => {
+  it('returns no user without a cookie', async () => {
+    setCookie();
+    expect(await getUser()).toEqual({ user: null });
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
-  /**
-   * SERVER_AUTH-TC-01:
-   *  sid クッキーなし → getUser は { user: null } を返す
-   */
-  it('SERVER_AUTH-TC-01: sid クッキーなしなら user:null', async () => {
-    mockSidCookie(undefined);
-
-    const result = await getUser();
-
-    expect(result).toEqual({ user: null });
+  it('resolves a valid database-backed session', async () => {
+    setCookie('test-session');
+    findUnique.mockResolvedValue({
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { id: 'U1', userId: 'alice', isActive: true },
+    } as any);
+    expect(await getUser()).toEqual({ user: { id: 'U1', userId: 'alice' } });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { tokenHash: sessionTokenHash('test-session') },
+      include: { user: true },
+    });
   });
 
-  /**
-   * SERVER_AUTH-TC-02:
-   *  sid クッキーあり → getUser は { user: { id: "U1" } } を返す
-   *  （現状の実装は id 固定の体裁）
-   */
-  it('SERVER_AUTH-TC-02: sid クッキーありなら id="U1" を返す', async () => {
-    mockSidCookie('dummy-session-id');
-
-    const result = await getUser();
-
-    expect(result).toEqual({ user: { id: 'U1' } });
+  it('returns the user ID from a valid session', async () => {
+    setCookie('test-session');
+    findUnique.mockResolvedValue({
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { id: 'U1', userId: 'alice', isActive: true },
+    } as any);
+    expect(await requireUserId()).toBe('U1');
   });
 
-  /**
-   * SERVER_AUTH-TC-03:
-   *  sid クッキーあり → requireUserId は "U1" を返す
-   */
-  it('SERVER_AUTH-TC-03: sid クッキーありなら requireUserId は "U1" を返す', async () => {
-    mockSidCookie('dummy-session-id');
-
-    const userId = await requireUserId();
-
-    expect(userId).toBe('U1');
-  });
-
-  /**
-   * SERVER_AUTH-TC-04:
-   *  sid クッキーなし → requireUserId は "UNAUTHORIZED" で例外
-   */
-  it('SERVER_AUTH-TC-04: sid クッキーなしなら requireUserId は UNAUTHORIZED を投げる', async () => {
-    mockSidCookie(undefined);
-
+  it('rejects a missing session', async () => {
+    setCookie();
     await expect(requireUserId()).rejects.toThrow('UNAUTHORIZED');
+  });
+
+  it('rejects a revoked session', async () => {
+    setCookie('revoked-session');
+    findUnique.mockResolvedValue({
+      revokedAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+      user: { id: 'U1', userId: 'alice', isActive: true },
+    } as any);
+    expect(await getUser()).toEqual({ user: null });
   });
 });
