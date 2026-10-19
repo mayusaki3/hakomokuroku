@@ -73,7 +73,7 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
    * - 401 or 403
    */
   it('API_USER_ICON-TC-02: 未ログイン（セッションなし）', async () => {
-    requireUserIdMock.mockResolvedValue(null);
+    requireUserIdMock.mockRejectedValue(new Error('UNAUTHORIZED'));
 
     const req = new NextRequest('http://t/api/user/icon', {
       method: 'PUT',
@@ -583,15 +583,13 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
    * - dataURL 正常でも parseAndNormalizeDataURL が throw した場合
    * - 500 + ok:false + internal_error
    */
-  it('API_USER_ICON-TC-22: parseAndNormalizeDataURL が例外なら 500', async () => {
+  it('API_USER_ICON-TC-22: Base64 デコード時の例外は 400', async () => {
     requireUserIdMock.mockResolvedValue('U1');
-
-    // parseAndNormalizeDataURL を例外を投げる実装に差し替え
-    const parseSpy = vi
-      .spyOn(Buffer, 'from')
-      .mockImplementation(() => {
-        throw new Error('parse failed');
-      });
+    const originalFrom = Buffer.from;
+    const decodeSpy = vi.spyOn(Buffer, 'from').mockImplementation((...args: Parameters<typeof Buffer.from>) => {
+      if (args[1] === 'base64') throw new Error('decode failed');
+      return (originalFrom as (...args: Parameters<typeof Buffer.from>) => Buffer)(...args);
+    });
 
     try {
       const req = new NextRequest('http://t/api/user/icon', {
@@ -599,16 +597,11 @@ describe('ユーザーアイコン更新 API (PUT /api/user/icon)', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ icon: 'data:image/png;base64,AAAA' }),
       });
-
       const res = await PUT_ICON(req);
-      expect(res.status).toBe(500);
-
-      const json = await res.json();
-      expect(json.ok).toBe(false);
-      expect(json.error).toBe('internal_error');
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ ok: false, error: 'invalid base64' });
     } finally {
-      // ここで必ず元の実装に戻す
-      parseSpy.mockRestore();
+      decodeSpy.mockRestore();
     }
   });
 
