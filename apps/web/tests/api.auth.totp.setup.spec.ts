@@ -32,7 +32,7 @@ async function importRoute() {
   // env を切り替えるテストがあるので毎回モジュールキャッシュを切る
   vi.resetModules();
   const mod = await import('@/app/api/auth/totp/setup/route');
-  return mod.POST as (req: Request) => Promise<Response>;
+  return mod.POST as () => Promise<Response>;
 }
 
 const baseUser = {
@@ -119,7 +119,7 @@ describe('POST /api/auth/totp/setup', () => {
     delete process.env.TOTP_SECRET_KEY;
 
     const POST = await importRoute();
-    const res = await POST(/* makeReq() or existing helper */);
+    const res = await POST();
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ ok: false, error: 'internal_error' });
@@ -130,7 +130,7 @@ describe('POST /api/auth/totp/setup', () => {
     process.env.TOTP_SECRET_KEY = Buffer.alloc(31, 2).toString('base64');
 
     const POST = await importRoute();
-    const res = await POST(/* makeReq() or existing helper */);
+    const res = await POST();
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ ok: false, error: 'internal_error' });
