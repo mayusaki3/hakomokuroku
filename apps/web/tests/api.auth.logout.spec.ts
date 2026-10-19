@@ -26,7 +26,7 @@ describe('POST /api/auth/logout', () => {
       method: 'POST',
     });
 
-    const res = await POST_LOGOUT(req);
+    const res = await POST_LOGOUT();
     expect(res.status).toBe(200);
 
     const json = await res.json() as any;
@@ -40,7 +40,7 @@ describe('POST /api/auth/logout', () => {
       method: 'POST',
     });
 
-    const res = await POST_LOGOUT(req);
+    const res = await POST_LOGOUT();
     const setCookie = res.headers.get('Set-Cookie') ?? '';
 
     // 実装上のセッションCookie名は sid
@@ -54,14 +54,14 @@ describe('POST /api/auth/logout', () => {
 
   it('API_AUTH_LOGOUT-TC-03: 多重ログアウト（idempotent）', async () => {
     const req1 = new Request(url, { method: 'POST' });
-    const res1 = await POST_LOGOUT(req1);
+    const res1 = await POST_LOGOUT();
 
     expect(res1.status).toBe(200);
     const json1 = await res1.json() as any;
     expect(json1).toMatchObject({ ok: true });
 
     const req2 = new Request(url, { method: 'POST' });
-    const res2 = await POST_LOGOUT(req2);
+    const res2 = await POST_LOGOUT();
 
     expect(res2.status).toBe(200);
     const json2 = await res2.json() as any;
