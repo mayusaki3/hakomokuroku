@@ -49,11 +49,15 @@ const prismaMock = vi.hoisted(() => {
   const users = new Map<string, UserRow>();
   const challenges = new Map<string, ChallengeRow>();
   const attempts = new Map<string, { userId: string; failCount: number; lockedUntil: Date | null }>();
+  const events: Array<{ id: number; userId: string; challengeId: string; kind: string; codeHash: string | null; admissionId: number | null }> = [];
+  const redemptions = new Map<string, { eventId: number; admissionId: number }>();
 
   const reset = () => {
     users.clear();
     challenges.clear();
     attempts.clear();
+    events.length = 0;
+    redemptions.clear();
 
     users.set("db_u1", {
       id: "db_u1",
@@ -77,9 +81,31 @@ const prismaMock = vi.hoisted(() => {
   reset();
 
   return {
-    __state: { users, challenges, attempts, reset },
+    __state: { users, challenges, attempts, events, redemptions, reset },
     prisma: {
       $transaction: vi.fn(async (fn: any) => fn(prismaMock.prisma)),
+      mfaAuthEvent: {
+        create: vi.fn(async ({ data }: any) => {
+          const row = { id: events.length + 1, userId: data.userId,
+            challengeId: data.challengeId, kind: data.kind,
+            codeHash: data.codeHash ?? null, admissionId: data.admissionId ?? null };
+          events.push(row);
+          return row;
+        }),
+      },
+      mfaRecoveryRedemption: {
+        findUnique: vi.fn(async ({ where }: any) => {
+          const key = where.userId_codeHash;
+          return redemptions.get(key.userId + ":" + key.codeHash) ?? null;
+        }),
+        create: vi.fn(async ({ data }: any) => {
+          const key = data.userId + ":" + data.codeHash;
+          if (redemptions.has(key)) throw new Error("DUPLICATE_REDEMPTION");
+          const row = { eventId: data.eventId, admissionId: data.admissionId };
+          redemptions.set(key, row);
+          return row;
+        }),
+      },
       mfaLoginAttempt: {
         findUnique: vi.fn(async ({ where }: any) => attempts.get(where.userId) ?? null),
         findUniqueOrThrow: vi.fn(async ({ where }: any) => {
