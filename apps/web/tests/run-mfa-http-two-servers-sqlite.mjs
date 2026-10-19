@@ -152,12 +152,14 @@ try {
       redemption?.admissionId === redeemedEvent?.admissionId &&
       admissionById.get(redemption?.admissionId)?.codeHash === recoveryHash &&
       redemption.admissionId < redemption.eventId;
+    const replayAdmission = admissions.find(e => e.codeHash === recoveryHash &&
+      e.id > (redeemedEvent?.id ?? Infinity));
     const expectedFailureEvents = scenario === 'invalid-barrier' ||
       scenario === 'invalid-first' || scenario === 'valid-first' ||
-      scenario === 'replay' ? 1 : 0;
+      scenario === 'replay' || (scenario === 'race' && replayAdmission) ? 1 : 0;
     const durableFailuresValid = failures.length === expectedFailureEvents &&
       (expectedFailureEvents === 0 || failures[0].codeHash ===
-        (scenario === 'replay' ? recoveryHash : invalidHash));
+        (scenario === 'replay' || scenario === 'race' ? recoveryHash : invalidHash));
     const eventOrderValid = admissions.length === 2 &&
       successes.length === 1 &&
       durableRedemptionValid && durableFailuresValid &&
@@ -174,7 +176,8 @@ try {
     const loser = results.filter(r =>
       (r.status === 404 && r.body?.error === 'not_found') ||
       (r.status === 400 && r.body?.error === 'auth_failed'));
-    const expectedFailures = scenario === 'replay' || scenario === 'valid-first' ? 1 : 0;
+    const expectedFailures = scenario === 'replay' || scenario === 'valid-first'
+      ? 1 : scenario === 'race' ? failuresAfterSuccess : 0;
     // In invalid-first the subsequent successful login resets the counter.
     // In invalid-barrier either transaction may commit last; 0 or 1 is valid
     // until a durable failure-event log can prove that the failure was recorded.
