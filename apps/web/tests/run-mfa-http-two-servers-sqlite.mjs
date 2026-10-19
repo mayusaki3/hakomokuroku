@@ -191,7 +191,10 @@ try {
       iteration, scenario, pass, statuses, results, sessions: sessions.length,
       activeSessions: sessions.filter(s => !s.revokedAt).length,
       usedChallenges: used, recoveryCodesRemaining: user.recoveryCodes?.length,
-      mfaFailCount: attempt?.failCount ?? 0,\n      durableEvents: events.map(e => ({ id: e.id, kind: e.kind, admissionId: e.admissionId })),\n      redemptionCount: redemptions.length, failureEventCount: failures.length,\n      eventOrderValid, durableCounterValid,
+      mfaFailCount: attempt?.failCount ?? 0,
+      durableEvents: events.map(e => ({ id: e.id, kind: e.kind, admissionId: e.admissionId })),
+      redemptionCount: redemptions.length, failureEventCount: failures.length,
+      eventOrderValid, durableCounterValid,
       failureCountInterpretation: scenario === 'invalid-barrier'
         ? 'concurrent-reset-order-undetermined' : 'deterministic',
       mfaLockedUntil: attempt?.lockedUntil ?? null,
