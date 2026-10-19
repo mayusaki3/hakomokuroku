@@ -10,7 +10,7 @@ const m = vi.hoisted(() => ({
   sessionFind: vi.fn(),
   sessionRevoke: vi.fn(),
   decrypt: vi.fn(),
-  totpCheck: vi.fn(), mfaFind: vi.fn(), mfaUpsert: vi.fn(), mfaFindOrThrow: vi.fn(), mfaUpdate: vi.fn(),
+  totpCheck: vi.fn(), mfaFind: vi.fn(), mfaUpsert: vi.fn(), mfaFindOrThrow: vi.fn(), mfaUpdate: vi.fn(), mfaUpdateMany: vi.fn(), authEventCreate: vi.fn(), authEventTxCreate: vi.fn(), recoveryFind: vi.fn(), recoveryCreate: vi.fn(), attachDevice: vi.fn(),
 }));
 vi.mock('next/headers', () => ({ cookies: () => ({ get: m.cookiesGet }) }));
 vi.mock('@/server/prisma', () => ({
@@ -19,13 +19,22 @@ vi.mock('@/server/prisma', () => ({
     user: { findUnique: m.userFind, update: m.userUpdate },
     authSession: { create: m.sessionCreate, findUnique: m.sessionFind, updateMany: m.sessionRevoke },
     mfaLoginAttempt: { findUnique: m.mfaFind },
+    mfaAuthEvent: { create: m.authEventCreate },
+    mfaRecoveryRedemption: { findUnique: m.recoveryFind },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn({
       loginChallenge: { updateMany: m.challengeClaim },
       user: { findUnique: m.userFind, update: m.userUpdate },
       authSession: { create: m.sessionCreate },
-      mfaLoginAttempt: { upsert: m.mfaUpsert, findUniqueOrThrow: m.mfaFindOrThrow, update: m.mfaUpdate },
+      mfaLoginAttempt: { upsert: m.mfaUpsert, findUniqueOrThrow: m.mfaFindOrThrow, update: m.mfaUpdate, findUnique: m.mfaFind, updateMany: m.mfaUpdateMany },
+      mfaAuthEvent: { create: m.authEventTxCreate },
+      mfaRecoveryRedemption: { create: m.recoveryCreate, findUnique: m.recoveryFind },
     }),
   },
+}));
+vi.mock('@/server/device-login', () => ({
+  DEVICE_COOKIE: 'hk_device',
+  deviceCookieOptions: () => ({ httpOnly: true, path: '/', sameSite: 'lax' }),
+  attachLoginDevice: m.attachDevice,
 }));
 vi.mock('@/server/crypto', () => ({ decryptStr: m.decrypt }));
 vi.mock('otplib', () => ({ authenticator: { check: m.totpCheck } }));
@@ -45,6 +54,11 @@ function req(body: Record<string, string>) {
 describe('AuthSession lifecycle contracts', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    m.authEventCreate.mockResolvedValue({ id: 1 });
+    m.authEventTxCreate.mockResolvedValue({ id: 2 });
+    m.recoveryFind.mockResolvedValue(null);
+    m.mfaUpdateMany.mockResolvedValue({ count: 1 });
+    m.attachDevice.mockResolvedValue('device-id.device-secret');
     m.mfaFind.mockResolvedValue(null);
     m.mfaFindOrThrow.mockResolvedValue({ failCount: 0, lockedUntil: null });
     m.mfaUpdate.mockResolvedValue({ failCount: 1, lockedUntil: null });
