@@ -23,7 +23,7 @@ describe('GET /api/auth/me', () => {
       user: { id: 'U1', userName: 'Alice', iconDataUrl: null },
     });
 
-    const res = await GET_ME(new Request('http://test.local/api/auth/me'));
+    const res = await GET_ME();
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -36,7 +36,7 @@ describe('GET /api/auth/me', () => {
     // 未ログイン想定: readSession から ok:false が返る
     (readSession as any).mockResolvedValue({ ok: false, user: null });
 
-    const res = await GET_ME(new Request('http://test.local/api/auth/me'));
+    const res = await GET_ME();
     const body = await res.json();
 
     // エラー仕様詳細 / セッション仕様に合わせて 200 固定
@@ -50,7 +50,7 @@ describe('GET /api/auth/me', () => {
 it('AUTH_ME-TC-03: readSession が例外でも 200 + ok:false（実装準拠）', async () => {
   (readSession as any).mockRejectedValue(new Error('boom'));
 
-  const res = await GET_ME(new Request('http://t.local/api/auth/me'));
+  const res = await GET_ME();
   const body = await res.json();
 
   expect(res.status).toBe(200);
@@ -62,7 +62,7 @@ it('AUTH_ME-TC-03: readSession が例外でも 200 + ok:false（実装準拠）'
 it('AUTH_ME-TC-04: ok:true かつ user:null の挙動', async () => {
   (readSession as any).mockResolvedValue({ ok: true, user: null });
 
-  const res = await GET_ME(new Request('http://t.local/api/auth/me'));
+  const res = await GET_ME();
   const body = await res.json().catch(() => ({}));
 
   // 実装によって 200 or 401 を許容（将来 200 に統一するならここも修正）
