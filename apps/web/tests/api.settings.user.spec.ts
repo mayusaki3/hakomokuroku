@@ -1,5 +1,5 @@
 // apps/web/tests/api.settings.user.spec.ts
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 
 import { GET as GET_USER, PUT as PUT_USER } from '@/app/api/settings/user/route';
 import { prisma } from '@/lib/prisma';
@@ -28,9 +28,9 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-const mockedReadSession = readSession as unknown as vi.Mock;
-const mockedFindFirst = prisma.user.findFirst as unknown as vi.Mock;
-const mockedUpdate = prisma.user.update as unknown as vi.Mock;
+const mockedReadSession = readSession as unknown as Mock;
+const mockedFindFirst = prisma.user.findFirst as unknown as Mock;
+const mockedUpdate = prisma.user.update as unknown as Mock;
 
 describe('GET /api/settings/user', () => {
   // sec_settings_user_get_success
