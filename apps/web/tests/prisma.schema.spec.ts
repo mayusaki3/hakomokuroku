@@ -60,6 +60,21 @@ describe('v0.8 Prisma schema', () => {
     expect(schema).not.toContain('aiUpdatedAt');
   });
 
+  it('DB_SCHEMA-TC-08: Box nesting remains nullable and business relations do not cascade on deletion', () => {
+    const box = modelBody('Box');
+    const item = modelBody('Item');
+
+    expect(box).toMatch(/\n\s+parentBoxId\s+String\?/);
+    expect(box).toMatch(/\n\s+parentBox\s+Box\?/);
+    expect(box).toContain('@relation("BoxNesting"');
+    expect(item).toMatch(/\n\s+boxId\s+String\?/);
+    expect(item).toMatch(/\n\s+box\s+Box\?/);
+
+    // Box / Item / BoxLocation are tombstoned, not physically cascade-deleted.
+    expect(box).not.toMatch(/@relation\([^\n]*onDelete:\s*Cascade/);
+    expect(item).not.toMatch(/box\s+Box\?\s+@relation\([^\n]*onDelete:\s*Cascade/);
+  });
+
   it('DB_SCHEMA-TC-07: unassigned Box/Location references are nullable while foreign keys remain', () => {
     const box = modelBody('Box');
     const item = modelBody('Item');
