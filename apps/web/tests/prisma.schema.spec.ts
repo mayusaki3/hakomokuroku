@@ -71,7 +71,8 @@ describe('v0.8 Prisma schema', () => {
     expect(item).toMatch(/\n\s+box\s+Box\?/);
 
     // Box / Item / BoxLocation are tombstoned, not physically cascade-deleted.
-    expect(box).not.toMatch(/@relation\([^\n]*onDelete:\s*Cascade/);
+    // User deletion may cascade to all user-owned data; business-to-business relations must not.
+    expect(box).not.toMatch(/(?:location|parentBox)\s+\w+\??\s+@relation\([^\n]*onDelete:\s*Cascade/);
     expect(item).not.toMatch(/box\s+Box\?\s+@relation\([^\n]*onDelete:\s*Cascade/);
   });
 
