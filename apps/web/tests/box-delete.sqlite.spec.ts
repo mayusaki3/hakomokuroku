@@ -54,6 +54,11 @@ describe('Box delete SQLite transaction', () => {
   afterAll(async () => {
     await prisma.syncChangeLog.deleteMany({ where: { userId: { in: [alice, bob] } } });
     await prisma.item.deleteMany({ where: { userId: { in: [alice, bob] } } });
+    // Break self-referencing Box nesting before physically deleting test fixtures.
+    await prisma.box.updateMany({
+      where: { userId: { in: [alice, bob] } },
+      data: { parentBoxId: null },
+    });
     await prisma.box.deleteMany({ where: { userId: { in: [alice, bob] } } });
     await prisma.user.deleteMany({ where: { id: { in: [alice, bob] } } });
     await prisma.$disconnect();
