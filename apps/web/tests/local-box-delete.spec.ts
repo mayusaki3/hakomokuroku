@@ -57,7 +57,7 @@ describe('v0.8 local Box deletion and Outbox', () => {
     for (const row of [await db.boxes.get('parent'), await db.boxes.get('child'), await db.items.get('active')]) {
       expect(row?.revision).toMatch(/^[23]$/);
       const kind = row?.id === 'active' ? 'ITEM' : 'BOX';
-      expect(row?.contentHash).toBe(businessContentHash(kind, row!));
+      expect(row?.contentHash).toBe(businessContentHash(kind, { ...row! }));
       expect(queued.find((x) => x.entityId === row?.id)?.contentHash).toBe(row?.contentHash);
     }
   });
