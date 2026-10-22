@@ -52,7 +52,7 @@ export async function readPullPage(userId: string, cursor: bigint, limit: number
   // Snapshot the high-water mark so a page never claims changes committed later.
   // Global sequence gaps may belong to other users and must not imply missing history.
   const [sequence, rows] = await prisma.$transaction(async (tx) => {
-    const seq = await tx.syncSequence.findUnique({ where: { id: 'GLOBAL' } });
+    const seq = await tx.syncSequence.findFirst({ orderBy: { lastSeq: 'desc' } });
     const upper = seq?.lastSeq ?? 0n;
     if (cursor > upper) throw new PullV2Error('INVALID_CURSOR', 400);
     const changes = await tx.syncChangeLog.findMany({
