@@ -21,13 +21,12 @@ function mockTransaction(options: {
 }) {
   const upsert = vi.fn().mockResolvedValue({});
   const deleteMany = vi.fn().mockResolvedValue({ count: options.deleted ?? 1 });
-  const findFirst = vi.fn().mockImplementation(({ where }: { where: { serverUpdatedAt: unknown; syncSeq?: unknown } }) =>
-    where.syncSeq !== undefined || options.firstRetained == null
-      ? (where.syncSeq !== undefined
-        ? (options.lastExpired == null ? null : { syncSeq: options.lastExpired })
-        : null)
-      : { syncSeq: options.firstRetained },
-  );
+  const findFirst = vi.fn().mockImplementation(({ where }: { where: { syncSeq?: unknown } }) => {
+    if (where.syncSeq !== undefined) {
+      return options.lastExpired == null ? null : { syncSeq: options.lastExpired };
+    }
+    return options.firstRetained == null ? null : { syncSeq: options.firstRetained };
+  });
   const findUnique = vi.fn().mockResolvedValue(
     options.previous == null ? null : { minValidCursor: options.previous },
   );
