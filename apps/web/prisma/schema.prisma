@@ -61,6 +61,7 @@ model User {
   themes          Theme[]
   setting         UserSetting?
   syncChanges     SyncChangeLog[]
+  syncHistoryBoundary SyncHistoryBoundary?
   syncConflicts   SyncConflict[]
   restoreLock     RestoreLock?
   restoreResults  RestoreApplyResult[]
@@ -249,6 +250,16 @@ model SyncChangeLog {
 
   @@index([userId, syncSeq])
   @@index([serverUpdatedAt])
+}
+
+// The highest removed change sequence for each User. A cursor at this
+// boundary is still valid; an older cursor requires Full Resync.
+// Update this row atomically with SyncChangeLog retention deletion.
+model SyncHistoryBoundary {
+  userId         String @id
+  minValidCursor BigInt @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model SyncConflict {
