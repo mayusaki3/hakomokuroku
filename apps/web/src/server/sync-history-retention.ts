@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@prisma/client';
 import { prisma } from '@/server/prisma';
 
 export const SYNC_HISTORY_RETENTION_DAYS = 90;
@@ -8,10 +9,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Only a prefix of each user's syncSeq history can be removed. A later expired
  * row must be preserved when an earlier sequence is still within retention.
  */
-export async function pruneSyncHistory(now: Date = new Date()) {
+export async function pruneSyncHistory(now: Date = new Date(), client: PrismaClient = prisma) {
   if (!Number.isFinite(now.getTime())) throw new Error('INVALID_RETENTION_DATE');
   const cutoff = new Date(now.getTime() - SYNC_HISTORY_RETENTION_DAYS * DAY_MS);
-  const candidates = await prisma.syncChangeLog.findMany({
+  const candidates = await client.syncChangeLog.findMany({
     where: { serverUpdatedAt: { lt: cutoff } },
     select: { userId: true },
     distinct: ['userId'],
@@ -21,7 +22,7 @@ export async function pruneSyncHistory(now: Date = new Date()) {
   let advancedUsers = 0;
 
   for (const { userId } of candidates) {
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await client.$transaction(async (tx) => {
       // The first unexpired row blocks deletion of any later syncSeq, even
       // if those later rows carry an older serverUpdatedAt.
       const firstRetained = await tx.syncChangeLog.findFirst({
