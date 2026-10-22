@@ -24,7 +24,7 @@ function sequence(value: string): bigint {
  * No network request or non-IDB asynchronous work occurs in this transaction.
  */
 export async function applyPullPage(db: UserLocalDB, page: PullPage): Promise<number> {
-  return db.transaction('rw', db.boxes, db.items, db.locations, db.outbox, db.syncState, async () => {
+  return db.transaction('rw', [db.boxes, db.items, db.locations, db.outbox, db.syncState], async () => {
     const state = await db.syncState.get('SYNC');
     if (!state || state.pullCursor === null) throw new Error('FULL_RESYNC_REQUIRED');
 
