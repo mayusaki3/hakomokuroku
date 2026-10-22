@@ -55,6 +55,10 @@ export async function readPullPage(userId: string, cursor: bigint, limit: number
     const seq = await tx.syncSequence.findFirst({ orderBy: { lastSeq: 'desc' } });
     const upper = seq?.lastSeq ?? 0n;
     if (cursor > upper) throw new PullV2Error('INVALID_CURSOR', 400);
+    const boundary = await tx.syncHistoryBoundary.findUnique({ where: { userId } });
+    if (boundary && cursor < boundary.minValidCursor) {
+      throw new PullV2Error('FULL_RESYNC_REQUIRED', 409);
+    }
     const changes = await tx.syncChangeLog.findMany({
       where: { userId, syncSeq: { gt: cursor, lte: upper } },
       orderBy: { syncSeq: 'asc' },
