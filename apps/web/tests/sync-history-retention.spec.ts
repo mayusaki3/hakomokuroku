@@ -21,8 +21,8 @@ function mockTransaction(options: {
 }) {
   const upsert = vi.fn().mockResolvedValue({});
   const deleteMany = vi.fn().mockResolvedValue({ count: options.deleted ?? 1 });
-  const findFirst = vi.fn().mockImplementation(({ where }: { where: { syncSeq?: unknown } }) => {
-    if (where.syncSeq !== undefined) {
+  const findFirst = vi.fn().mockImplementation(({ orderBy }: { orderBy: { syncSeq: 'asc' | 'desc' } }) => {
+    if (orderBy.syncSeq === 'desc') {
       return options.lastExpired == null ? null : { syncSeq: options.lastExpired };
     }
     return options.firstRetained == null ? null : { syncSeq: options.firstRetained };
