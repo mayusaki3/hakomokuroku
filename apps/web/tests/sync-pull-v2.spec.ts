@@ -46,6 +46,7 @@ describe('v0.8 server Pull API', () => {
   it('scopes rows to the authenticated user and advances to high-water mark', async () => {
     const findMany = vi.fn().mockResolvedValue([change(3n)]);
     transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn({
+      syncHistoryBoundary: { findUnique: vi.fn().mockResolvedValue(null) },
       syncSequence: { findFirst: vi.fn().mockResolvedValue({ lastSeq: 8n }) },
       syncChangeLog: { findMany },
     }));
@@ -63,6 +64,7 @@ describe('v0.8 server Pull API', () => {
   });
   it('pages without skipping rows', async () => {
     transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn({
+      syncHistoryBoundary: { findUnique: vi.fn().mockResolvedValue(null) },
       syncSequence: { findFirst: vi.fn().mockResolvedValue({ lastSeq: 9n }) },
       syncChangeLog: { findMany: vi.fn().mockResolvedValue([change(3n), change(7n)]) },
     }));
@@ -71,8 +73,22 @@ describe('v0.8 server Pull API', () => {
     expect(page.hasMore).toBe(true);
     expect(page.changes).toHaveLength(1);
   });
+  it('requires full resync only when the user cursor predates the retained boundary', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const findUnique = vi.fn().mockResolvedValue({ userId: 'u1', minValidCursor: 5n });
+    transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn({
+      syncHistoryBoundary: { findUnique },
+      syncSequence: { findFirst: vi.fn().mockResolvedValue({ lastSeq: 9n }) },
+      syncChangeLog: { findMany },
+    }));
+    expect((await GET(url('4'))).status).toBe(409);
+    expect(findMany).not.toHaveBeenCalled();
+    expect((await GET(url('5'))).status).toBe(200);
+    expect(findUnique).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+  });
   it('rejects future cursors', async () => {
     transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn({
+      syncHistoryBoundary: { findUnique: vi.fn().mockResolvedValue(null) },
       syncSequence: { findFirst: vi.fn().mockResolvedValue({ lastSeq: 9n }) },
     }));
     expect((await GET(url('10'))).status).toBe(400);
