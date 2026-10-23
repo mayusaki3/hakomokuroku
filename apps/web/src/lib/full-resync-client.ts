@@ -88,10 +88,11 @@ export async function runFullResync(db: UserLocalDB, options: FullResyncTranspor
     const snapshot = created(await requestJson(fetcher, endpoint(baseUrl, ''), {
       method: 'POST', signal: options.signal,
     }));
-    await beginFullResync(db, snapshot.snapshotId, snapshot.snapshotSeq);
+    await beginFullResync(db, snapshot.snapshotId, snapshot.snapshotSeq, snapshot.total);
     stage = await db.resyncStage.get('STAGE');
   }
   if (!stage) throw new Error('RESYNC_STAGE_MISSING');
+  if (stage.expectedTotal === undefined) throw new Error('RESYNC_TOTAL_UNKNOWN');
 
   // A completed staging session may have been interrupted before adoption.
   while (!stage.complete) {
@@ -116,6 +117,6 @@ export async function runFullResync(db: UserLocalDB, options: FullResyncTranspor
     await stageFullResyncPage(db, next);
     stage = (await db.resyncStage.get('STAGE'))!;
   }
-  await commitFullResync(db, stage.snapshotId, stage.nextOffset);
+  await commitFullResync(db, stage.snapshotId, stage.expectedTotal);
   return stage.nextOffset;
 }
