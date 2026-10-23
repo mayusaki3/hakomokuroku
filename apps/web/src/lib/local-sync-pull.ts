@@ -1,3 +1,4 @@
+import { classifyOutbox } from '@/lib/outbox-reconciliation';
 import type {
   BusinessEntityType, LocalBox, LocalBoxLocation, LocalItem, RevisionString, UserLocalDB,
 } from '@/lib/user-local-db';
@@ -24,7 +25,7 @@ function sequence(value: string): bigint {
  * No network request or non-IDB asynchronous work occurs in this transaction.
  */
 export async function applyPullPage(db: UserLocalDB, page: PullPage): Promise<number> {
-  return db.transaction('rw', [db.boxes, db.items, db.locations, db.outbox, db.syncState], async () => {
+  return db.transaction('rw', [db.boxes, db.items, db.locations, db.outbox, db.outboxConflicts, db.syncState], async () => {
     const state = await db.syncState.get('SYNC');
     if (!state || state.pullCursor === null) throw new Error('FULL_RESYNC_REQUIRED');
 
@@ -43,7 +44,11 @@ export async function applyPullPage(db: UserLocalDB, page: PullPage): Promise<nu
       previous = seq;
 
       const pending = await db.outbox.get([change.entityType, change.entityId]);
-      if (pending) continue;
+      if (pending) {
+        await db.outboxConflicts.put(classifyOutbox(pending, change.record));
+        continue;
+      }
+      await db.outboxConflicts.delete([change.entityType, change.entityId]);
 
       switch (change.entityType) {
         case 'BOX':
