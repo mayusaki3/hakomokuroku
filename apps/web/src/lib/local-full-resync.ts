@@ -1,3 +1,4 @@
+import { classifyOutbox } from '@/lib/outbox-reconciliation';
 import type {
   BusinessEntityType, LocalBox, LocalBoxLocation, LocalItem, LocalResyncEntity,
   RevisionString, UserLocalDB,
@@ -93,7 +94,7 @@ export async function stageFullResyncPage(db: UserLocalDB, page: FullResyncPage)
 /** Commit only after caller has fetched and staged the final page. */
 export async function commitFullResync(db: UserLocalDB, snapshotId: string, expectedTotal: number): Promise<void> {
   await db.transaction('rw',
-    [db.boxes, db.items, db.locations, db.outbox, db.syncState, db.resyncStage, db.resyncEntities],
+    [db.boxes, db.items, db.locations, db.outbox, db.outboxConflicts, db.syncState, db.resyncStage, db.resyncEntities],
     async () => {
       const stage = await db.resyncStage.get('STAGE');
       if (!stage || stage.snapshotId !== snapshotId || !stage.complete || stage.nextOffset !== expectedTotal ||
@@ -104,6 +105,7 @@ export async function commitFullResync(db: UserLocalDB, snapshotId: string, expe
       const rows = await db.resyncEntities.toArray();
       const pending = await db.outbox.toArray();
       const pendingKeys = new Set(pending.map(row => key(row.entityType, row.entityId)));
+      const remoteRows = new Map(rows.map(row => [row.key, row.record]));
       // Preserve local unsynced projections. Outbox remains unchanged.
       const localBoxes = await db.boxes.toArray();
       const localItems = await db.items.toArray();
@@ -119,6 +121,11 @@ export async function commitFullResync(db: UserLocalDB, snapshotId: string, expe
       const combined = new Map(rows.map(row => [row.key, row]));
       for (const row of preserved) combined.set(row.key, row);
       const merged = [...combined.values()];
+      await db.outboxConflicts.clear();
+      for (const change of pending) {
+        await db.outboxConflicts.put(classifyOutbox(change,
+          remoteRows.get(key(change.entityType, change.entityId)) ?? null));
+      }
       await db.locations.bulkPut(merged.filter(row => row.entityType === 'BOX_LOCATION').map(row => row.record as LocalBoxLocation));
       await db.boxes.bulkPut(merged.filter(row => row.entityType === 'BOX').map(row => row.record as LocalBox));
       await db.items.bulkPut(merged.filter(row => row.entityType === 'ITEM').map(row => row.record as LocalItem));
