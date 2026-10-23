@@ -55,7 +55,7 @@ export async function beginFullResync(db: UserLocalDB, snapshotId: string, snaps
   validSeq(snapshotSeq);
   await db.transaction('rw', db.resyncStage, db.resyncEntities, async () => {
     await db.resyncEntities.clear();
-    await db.resyncStage.put({ id: 'STAGE', snapshotId, snapshotSeq, nextOffset: 0 });
+    await db.resyncStage.put({ id: 'STAGE', snapshotId, snapshotSeq, nextOffset: 0, complete: false });
   });
 }
 
@@ -66,6 +66,7 @@ export async function stageFullResyncPage(db: UserLocalDB, page: FullResyncPage)
     if (!stage || stage.snapshotId !== page.snapshotId || stage.snapshotSeq !== page.snapshotSeq) {
       throw new Error('RESYNC_SNAPSHOT_MISMATCH');
     }
+    if (stage.complete) throw new Error('RESYNC_ALREADY_COMPLETE');
     if (!Number.isSafeInteger(page.nextOffset) ||
         page.nextOffset !== stage.nextOffset + page.entities.length ||
         (page.hasMore && page.entities.length === 0)) {
@@ -79,7 +80,7 @@ export async function stageFullResyncPage(db: UserLocalDB, page: FullResyncPage)
       if (await db.resyncEntities.get(row.key)) throw new Error('RESYNC_DUPLICATE_ENTITY');
     }
     await db.resyncEntities.bulkPut(rows);
-    await db.resyncStage.put({ ...stage, nextOffset: page.nextOffset });
+    await db.resyncStage.put({ ...stage, nextOffset: page.nextOffset, complete: !page.hasMore });
   });
 }
 
@@ -89,7 +90,7 @@ export async function commitFullResync(db: UserLocalDB, snapshotId: string, expe
     [db.boxes, db.items, db.locations, db.outbox, db.syncState, db.resyncStage, db.resyncEntities],
     async () => {
       const stage = await db.resyncStage.get('STAGE');
-      if (!stage || stage.snapshotId !== snapshotId || stage.nextOffset !== expectedTotal ||
+      if (!stage || stage.snapshotId !== snapshotId || !stage.complete || stage.nextOffset !== expectedTotal ||
           await db.resyncEntities.count() !== expectedTotal) {
         throw new Error('RESYNC_INCOMPLETE');
       }
