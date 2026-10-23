@@ -63,6 +63,7 @@ model User {
   syncChanges     SyncChangeLog[]
   syncHistoryBoundary SyncHistoryBoundary?
   syncConflicts   SyncConflict[]
+  syncPushReceipts SyncPushReceipt[]
   restoreLock     RestoreLock?
   restoreResults  RestoreApplyResult[]
   resyncSnapshots FullResyncSnapshot[]
@@ -394,4 +395,20 @@ model UserSetting {
   createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+ 
+// Durable per-operation idempotency receipt. A replay must return the stored
+// result only if the request fingerprint is identical.
+model SyncPushReceipt {
+  userId             String
+  operationId        String
+  requestFingerprint String
+  result             Json
+  createdAt          DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, operationId])
+  @@index([createdAt])
 }
