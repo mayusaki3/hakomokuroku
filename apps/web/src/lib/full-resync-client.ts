@@ -117,6 +117,8 @@ export async function runFullResync(db: UserLocalDB, options: FullResyncTranspor
     await stageFullResyncPage(db, next);
     stage = (await db.resyncStage.get('STAGE'))!;
   }
-  await commitFullResync(db, stage.snapshotId, stage.expectedTotal);
+  const expectedTotal = stage.expectedTotal;
+  if (expectedTotal === undefined) throw new Error('RESYNC_TOTAL_UNKNOWN');
+  await commitFullResync(db, stage.snapshotId, expectedTotal);
   return stage.nextOffset;
 }
