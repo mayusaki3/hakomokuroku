@@ -63,6 +63,7 @@ export interface LocalResyncStage {
   snapshotSeq: RevisionString;
   nextOffset: number;
   complete: boolean;
+  expectedTotal?: number;
 }
 
 export interface LocalResyncEntity {
