@@ -1,0 +1,139 @@
+import type { LocalOutbox, UserLocalDB } from '@/lib/user-local-db';
+import { planOutboxPush, type PushCandidate } from '@/lib/outbox-push-plan';
+
+export interface PreparedPush extends PushCandidate {
+  operationId: string;
+}
+export interface PushReply {
+  operationId: string;
+  status: 'APPLIED' | 'CONFLICT';
+  revision: string;
+  syncSeq: string | null;
+}
+export interface PushRunResult {
+  applied: number;
+  conflicts: number;
+  blocked: number;
+}
+
+/**
+ * Assign IDs to legacy pending entries in a short IndexedDB transaction.
+ * IDs must be durable before HTTP is attempted, including if the reply is lost.
+ */
+export async function prepareOutboxPush(db: UserLocalDB): Promise<{
+  candidates: PreparedPush[];
+  blocked: Awaited<ReturnType<typeof planOutboxPush>>['blocked'];
+}> {
+  await db.transaction('rw', db.outbox, async () => {
+    for (const entry of await db.outbox.toArray()) {
+      if (!entry.operationId) {
+        await db.outbox.put({ ...entry, operationId: crypto.randomUUID() });
+      }
+    }
+  });
+  const plan = await planOutboxPush(db);
+  const candidates: PreparedPush[] = [];
+  for (const entry of plan.candidates) {
+    const stored = await db.outbox.get([entry.entityType, entry.entityId]);
+    if (stored?.operationId && sameEdit(stored, entry)) {
+      candidates.push({ ...entry, operationId: stored.operationId });
+    }
+  }
+  return { candidates, blocked: plan.blocked };
+}
+
+function sameEdit(
+  current: LocalOutbox,
+  sent: Pick<PreparedPush, 'entityType' | 'entityId' | 'operation' |
+    'baseRevision' | 'contentHash' | 'payload' | 'createdAt'>,
+): boolean {
+  return current.entityType === sent.entityType &&
+    current.entityId === sent.entityId &&
+    current.operation === sent.operation &&
+    current.baseRevision === sent.baseRevision &&
+    current.contentHash === sent.contentHash &&
+    current.createdAt === sent.createdAt &&
+    JSON.stringify(current.payload) === JSON.stringify(sent.payload);
+}
+
+/** Never clear a newer edit after an older in-flight Push completes. */
+export async function acknowledgePush(
+  db: UserLocalDB, sent: PreparedPush, reply: PushReply,
+): Promise<boolean> {
+  if (reply.operationId !== sent.operationId ||
+      reply.status !== 'APPLIED' ||
+      !/^[1-9][0-9]*$/.test(reply.revision) ||
+      reply.syncSeq === null || !/^[1-9][0-9]*$/.test(reply.syncSeq)) {
+    throw new Error('INVALID_PUSH_ACK');
+  }
+  return db.transaction('rw', db.outbox, db.outboxConflicts, db.syncState, async () => {
+    const current = await db.outbox.get([sent.entityType, sent.entityId]);
+    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) {
+      return false;
+    }
+    await db.outbox.delete([sent.entityType, sent.entityId]);
+    await db.outboxConflicts.delete([sent.entityType, sent.entityId]);
+    const state = await db.syncState.get('SYNC');
+    if (state) await db.syncState.put({ ...state, lastPushAt: new Date().toISOString() });
+    return true;
+  });
+}
+
+/**
+ * A conflict is recorded without overwriting local Business or Outbox.
+ * Pull/Full Resync will subsequently attach the authoritative remote record.
+ */
+export async function recordPushConflict(
+  db: UserLocalDB, sent: PreparedPush, reply: PushReply,
+): Promise<boolean> {
+  if (reply.operationId !== sent.operationId || reply.status !== 'CONFLICT' ||
+      !/^(0|[1-9][0-9]*)$/.test(reply.revision)) {
+    throw new Error('INVALID_PUSH_CONFLICT');
+  }
+  return db.transaction('rw', db.outbox, db.outboxConflicts, async () => {
+    const current = await db.outbox.get([sent.entityType, sent.entityId]);
+    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) {
+      return false;
+    }
+    await db.outboxConflicts.put({
+      entityType: sent.entityType, entityId: sent.entityId,
+      status: 'CONFLICT', baseRevision: sent.baseRevision,
+      remoteRevision: reply.revision, remoteDeleted: false, remoteRecord: null,
+    });
+    return true;
+  });
+}
+
+export async function runOutboxPush(
+  db: UserLocalDB,
+  options: { fetcher?: typeof fetch; baseUrl?: string; signal?: AbortSignal } = {},
+): Promise<PushRunResult> {
+  const fetcher = options.fetcher ?? fetch;
+  const plan = await prepareOutboxPush(db);
+  let applied = 0;
+  let conflicts = 0;
+  for (const sent of plan.candidates) {
+    if (options.signal?.aborted) throw new Error('PUSH_ABORTED');
+    // Do not send a superseded candidate from an earlier preflight.
+    const current = await db.outbox.get([sent.entityType, sent.entityId]);
+    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) continue;
+    const response = await fetcher((options.baseUrl ?? '') + '/api/sync/v2/push', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin', signal: options.signal,
+      body: JSON.stringify(sent),
+    });
+    if (response.status !== 200 && response.status !== 409) {
+      throw new Error('PUSH_HTTP_' + response.status);
+    }
+    const reply = await response.json() as PushReply & { error?: string };
+    if (response.status === 409 && reply.status !== 'CONFLICT') {
+      throw new Error(reply.error ?? 'PUSH_HTTP_409');
+    }
+    if (response.status === 200) {
+      if (await acknowledgePush(db, sent, reply)) applied++;
+    } else if (await recordPushConflict(db, sent, reply)) {
+      conflicts++;
+    }
+  }
+  return { applied, conflicts, blocked: plan.blocked.length };
+}
