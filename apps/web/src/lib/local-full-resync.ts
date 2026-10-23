@@ -50,12 +50,13 @@ function decode(entity: FullResyncEntity, upper: bigint): LocalResyncEntity {
 }
 
 /** Start a new staging session; never touch current Business or Outbox. */
-export async function beginFullResync(db: UserLocalDB, snapshotId: string, snapshotSeq: string) {
+export async function beginFullResync(db: UserLocalDB, snapshotId: string, snapshotSeq: string, expectedTotal?: number) {
   if (!snapshotId) throw new Error('INVALID_RESYNC_SNAPSHOT');
   validSeq(snapshotSeq);
+  if (expectedTotal !== undefined && (!Number.isSafeInteger(expectedTotal) || expectedTotal < 0)) throw new Error('INVALID_RESYNC_TOTAL');
   await db.transaction('rw', db.resyncStage, db.resyncEntities, async () => {
     await db.resyncEntities.clear();
-    await db.resyncStage.put({ id: 'STAGE', snapshotId, snapshotSeq, nextOffset: 0, complete: false });
+    await db.resyncStage.put({ id: 'STAGE', snapshotId, snapshotSeq, nextOffset: 0, complete: false, expectedTotal });
   });
 }
 
@@ -71,6 +72,11 @@ export async function stageFullResyncPage(db: UserLocalDB, page: FullResyncPage)
         page.nextOffset !== stage.nextOffset + page.entities.length ||
         (page.hasMore && page.entities.length === 0)) {
       throw new Error('RESYNC_PAGE_INVALID');
+    }
+    if (stage.expectedTotal !== undefined && (page.nextOffset > stage.expectedTotal ||
+        (!page.hasMore && page.nextOffset !== stage.expectedTotal) ||
+        (page.hasMore && page.nextOffset >= stage.expectedTotal))) {
+      throw new Error('RESYNC_TOTAL_MISMATCH');
     }
     const upper = validSeq(stage.snapshotSeq);
     const rows = page.entities.map(entity => decode(entity, upper));
@@ -91,6 +97,7 @@ export async function commitFullResync(db: UserLocalDB, snapshotId: string, expe
     async () => {
       const stage = await db.resyncStage.get('STAGE');
       if (!stage || stage.snapshotId !== snapshotId || !stage.complete || stage.nextOffset !== expectedTotal ||
+          (stage.expectedTotal !== undefined && stage.expectedTotal !== expectedTotal) ||
           await db.resyncEntities.count() !== expectedTotal) {
         throw new Error('RESYNC_INCOMPLETE');
       }
