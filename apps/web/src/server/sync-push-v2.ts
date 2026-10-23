@@ -97,7 +97,7 @@ export async function applyPushV2(
       const nextRevision = remoteRevision + 1n;
       const now = new Date();
       const sequence = await tx.syncSequence.upsert({
-        where: { id: 'GLOBAL' }, create: { id: 'GLOBAL', lastSeq: 1n },
+        where: { id: 'global' }, create: { id: 'global', lastSeq: 1n },
         update: { lastSeq: { increment: 1n } },
       });
       const seq = sequence.lastSeq;
