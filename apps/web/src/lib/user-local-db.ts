@@ -57,6 +57,20 @@ export interface LocalOutbox {
   createdAt: string;
 }
 
+export interface LocalResyncStage {
+  id: 'STAGE';
+  snapshotId: string;
+  snapshotSeq: RevisionString;
+  nextOffset: number;
+}
+
+export interface LocalResyncEntity {
+  key: string;
+  entityType: BusinessEntityType;
+  entityId: string;
+  record: LocalBox | LocalItem | LocalBoxLocation;
+}
+
 export interface LocalSyncState {
   id: 'SYNC';
   pullCursor: RevisionString | null;
@@ -71,6 +85,8 @@ export class UserLocalDB extends Dexie {
   locations!: Table<LocalBoxLocation, string>;
   outbox!: Table<LocalOutbox, [BusinessEntityType, string]>;
   syncState!: Table<LocalSyncState, string>;
+  resyncStage!: Table<LocalResyncStage, string>;
+  resyncEntities!: Table<LocalResyncEntity, string>;
 
   constructor(userId: string) {
     if (!userId || !userId.trim()) throw new Error('User.id is required for local database');
@@ -81,6 +97,15 @@ export class UserLocalDB extends Dexie {
       locations: 'id, name, deletedAt',
       outbox: '[entityType+entityId], entityType, createdAt',
       syncState: 'id',
+    });
+    this.version(2).stores({
+      boxes: 'id, code, parentBoxId, locationId, deletedAt',
+      items: 'id, boxId, deletedAt',
+      locations: 'id, name, deletedAt',
+      outbox: '[entityType+entityId], entityType, createdAt',
+      syncState: 'id',
+      resyncStage: 'id',
+      resyncEntities: 'key, entityType',
     });
   }
 
