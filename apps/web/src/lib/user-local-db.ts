@@ -55,6 +55,8 @@ export interface LocalOutbox {
   contentHash: string;
   payload: Record<string, unknown>;
   createdAt: string;
+  /** Stable across retries; replaced whenever this pending edit changes. */
+  operationId?: string;
 }
 
 export type OutboxConflictStatus = 'READY' | 'CONFLICT' | 'REMOTE_DELETED' | 'REMOTE_MISSING';
@@ -152,9 +154,12 @@ export class UserLocalDB extends Dexie {
   async upsertOutboxInTransaction(change: LocalOutbox): Promise<void> {
     if (!Dexie.currentTransaction) throw new Error('Outbox update requires an active transaction');
     const existing = await this.outbox.get([change.entityType, change.entityId]);
-    await this.outbox.put(existing
-      ? { ...change, baseRevision: existing.baseRevision, createdAt: existing.createdAt }
-      : change);
+    await this.outbox.put({
+      ...change,
+      baseRevision: existing?.baseRevision ?? change.baseRevision,
+      createdAt: existing?.createdAt ?? change.createdAt,
+      operationId: crypto.randomUUID(),
+    });
   }
 }
 
