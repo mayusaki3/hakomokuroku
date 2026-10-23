@@ -22,45 +22,7 @@ beforeEach(async () => {
   db = new UserLocalDB(randomUUID());
   await db.open();
   await db.initializeSyncState();
-  it('rejects an early final page without replacing Business or cursor', async () => {
-    await db.boxes.put(box('old'));
-    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === 'POST') return ok({ snapshotId: 'short', snapshotSeq: '8', total: 2, expiresAt: stamp }, 201);
-      return ok({ snapshotId: 'short', snapshotSeq: '8', entities: [entity('a')],
-        nextOffset: 1, hasMore: false });
-    });
-    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
-      .rejects.toThrow('RESYNC_TOTAL_MISMATCH');
-    expect((await db.boxes.get('old'))?.name).toBe('old');
-    expect((await db.syncState.get('SYNC'))?.pullCursor).toBeNull();
-    expect((await db.resyncStage.get('STAGE'))?.nextOffset).toBe(0);
-  });
-  it('rejects extra rows beyond declared total', async () => {
-    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === 'POST') return ok({ snapshotId: 'long', snapshotSeq: '8', total: 1, expiresAt: stamp }, 201);
-      return ok({ snapshotId: 'long', snapshotSeq: '8', entities: [entity('a'), entity('b')],
-        nextOffset: 2, hasMore: false });
-    });
-    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
-      .rejects.toThrow('RESYNC_TOTAL_MISMATCH');
-    expect(await db.boxes.count()).toBe(0);
-  });
-  it('persists total across interrupted and resumed transfers', async () => {
-    let fail = true;
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      if (init?.method === 'POST') return ok({ snapshotId: 'resume', snapshotSeq: '8', total: 2, expiresAt: stamp }, 201);
-      if (url.includes('offset=0')) return ok({ snapshotId: 'resume', snapshotSeq: '8',
-        entities: [entity('a')], nextOffset: 1, hasMore: true });
-      if (fail) throw new Error('network down');
-      return ok({ snapshotId: 'resume', snapshotSeq: '8',
-        entities: [entity('b')], nextOffset: 2, hasMore: false });
-    });
-    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
-      .rejects.toThrow('network down');
-    expect((await db.resyncStage.get('STAGE'))?.expectedTotal).toBe(2);
-    fail = false;
-    expect(await runFullResync(db, { fetcher: fetcher as unknown as typeof fetch })).toBe(2);
-  });
+
 });
 afterEach(async () => { await db.delete(); });
 
@@ -113,5 +75,44 @@ describe('Full Resync HTTP orchestration', () => {
       .rejects.toThrow('SNAPSHOT_EXPIRED');
     expect(await db.resyncStage.count()).toBe(0);
     expect(await db.boxes.get('old')).toBeDefined();
+  });
+  it('rejects an early final page without replacing Business or cursor', async () => {
+    await db.boxes.put(box('old'));
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return ok({ snapshotId: 'short', snapshotSeq: '8', total: 2, expiresAt: stamp }, 201);
+      return ok({ snapshotId: 'short', snapshotSeq: '8', entities: [entity('a')],
+        nextOffset: 1, hasMore: false });
+    });
+    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
+      .rejects.toThrow('RESYNC_TOTAL_MISMATCH');
+    expect((await db.boxes.get('old'))?.name).toBe('old');
+    expect((await db.syncState.get('SYNC'))?.pullCursor).toBeNull();
+    expect((await db.resyncStage.get('STAGE'))?.nextOffset).toBe(0);
+  });
+  it('rejects extra rows beyond declared total', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return ok({ snapshotId: 'long', snapshotSeq: '8', total: 1, expiresAt: stamp }, 201);
+      return ok({ snapshotId: 'long', snapshotSeq: '8', entities: [entity('a'), entity('b')],
+        nextOffset: 2, hasMore: false });
+    });
+    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
+      .rejects.toThrow('RESYNC_TOTAL_MISMATCH');
+    expect(await db.boxes.count()).toBe(0);
+  });
+  it('persists total across interrupted and resumed transfers', async () => {
+    let fail = true;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return ok({ snapshotId: 'resume', snapshotSeq: '8', total: 2, expiresAt: stamp }, 201);
+      if (url.includes('offset=0')) return ok({ snapshotId: 'resume', snapshotSeq: '8',
+        entities: [entity('a')], nextOffset: 1, hasMore: true });
+      if (fail) throw new Error('network down');
+      return ok({ snapshotId: 'resume', snapshotSeq: '8',
+        entities: [entity('b')], nextOffset: 2, hasMore: false });
+    });
+    await expect(runFullResync(db, { fetcher: fetcher as unknown as typeof fetch }))
+      .rejects.toThrow('network down');
+    expect((await db.resyncStage.get('STAGE'))?.expectedTotal).toBe(2);
+    fail = false;
+    expect(await runFullResync(db, { fetcher: fetcher as unknown as typeof fetch })).toBe(2);
   });
 });
