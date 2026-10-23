@@ -57,6 +57,18 @@ export interface LocalOutbox {
   createdAt: string;
 }
 
+export type OutboxConflictStatus = 'READY' | 'CONFLICT' | 'REMOTE_DELETED' | 'REMOTE_MISSING';
+
+export interface LocalOutboxConflict {
+  entityType: BusinessEntityType;
+  entityId: string;
+  status: OutboxConflictStatus;
+  baseRevision: RevisionString;
+  remoteRevision: RevisionString | null;
+  remoteDeleted: boolean;
+  remoteRecord: LocalBox | LocalItem | LocalBoxLocation | null;
+}
+
 export interface LocalResyncStage {
   id: 'STAGE';
   snapshotId: string;
@@ -86,6 +98,7 @@ export class UserLocalDB extends Dexie {
   items!: Table<LocalItem, string>;
   locations!: Table<LocalBoxLocation, string>;
   outbox!: Table<LocalOutbox, [BusinessEntityType, string]>;
+  outboxConflicts!: Table<LocalOutboxConflict, [BusinessEntityType, string]>;
   syncState!: Table<LocalSyncState, string>;
   resyncStage!: Table<LocalResyncStage, string>;
   resyncEntities!: Table<LocalResyncEntity, string>;
@@ -105,6 +118,16 @@ export class UserLocalDB extends Dexie {
       items: 'id, boxId, deletedAt',
       locations: 'id, name, deletedAt',
       outbox: '[entityType+entityId], entityType, createdAt',
+      syncState: 'id',
+      resyncStage: 'id',
+      resyncEntities: 'key, entityType',
+    });
+    this.version(3).stores({
+      boxes: 'id, code, parentBoxId, locationId, deletedAt',
+      items: 'id, boxId, deletedAt',
+      locations: 'id, name, deletedAt',
+      outbox: '[entityType+entityId], entityType, createdAt',
+      outboxConflicts: '[entityType+entityId], status',
       syncState: 'id',
       resyncStage: 'id',
       resyncEntities: 'key, entityType',
