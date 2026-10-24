@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { UserLocalDB, type LocalBoxLocation } from '@/lib/user-local-db';
 import { runSyncV2Cycle } from '@/lib/sync-v2-cycle';
+import { beginFullResync, stageFullResyncPage, commitFullResync } from '@/lib/local-full-resync';
+import { runOutboxPush } from '@/lib/outbox-push-client';
 
 const stamp = '2026-10-24T00:00:00.000Z';
 const record = (name: string, revision: string, syncSeq: string): LocalBoxLocation => ({
@@ -154,6 +156,60 @@ describe('Pull / Push / Pull cycle', () => {
     expect(pushes).toBe(0);
     expect((await db.outboxConflicts.get(['BOX_LOCATION', 'loc']))?.status).toBe('CONFLICT');
     expect((await db.locations.get('loc'))?.name).toBe('Local');
+  });
+
+  it('replays a pending Push after Full Resync and rebases a newer edit', async () => {
+    await db.locations.put(record('Newer local', '0', '0'));
+    await db.outbox.put({
+      entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+      baseRevision: '0', contentHash: 'Older local',
+      payload: { ...record('Older local', '0', '0') }, createdAt: stamp,
+    });
+    const seen: Array<{ operationId: string; baseRevision: string; contentHash: string }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      if (!url.includes('/push')) throw new Error('UNEXPECTED_URL');
+      const sent = JSON.parse(String(init?.body)) as {
+        operationId: string; baseRevision: string; contentHash: string;
+      };
+      seen.push(sent);
+      if (seen.length === 1) throw new Error('RESPONSE_LOST');
+      const revision = sent.contentHash === 'Older local' ? '4' : '5';
+      return json({ operationId: sent.operationId, status: 'APPLIED',
+        revision, syncSeq: revision });
+    };
+    await expect(runOutboxPush(db, { fetcher: fetcher as typeof fetch }))
+      .rejects.toThrow('RESPONSE_LOST');
+    await db.transaction('rw', db.outbox, async () => {
+      await db.upsertOutboxInTransaction({
+        entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+        baseRevision: '0', contentHash: 'Newer local',
+        payload: { ...record('Newer local', '0', '0') }, createdAt: stamp,
+      });
+    });
+    await beginFullResync(db, 'snapshot', '9', 1);
+    const remote = record('Older local', '4', '4');
+    await stageFullResyncPage(db, {
+      snapshotId: 'snapshot', snapshotSeq: '9',
+      entities: [{
+        entityType: 'BOX_LOCATION', entityId: 'loc',
+        payload: remote as unknown as Record<string, unknown>,
+        revision: '4', contentHash: 'Older local', syncSeq: '4',
+        serverUpdatedAt: stamp, deleted: false,
+      }], nextOffset: 1, hasMore: false,
+    });
+    await commitFullResync(db, 'snapshot', 1);
+    expect((await db.locations.get('loc'))?.name).toBe('Newer local');
+    expect((await db.outboxConflicts.get(['BOX_LOCATION', 'loc']))?.status).toBe('CONFLICT');
+    expect(await db.pushPending.count()).toBe(1);
+    const result = await runOutboxPush(db, { fetcher: fetcher as typeof fetch });
+    expect(seen).toHaveLength(3);
+    expect(seen[1].operationId).toBe(seen[0].operationId);
+    expect(seen[2].baseRevision).toBe('4');
+    expect(seen[2].contentHash).toBe('Newer local');
+    expect(result.applied).toBe(1);
+    expect(await db.pushPending.count()).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+    expect(await db.outboxConflicts.count()).toBe(0);
   });
 
   it('retains pending edits and cursor when Push loses connectivity', async () => {
