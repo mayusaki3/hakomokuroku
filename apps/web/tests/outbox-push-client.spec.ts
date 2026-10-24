@@ -44,7 +44,25 @@ describe('Outbox Push client', () => {
       operationId: sent.operationId, status: 'APPLIED', revision: '1', syncSeq: '1',
     })).toBe(false);
     expect((await db.outbox.get(['BOX_LOCATION', 'loc']))?.contentHash).toBe('h2');
+    expect((await db.outbox.get(['BOX_LOCATION', 'loc']))?.baseRevision).toBe('1');
     expect((await db.outbox.get(['BOX_LOCATION', 'loc']))?.operationId).not.toBe(sent.operationId);
+  });
+  it('rebases a newer edit and sends it using the acknowledged revision', async () => {
+    await db.outbox.put(entry());
+    const first = (await prepareOutboxPush(db)).candidates[0];
+    await db.transaction('rw', db.outbox, async () => {
+      await db.upsertOutboxInTransaction({
+        ...entry(), contentHash: 'h2', payload: { id: 'loc', name: 'New Shelf' },
+      });
+    });
+    await acknowledgePush(db, first, {
+      operationId: first.operationId, status: 'APPLIED', revision: '4', syncSeq: '12',
+    });
+    const next = (await prepareOutboxPush(db)).candidates[0];
+    expect(next.baseRevision).toBe('4');
+    expect(next.contentHash).toBe('h2');
+    expect(next.operationId).not.toBe(first.operationId);
+    expect((await db.outboxConflicts.count())).toBe(0);
   });
   it('records conflicts without deleting local pending data', async () => {
     await db.outbox.put(entry());
