@@ -115,12 +115,14 @@ export async function recordPushConflict(
   return db.transaction('rw', db.outbox, db.pushPending, db.outboxConflicts, async () => {
     const current = await db.outbox.get([sent.entityType, sent.entityId]);
     await db.pushPending.delete([sent.entityType, sent.entityId]);
-    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) {
-      return false;
-    }
+    if (!current) return false;
+    // The original request was rejected. Even when the user edited again
+    // while its reply was missing, the newer edit still descends from the
+    // rejected base and must not be sent automatically.
+    if (current.baseRevision !== sent.baseRevision) return false;
     await db.outboxConflicts.put({
       entityType: sent.entityType, entityId: sent.entityId,
-      status: 'CONFLICT', baseRevision: sent.baseRevision,
+      status: 'CONFLICT', baseRevision: current.baseRevision,
       remoteRevision: reply.revision, remoteDeleted: false, remoteRecord: null,
     });
     return true;
