@@ -108,6 +108,35 @@ describe('Outbox Push client', () => {
     expect(await db.outbox.count()).toBe(0);
   });
 
+  it('blocks newer edits when a replayed older Push conflicts', async () => {
+    await db.outbox.put(entry());
+    const requests: string[] = [];
+    const fetcher = async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { operationId: string };
+      requests.push(body.operationId);
+      if (requests.length === 1) throw new Error('RESPONSE_LOST');
+      return new Response(JSON.stringify({
+        operationId: body.operationId, status: 'CONFLICT', revision: '7', syncSeq: '7',
+      }), { status: 409 });
+    };
+    await expect(runOutboxPush(db, { fetcher: fetcher as typeof fetch }))
+      .rejects.toThrow('RESPONSE_LOST');
+    await db.transaction('rw', db.outbox, async () => {
+      await db.upsertOutboxInTransaction({
+        ...entry(), contentHash: 'h2', payload: { id: 'loc', name: 'Local newer edit' },
+      });
+    });
+    const result = await runOutboxPush(db, { fetcher: fetcher as typeof fetch });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toBe(requests[0]);
+    expect(result.conflicts).toBe(1);
+    expect(result.blocked).toBe(1);
+    expect(await db.pushPending.count()).toBe(0);
+    expect((await db.outbox.get(['BOX_LOCATION', 'loc']))?.contentHash).toBe('h2');
+    expect((await db.outboxConflicts.get(['BOX_LOCATION', 'loc']))?.status).toBe('CONFLICT');
+    expect((await prepareOutboxPush(db)).candidates).toHaveLength(0);
+  });
+
   it('retries with the same operation ID after a lost HTTP response', async () => {
     await db.outbox.put(entry());
     const seen: string[] = [];
