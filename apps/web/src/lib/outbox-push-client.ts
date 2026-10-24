@@ -67,8 +67,9 @@ export async function acknowledgePush(
     throw new Error('INVALID_PUSH_ACK');
   }
   const table = sent.entityType === 'BOX' ? db.boxes : sent.entityType === 'ITEM' ? db.items : db.locations;
-  return db.transaction('rw', db.outbox, db.outboxConflicts, db.syncState, table, async () => {
+  return db.transaction('rw', db.outbox, db.pushPending, db.outboxConflicts, db.syncState, table, async () => {
     const current = await db.outbox.get([sent.entityType, sent.entityId]);
+    await db.pushPending.delete([sent.entityType, sent.entityId]);
     if (!current) return false;
     if (current.operationId !== sent.operationId || !sameEdit(current, sent)) {
       // An edit made during the request supersedes the sent payload.
@@ -111,8 +112,9 @@ export async function recordPushConflict(
       !/^(0|[1-9][0-9]*)$/.test(reply.revision)) {
     throw new Error('INVALID_PUSH_CONFLICT');
   }
-  return db.transaction('rw', db.outbox, db.outboxConflicts, async () => {
+  return db.transaction('rw', db.outbox, db.pushPending, db.outboxConflicts, async () => {
     const current = await db.outbox.get([sent.entityType, sent.entityId]);
+    await db.pushPending.delete([sent.entityType, sent.entityId]);
     if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) {
       return false;
     }
@@ -130,14 +132,10 @@ export async function runOutboxPush(
   options: { fetcher?: typeof fetch; baseUrl?: string; signal?: AbortSignal } = {},
 ): Promise<PushRunResult> {
   const fetcher = options.fetcher ?? fetch;
-  const plan = await prepareOutboxPush(db);
   let applied = 0;
   let conflicts = 0;
-  for (const sent of plan.candidates) {
+  const send = async (sent: PreparedPush): Promise<void> => {
     if (options.signal?.aborted) throw new Error('PUSH_ABORTED');
-    // Do not send a superseded candidate from an earlier preflight.
-    const current = await db.outbox.get([sent.entityType, sent.entityId]);
-    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) continue;
     const response = await fetcher((options.baseUrl ?? '') + '/api/sync/v2/push', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin', signal: options.signal,
@@ -155,6 +153,27 @@ export async function runOutboxPush(
     } else if (await recordPushConflict(db, sent, reply)) {
       conflicts++;
     }
+  };
+
+  // Replay durable requests first. A newer local edit may have replaced its
+  // operationId, but the server receipt is still keyed to the original ID.
+  for (const pending of await db.pushPending.toArray()) {
+    await send(pending);
+  }
+
+  const plan = await prepareOutboxPush(db);
+  for (const sent of plan.candidates) {
+    if (options.signal?.aborted) throw new Error('PUSH_ABORTED');
+    await db.transaction('rw', db.outbox, db.pushPending, async () => {
+      const current = await db.outbox.get([sent.entityType, sent.entityId]);
+      if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) return;
+      if (await db.pushPending.get([sent.entityType, sent.entityId])) return;
+      // Commit the exact request before network I/O.
+      await db.pushPending.put(sent);
+    });
+    const journaled = await db.pushPending.get([sent.entityType, sent.entityId]);
+    if (!journaled || journaled.operationId !== sent.operationId) continue;
+    await send(sent);
   }
   return { applied, conflicts, blocked: plan.blocked.length };
 }
