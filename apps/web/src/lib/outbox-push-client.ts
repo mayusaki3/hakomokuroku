@@ -1,4 +1,4 @@
-import type { LocalOutbox, UserLocalDB } from '@/lib/user-local-db';
+import type { LocalOutbox, LocalBusiness, UserLocalDB } from '@/lib/user-local-db';
 import { planOutboxPush, type PushCandidate } from '@/lib/outbox-push-plan';
 
 export interface PreparedPush extends PushCandidate {
@@ -66,10 +66,31 @@ export async function acknowledgePush(
       reply.syncSeq === null || !/^[1-9][0-9]*$/.test(reply.syncSeq)) {
     throw new Error('INVALID_PUSH_ACK');
   }
-  return db.transaction('rw', db.outbox, db.outboxConflicts, db.syncState, async () => {
+  const table = sent.entityType === 'BOX' ? db.boxes : sent.entityType === 'ITEM' ? db.items : db.locations;
+  return db.transaction('rw', db.outbox, db.outboxConflicts, db.syncState, table, async () => {
     const current = await db.outbox.get([sent.entityType, sent.entityId]);
-    if (!current || current.operationId !== sent.operationId || !sameEdit(current, sent)) {
+    if (!current) return false;
+    if (current.operationId !== sent.operationId || !sameEdit(current, sent)) {
+      // An edit made during the request supersedes the sent payload.
+      // The accepted revision is its new base; do not discard the newer edit.
+      // Only rebase if the current edit still descends from the sent base.
+      if (current.baseRevision !== sent.baseRevision) return false;
+      const updated = { ...current, baseRevision: reply.revision,
+        operationId: crypto.randomUUID() };
+      await db.outbox.put(updated);
+      await db.outboxConflicts.delete([sent.entityType, sent.entityId]);
+      const local = await table.get(sent.entityId) as LocalBusiness | undefined;
+      if (local) {
+        await table.update(sent.entityId, { revision: reply.revision, syncSeq: reply.syncSeq });
+      }
+      const state = await db.syncState.get('SYNC');
+      if (state) await db.syncState.put({ ...state, lastPushAt: new Date().toISOString() });
       return false;
+    }
+    // Acknowledged local projection must carry the authoritative server version.
+    const local = await table.get(sent.entityId) as LocalBusiness | undefined;
+    if (local) {
+      await table.update(sent.entityId, { revision: reply.revision, syncSeq: reply.syncSeq });
     }
     await db.outbox.delete([sent.entityType, sent.entityId]);
     await db.outboxConflicts.delete([sent.entityType, sent.entityId]);
