@@ -212,6 +212,90 @@ describe('Pull / Push / Pull cycle', () => {
     expect(await db.outboxConflicts.count()).toBe(0);
   });
 
+  it('preserves newer local edit when replay after Full Resync conflicts', async () => {
+    await db.locations.put(record('Newer local', '0', '0'));
+    await db.outbox.put({
+      entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+      baseRevision: '0', contentHash: 'Older local',
+      payload: { ...record('Older local', '0', '0') }, createdAt: stamp,
+    });
+    const seen: string[] = [];
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const sent = JSON.parse(String(init?.body)) as { operationId: string };
+      seen.push(sent.operationId);
+      if (seen.length === 1) throw new Error('RESPONSE_LOST');
+      return json({ operationId: sent.operationId, status: 'CONFLICT',
+        revision: '6', syncSeq: '6' }, 409);
+    };
+    await expect(runOutboxPush(db, { fetcher: fetcher as typeof fetch }))
+      .rejects.toThrow('RESPONSE_LOST');
+    await db.transaction('rw', db.outbox, async () => {
+      await db.upsertOutboxInTransaction({
+        entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+        baseRevision: '0', contentHash: 'Newer local',
+        payload: { ...record('Newer local', '0', '0') }, createdAt: stamp,
+      });
+    });
+    await beginFullResync(db, 'conflict-snapshot', '9', 1);
+    const remote = record('Remote winner', '6', '6');
+    await stageFullResyncPage(db, {
+      snapshotId: 'conflict-snapshot', snapshotSeq: '9',
+      entities: [{
+        entityType: 'BOX_LOCATION', entityId: 'loc',
+        payload: remote as unknown as Record<string, unknown>,
+        revision: '6', contentHash: 'Remote winner', syncSeq: '6',
+        serverUpdatedAt: stamp, deleted: false,
+      }], nextOffset: 1, hasMore: false,
+    });
+    await commitFullResync(db, 'conflict-snapshot', 1);
+    const result = await runOutboxPush(db, { fetcher: fetcher as typeof fetch });
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+    expect(result.conflicts).toBe(1);
+    expect(result.blocked).toBe(1);
+    expect((await db.locations.get('loc'))?.name).toBe('Newer local');
+    expect((await db.outbox.get(['BOX_LOCATION', 'loc']))?.contentHash).toBe('Newer local');
+    expect((await db.outboxConflicts.get(['BOX_LOCATION', 'loc']))?.status).toBe('CONFLICT');
+    expect(await db.pushPending.count()).toBe(0);
+  });
+
+  it('retains replay journal across a second outage after Full Resync', async () => {
+    await db.locations.put(record('Local', '0', '0'));
+    await db.outbox.put({
+      entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+      baseRevision: '0', contentHash: 'Local',
+      payload: { ...record('Local', '0', '0') }, createdAt: stamp,
+    });
+    const ids: string[] = [];
+    let offline = true;
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const sent = JSON.parse(String(init?.body)) as { operationId: string };
+      ids.push(sent.operationId);
+      if (offline) throw new Error('OFFLINE');
+      return json({ operationId: sent.operationId, status: 'APPLIED',
+        revision: '1', syncSeq: '1' });
+    };
+    await expect(runOutboxPush(db, { fetcher: fetcher as typeof fetch }))
+      .rejects.toThrow('OFFLINE');
+    await beginFullResync(db, 'empty-snapshot', '0', 0);
+    await stageFullResyncPage(db, {
+      snapshotId: 'empty-snapshot', snapshotSeq: '0',
+      entities: [], nextOffset: 0, hasMore: false,
+    });
+    await commitFullResync(db, 'empty-snapshot', 0);
+    await expect(runOutboxPush(db, { fetcher: fetcher as typeof fetch }))
+      .rejects.toThrow('OFFLINE');
+    expect(await db.pushPending.count()).toBe(1);
+    expect(await db.outbox.count()).toBe(1);
+    offline = false;
+    const result = await runOutboxPush(db, { fetcher: fetcher as typeof fetch });
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    expect(result.applied).toBe(1);
+    expect(await db.pushPending.count()).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
   it('retains pending edits and cursor when Push loses connectivity', async () => {
     await db.outbox.put({
       entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
