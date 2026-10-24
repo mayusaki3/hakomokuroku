@@ -24,7 +24,8 @@ const activeCycles = new Map<string, Promise<SyncV2CycleResult>>();
  * No network I/O occurs in an IndexedDB transaction.
  *
  * Concurrent callers for the same user database share the running cycle.
- * Web Locks serializes the full cycle across tabs in supporting browsers.\n * Without Web Locks, only the same-runtime guard is available.
+ * Web Locks serializes the full cycle across tabs in supporting browsers.
+ * Without Web Locks, only the same-runtime guard is available.
  */
 export async function runSyncV2Cycle(
   db: UserLocalDB, options: SyncV2CycleOptions = {},
