@@ -21,6 +21,39 @@ beforeEach(async () => {
 afterEach(async () => { await db.delete(); });
 
 describe('Pull / Push / Pull cycle', () => {
+  it('holds an exclusive user-scoped Web Lock for the entire cycle', async () => {
+    const events: string[] = [];
+    const locks = {
+      request: async (_name: string, _options: LockOptions, callback: () => Promise<unknown>) => {
+        events.push('acquire');
+        const result = await callback();
+        events.push('release');
+        return result;
+      },
+    } as unknown as Pick<LockManager, 'request'>;
+    const fetcher = async () => {
+      events.push('pull');
+      return json({ changes: [], nextCursor: '0', hasMore: false });
+    };
+    await runSyncV2Cycle(db, { fetcher: fetcher as typeof fetch, locks });
+    expect(events).toEqual(['acquire', 'pull', 'pull', 'release']);
+  });
+
+  it('releases Web Lock after a network failure and permits retry', async () => {
+    let releases = 0;
+    const locks = {
+      request: async (_name: string, _options: LockOptions, callback: () => Promise<unknown>) => {
+        try { return await callback(); } finally { releases++; }
+      },
+    } as unknown as Pick<LockManager, 'request'>;
+    const offline = async () => { throw new Error('OFFLINE'); };
+    await expect(runSyncV2Cycle(db, { fetcher: offline as typeof fetch, locks }))
+      .rejects.toThrow('OFFLINE');
+    const online = async () => json({ changes: [], nextCursor: '0', hasMore: false });
+    await runSyncV2Cycle(db, { fetcher: online as typeof fetch, locks });
+    expect(releases).toBe(2);
+  });
+
   it('coalesces simultaneous cycles and releases the guard after success', async () => {
     let calls = 0;
     let release!: () => void;
