@@ -21,6 +21,51 @@ beforeEach(async () => {
 afterEach(async () => { await db.delete(); });
 
 describe('Pull / Push / Pull cycle', () => {
+  it('coalesces simultaneous cycles and releases the guard after success', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fetcher = async () => {
+      calls++;
+      if (calls === 1) await gate;
+      return json({ changes: [], nextCursor: '0', hasMore: false });
+    };
+    const first = runSyncV2Cycle(db, { fetcher: fetcher as typeof fetch });
+    const second = runSyncV2Cycle(db, { fetcher: fetcher as typeof fetch });
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(calls).toBe(2);
+    await runSyncV2Cycle(db, { fetcher: fetcher as typeof fetch });
+    expect(calls).toBe(4);
+  });
+
+  it('allows retry after an interrupted Pull without losing Outbox', async () => {
+    await db.outbox.put({
+      entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
+      baseRevision: '0', contentHash: 'Local',
+      payload: { ...record('Local', '0', '0') }, createdAt: stamp,
+    });
+    const offline = async () => { throw new Error('OFFLINE'); };
+    const failures = await Promise.allSettled([
+      runSyncV2Cycle(db, { fetcher: offline as typeof fetch }),
+      runSyncV2Cycle(db, { fetcher: offline as typeof fetch }),
+    ]);
+    expect(failures.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    expect(await db.outbox.count()).toBe(1);
+    const fetcher = async (url: string, init?: RequestInit) => {
+      if (url.includes('/push')) {
+        const sent = JSON.parse(String(init?.body)) as { operationId: string };
+        return json({ operationId: sent.operationId, status: 'APPLIED',
+          revision: '1', syncSeq: '1' });
+      }
+      return json({ changes: [], nextCursor: '0', hasMore: false });
+    };
+    const result = await runSyncV2Cycle(db, { fetcher: fetcher as typeof fetch });
+    expect(result.push.applied).toBe(1);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
   it('applies a local edit then observes its authoritative remote version', async () => {
     await db.locations.put(record('Local', '0', '0'));
     await db.outbox.put({
