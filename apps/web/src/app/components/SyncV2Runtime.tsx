@@ -23,6 +23,7 @@ export default function SyncV2Runtime() {
 
     const check = (): Promise<void> => {
       if (checkInFlight) return checkInFlight;
+      const requestedGeneration = generation;
       const task = (async () => {
         const response = await fetch('/api/auth/me', {
           credentials: 'include', cache: 'no-store',
@@ -31,7 +32,7 @@ export default function SyncV2Runtime() {
         // Transient network/server failures must not destroy an offline session.
         if (!response.ok) return;
         const body = await response.json() as { user?: { id?: unknown } | null };
-        if (stopped) return;
+        if (stopped || generation !== requestedGeneration) return;
         const userId = typeof body.user?.id === 'string' ? body.user.id : null;
         if (!userId) { clear(); return; }
         if (current?.userId === userId) return;
