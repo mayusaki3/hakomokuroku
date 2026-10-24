@@ -59,6 +59,11 @@ export interface LocalOutbox {
   operationId?: string;
 }
 
+/** Durable request journal: preserves a sent payload after a newer local edit. */
+export interface LocalPushPending extends LocalOutbox {
+  operationId: string;
+}
+
 export type OutboxConflictStatus = 'READY' | 'CONFLICT' | 'REMOTE_DELETED' | 'REMOTE_MISSING';
 
 export interface LocalOutboxConflict {
@@ -100,6 +105,7 @@ export class UserLocalDB extends Dexie {
   items!: Table<LocalItem, string>;
   locations!: Table<LocalBoxLocation, string>;
   outbox!: Table<LocalOutbox, [BusinessEntityType, string]>;
+  pushPending!: Table<LocalPushPending, [BusinessEntityType, string]>;
   outboxConflicts!: Table<LocalOutboxConflict, [BusinessEntityType, string]>;
   syncState!: Table<LocalSyncState, string>;
   resyncStage!: Table<LocalResyncStage, string>;
@@ -136,6 +142,7 @@ export class UserLocalDB extends Dexie {
     });
   }
 
+
   async initializeSyncState(): Promise<void> {
     await this.transaction('rw', this.syncState, async () => {
       if (!(await this.syncState.get('SYNC'))) {
@@ -166,3 +173,14 @@ export class UserLocalDB extends Dexie {
 export function openUserLocalDB(authenticatedUserId: string): UserLocalDB {
   return new UserLocalDB(authenticatedUserId);
 }
+    this.version(4).stores({
+      boxes: 'id, code, parentBoxId, locationId, deletedAt',
+      items: 'id, boxId, deletedAt',
+      locations: 'id, name, deletedAt',
+      outbox: '[entityType+entityId], entityType, createdAt',
+      outboxConflicts: '[entityType+entityId], status',
+      pushPending: '[entityType+entityId]',
+      syncState: 'id',
+      resyncStage: 'id',
+      resyncEntities: 'key, entityType',
+    });
