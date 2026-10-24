@@ -67,7 +67,7 @@ export async function acknowledgePush(
     throw new Error('INVALID_PUSH_ACK');
   }
   const table = sent.entityType === 'BOX' ? db.boxes : sent.entityType === 'ITEM' ? db.items : db.locations;
-  return db.transaction('rw', db.outbox, db.pushPending, db.outboxConflicts, db.syncState, table, async () => {
+  return db.transaction('rw', [db.outbox, db.pushPending, db.outboxConflicts, db.syncState, table], async () => {
     const current = await db.outbox.get([sent.entityType, sent.entityId]);
     await db.pushPending.delete([sent.entityType, sent.entityId]);
     if (!current) return false;
