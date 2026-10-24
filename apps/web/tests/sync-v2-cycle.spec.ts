@@ -25,7 +25,7 @@ describe('Pull / Push / Pull cycle', () => {
     await db.locations.put(record('Local', '0', '0'));
     await db.outbox.put({
       entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
-      baseRevision: '0', contentHash: 'Local', payload: record('Local', '0', '0'),
+      baseRevision: '0', contentHash: 'Local', payload: { ...record('Local', '0', '0') },
       createdAt: stamp,
     });
     const order: string[] = [];
@@ -58,7 +58,7 @@ describe('Pull / Push / Pull cycle', () => {
     await db.locations.put(record('Local', '1', '1'));
     await db.outbox.put({
       entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
-      baseRevision: '1', contentHash: 'Local', payload: record('Local', '1', '1'),
+      baseRevision: '1', contentHash: 'Local', payload: { ...record('Local', '1', '1') },
       createdAt: stamp,
     });
     await db.syncState.update('SYNC', { pullCursor: '1' });
@@ -81,7 +81,7 @@ describe('Pull / Push / Pull cycle', () => {
   it('retains pending edits and cursor when Push loses connectivity', async () => {
     await db.outbox.put({
       entityType: 'BOX_LOCATION', entityId: 'loc', operation: 'UPSERT',
-      baseRevision: '0', contentHash: 'Local', payload: record('Local', '0', '0'),
+      baseRevision: '0', contentHash: 'Local', payload: { ...record('Local', '0', '0') },
       createdAt: stamp,
     });
     const fetcher = async (url: string) => {
