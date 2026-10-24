@@ -140,8 +140,19 @@ export class UserLocalDB extends Dexie {
       resyncStage: 'id',
       resyncEntities: 'key, entityType',
     });
-  }
 
+    this.version(4).stores({
+      boxes: 'id, code, parentBoxId, locationId, deletedAt',
+      items: 'id, boxId, deletedAt',
+      locations: 'id, name, deletedAt',
+      outbox: '[entityType+entityId], entityType, createdAt',
+      outboxConflicts: '[entityType+entityId], status',
+      pushPending: '[entityType+entityId]',
+      syncState: 'id',
+      resyncStage: 'id',
+      resyncEntities: 'key, entityType',
+    });
+  }
 
   async initializeSyncState(): Promise<void> {
     await this.transaction('rw', this.syncState, async () => {
@@ -173,14 +184,3 @@ export class UserLocalDB extends Dexie {
 export function openUserLocalDB(authenticatedUserId: string): UserLocalDB {
   return new UserLocalDB(authenticatedUserId);
 }
-    this.version(4).stores({
-      boxes: 'id, code, parentBoxId, locationId, deletedAt',
-      items: 'id, boxId, deletedAt',
-      locations: 'id, name, deletedAt',
-      outbox: '[entityType+entityId], entityType, createdAt',
-      outboxConflicts: '[entityType+entityId], status',
-      pushPending: '[entityType+entityId]',
-      syncState: 'id',
-      resyncStage: 'id',
-      resyncEntities: 'key, entityType',
-    });
