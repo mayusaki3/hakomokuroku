@@ -9,6 +9,7 @@ import DevExposeDB from './dev-expose-db';
 import AutoSyncEndpoint from './AutoSyncEndpoint';
 import SWRegister from './sw-register';
 import TokenMirror from '@/app/components/TokenMirror';
+import SyncV2Runtime from '@/app/components/SyncV2Runtime';
 
 export const metadata = {
   title: '箱目録',
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </Suspense>
 
         <TokenMirror />
+        <SyncV2Runtime />
 
         {/* オリジンに追従して同期baseUrlを自動更新（クライアント側で実行） */}
         <AutoSyncEndpoint />
