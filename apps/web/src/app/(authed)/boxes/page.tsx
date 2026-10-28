@@ -1,37 +1,4 @@
-'use client';
-import { useEffect, useState } from 'react';
-import ListRow from '@/app/components/ListRow';
-import type { Box } from '@/lib/db';
-
-export default function BoxesPage() {
-  const [boxes, setBoxes] = useState<Box[]>([]);
-  useEffect(() => {
-    (async () => {
-      const { db } = await import('@/lib/db');
-      const data = await db.boxes.orderBy('updatedAt').reverse().toArray();
-      setBoxes(data);
-    })();
-  }, []);
-
-  return (
-    <main className="max-w-3xl mx-auto">
-      <h1 className="sr-only">箱一覧</h1>
-      <ul className="divide-y">
-        {boxes.map((b) => (
-          <li key={b.id}>
-            <ListRow
-              kind="box"
-              id={b.id}
-              name={b.name}
-              code={b.code}
-              location={b.location ?? undefined}
-              thumbUrl={b.thumbs?.[0] ?? null}
-              hrefDetail={`/boxes/${b.id}`}
-              hrefEdit={`/register?step=edit&boxId=${encodeURIComponent(b.id)}`}
-            />
-          </li>
-        ))}
-      </ul>
-    </main>
-  );
+/** v0.8: legacy hk-local-v1 UI retired; new UI follows DB/API verification. */
+export default function PendingBusinessUi() {
+  return <main style={{ padding: 24 }}><h1>箱目録 v0.8</h1><p>旧画面は廃止されました。新画面はDB/API検証完了後に実装します。</p></main>;
 }

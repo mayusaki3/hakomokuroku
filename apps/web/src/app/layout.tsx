@@ -5,8 +5,6 @@ import MobileTabBar from '@/app/components/MobileTabBar';
 import ThemeRuntimeApplier from '@/app/components/ThemeRuntimeApplier';
 import './globals.css';
 
-import DevExposeDB from './dev-expose-db';
-import AutoSyncEndpoint from './AutoSyncEndpoint';
 import SWRegister from './sw-register';
 import TokenMirror from '@/app/components/TokenMirror';
 import SyncV2Runtime from '@/app/components/SyncV2Runtime';
@@ -39,9 +37,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <TokenMirror />
         <SyncV2Runtime />
 
-        {/* オリジンに追従して同期baseUrlを自動更新（クライアント側で実行） */}
-        <AutoSyncEndpoint />
-
         <div className="app-content">
           <ContentArea>{children}</ContentArea>
         </div>
@@ -51,8 +46,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </Suspense>
         <SWRegister />
 
-        {/* 開発時のみ露出 */}
-        {process.env.NODE_ENV !== 'production' ? <DevExposeDB /> : null}
       </body>
     </html>
   );
