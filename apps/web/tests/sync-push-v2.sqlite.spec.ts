@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyPushV2 } from '@/server/sync-push-v2';
+import { listConflictsV2 } from '@/server/sync-conflicts-v2';
 
 let directory: string;
 let client: PrismaClient;
@@ -137,6 +138,32 @@ describe('v0.8 Push on isolated SQLite', () => {
     } finally {
       await client.$executeRawUnsafe('DROP TRIGGER "conflict_failure"');
     }
+  });
+  it('lists only the requesting user conflicts with JSON-safe revision strings', async () => {
+    const own = await listConflictsV2('u1', client);
+    expect(own).toHaveLength(1);
+    expect(own[0]).toMatchObject({
+      entityType: 'BOX_LOCATION', entityId: 'loc',
+      clientBaseRevision: '0', clientContentHash: 'new-intent',
+      serverRevisionAtConflict: '1', serverContentHashAtConflict: 'h1',
+    });
+    expect(typeof own[0].conflictId).toBe('string');
+    expect((own[0].clientPayload as { name: string }).name).toBe('New intent');
+    expect((own[0].serverPayloadAtConflict as { name: string }).name).toBe('Shelf');
+    expect(JSON.stringify(own)).toContain('serverRevisionAtConflict');
+    expect(await listConflictsV2('u2', client)).toEqual([]);
+  });
+  it('preserves the conflict and receipt on an exact replay after another operation', async () => {
+    const input = operation('66666666-6666-4666-8666-666666666666', {
+      contentHash: 'new-intent',
+      payload: { ...operation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').payload, name: 'New intent' },
+    });
+    const before = await listConflictsV2('u1', client);
+    const receipt = await client.syncPushReceipt.findUniqueOrThrow({
+      where: { userId_operationId: { userId: 'u1', operationId: input.operationId } },
+    });
+    expect(await applyPushV2('u1', input, client)).toEqual(receipt.result);
+    expect(await listConflictsV2('u1', client)).toEqual(before);
   });
   it('returns UNCHANGED for stale revision with identical content, without writing a new change', async () => {
     const input = operation('55555555-5555-4555-8555-555555555555');
