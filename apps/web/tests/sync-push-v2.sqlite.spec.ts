@@ -76,7 +76,7 @@ describe('v0.8 Push on isolated SQLite', () => {
     expect(await client.syncChangeLog.count()).toBe(1);
   });
   it('returns and persists a revision conflict without overwriting the record', async () => {
-    const input = operation('22222222-2222-4222-8222-222222222222');
+    const input = operation('22222222-2222-4222-8222-222222222222', { contentHash: 'other-hash' });
     const first = await applyPushV2('u1', input, client);
     expect(first).toMatchObject({ status: 'CONFLICT', revision: '1' });
     expect(await applyPushV2('u1', input, client)).toEqual(first);
@@ -84,6 +84,14 @@ describe('v0.8 Push on isolated SQLite', () => {
       where: { userId_id: { userId: 'u1', id: 'loc' } },
     })).name).toBe('Shelf');
     expect(await client.syncChangeLog.count()).toBe(1);
+  });
+  it('returns UNCHANGED for stale revision with identical content, without writing a new change', async () => {
+    const input = operation('55555555-5555-4555-8555-555555555555');
+    const result = await applyPushV2('u1', input, client);
+    expect(result).toMatchObject({ status: 'UNCHANGED', revision: '1', syncSeq: '1' });
+    expect(await applyPushV2('u1', input, client)).toEqual(result);
+    expect(await client.syncChangeLog.count()).toBe(1);
+    expect((await client.syncSequence.findUniqueOrThrow({ where: { id: 'global' } })).lastSeq).toBe(1n);
   });
   it('updates when the base revision matches', async () => {
     const input = operation('33333333-3333-4333-8333-333333333333', {

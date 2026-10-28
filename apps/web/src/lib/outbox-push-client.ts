@@ -6,7 +6,7 @@ export interface PreparedPush extends PushCandidate {
 }
 export interface PushReply {
   operationId: string;
-  status: 'APPLIED' | 'CONFLICT';
+  status: 'APPLIED' | 'UNCHANGED' | 'CONFLICT';
   revision: string;
   syncSeq: string | null;
 }
@@ -61,7 +61,7 @@ export async function acknowledgePush(
   db: UserLocalDB, sent: PreparedPush, reply: PushReply,
 ): Promise<boolean> {
   if (reply.operationId !== sent.operationId ||
-      reply.status !== 'APPLIED' ||
+      (reply.status !== 'APPLIED' && reply.status !== 'UNCHANGED') ||
       !/^[1-9][0-9]*$/.test(reply.revision) ||
       reply.syncSeq === null || !/^[1-9][0-9]*$/.test(reply.syncSeq)) {
     throw new Error('INVALID_PUSH_ACK');

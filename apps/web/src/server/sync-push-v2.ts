@@ -61,7 +61,7 @@ async function existing(tx: Tx, userId: string, op: PushV2Operation) {
 }
 export interface PushV2Result {
   operationId: string;
-  status: 'APPLIED' | 'CONFLICT';
+  status: 'APPLIED' | 'UNCHANGED' | 'CONFLICT';
   revision: string;
   syncSeq: string | null;
 }
@@ -85,11 +85,17 @@ export async function applyPushV2(
     const remote = await existing(tx, userId, op);
     const remoteRevision = remote?.revision ?? 0n;
     const baseRevision = BigInt(op.baseRevision);
-    const conflict = remoteRevision !== baseRevision ||
+    const unchanged = remote !== null && remoteRevision !== baseRevision &&
+      remote.contentHash === op.contentHash &&
+      ((remote.deletedAt !== null) === (op.operation === 'DELETE'));
+    const conflict = !unchanged && (remoteRevision !== baseRevision ||
       (remote === null && baseRevision !== 0n) ||
-      (remote?.deletedAt != null);
+      (remote?.deletedAt != null));
     let result: PushV2Result;
-    if (conflict) {
+    if (unchanged) {
+      result = { operationId: op.operationId, status: 'UNCHANGED',
+        revision: remoteRevision.toString(), syncSeq: remote?.syncSeq?.toString() ?? null };
+    } else if (conflict) {
       result = { operationId: op.operationId, status: 'CONFLICT',
         revision: remoteRevision.toString(), syncSeq: remote?.syncSeq?.toString() ?? null };
     } else {
