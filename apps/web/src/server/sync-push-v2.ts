@@ -64,6 +64,7 @@ export interface PushV2Result {
   status: 'APPLIED' | 'UNCHANGED' | 'CONFLICT';
   revision: string;
   syncSeq: string | null;
+  conflictId?: string;
 }
 /**
  * Single SQLite write transaction: check receipt first, compare revisions,
@@ -96,8 +97,32 @@ export async function applyPushV2(
       result = { operationId: op.operationId, status: 'UNCHANGED',
         revision: remoteRevision.toString(), syncSeq: remote?.syncSeq?.toString() ?? null };
     } else if (conflict) {
+      // Conflict and receipt are committed together; never modify canonical Business here.
+      const remoteSnapshot = remote === null ? null : JSON.parse(JSON.stringify(remote,
+        (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
+      const saved = await tx.syncConflict.upsert({
+        where: { userId_entityType_entityId: {
+          userId, entityType: op.entityType, entityId: op.entityId,
+        } },
+        create: {
+          userId, entityType: op.entityType, entityId: op.entityId,
+          clientBaseRevision: baseRevision, clientContentHash: op.contentHash,
+          clientPayload: json(op.payload),
+          serverRevisionAtConflict: remoteRevision,
+          serverContentHashAtConflict: remote?.contentHash ?? '',
+          serverPayloadAtConflict: json(remoteSnapshot ?? {}),
+        },
+        update: {
+          clientBaseRevision: baseRevision, clientContentHash: op.contentHash,
+          clientPayload: json(op.payload),
+          serverRevisionAtConflict: remoteRevision,
+          serverContentHashAtConflict: remote?.contentHash ?? '',
+          serverPayloadAtConflict: json(remoteSnapshot ?? {}),
+        },
+      });
       result = { operationId: op.operationId, status: 'CONFLICT',
-        revision: remoteRevision.toString(), syncSeq: remote?.syncSeq?.toString() ?? null };
+        revision: remoteRevision.toString(), syncSeq: remote?.syncSeq?.toString() ?? null,
+        conflictId: saved.id };
     } else {
       if (remoteRevision >= MAX_INT64) throw new PushV2Error('REVISION_OVERFLOW', 409);
       const nextRevision = remoteRevision + 1n;

@@ -39,6 +39,16 @@ beforeAll(async () => {
     "deleted" BOOLEAN NOT NULL, "payload" TEXT NOT NULL,
     "serverUpdatedAt" DATETIME NOT NULL
   )`);
+  await client.$executeRawUnsafe(`CREATE TABLE "SyncConflict" (
+    "id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL,
+    "entityType" TEXT NOT NULL, "entityId" TEXT NOT NULL,
+    "clientBaseRevision" BIGINT NOT NULL, "clientContentHash" TEXT NOT NULL,
+    "clientPayload" TEXT NOT NULL, "serverRevisionAtConflict" BIGINT NOT NULL,
+    "serverContentHashAtConflict" TEXT NOT NULL, "serverPayloadAtConflict" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    UNIQUE ("userId", "entityType", "entityId")
+  )`);
   await client.$executeRawUnsafe(`CREATE TABLE "SyncPushReceipt" (
     "userId" TEXT NOT NULL, "operationId" TEXT NOT NULL,
     "requestFingerprint" TEXT NOT NULL, "result" TEXT NOT NULL,
@@ -79,11 +89,54 @@ describe('v0.8 Push on isolated SQLite', () => {
     const input = operation('22222222-2222-4222-8222-222222222222', { contentHash: 'other-hash' });
     const first = await applyPushV2('u1', input, client);
     expect(first).toMatchObject({ status: 'CONFLICT', revision: '1' });
+    expect(first.conflictId).toEqual(expect.any(String));
+    const saved = await client.syncConflict.findUniqueOrThrow({ where: {
+      userId_entityType_entityId: { userId: 'u1', entityType: 'BOX_LOCATION', entityId: 'loc' },
+    } });
+    expect(saved.id).toBe(first.conflictId);
+    expect(saved.clientContentHash).toBe('other-hash');
+    expect(saved.serverContentHashAtConflict).toBe('h1');
+    expect(saved.clientBaseRevision).toBe(0n);
+    expect(saved.serverRevisionAtConflict).toBe(1n);
+    expect((saved.serverPayloadAtConflict as { name: string }).name).toBe('Shelf');
     expect(await applyPushV2('u1', input, client)).toEqual(first);
+    expect(await client.syncConflict.count()).toBe(1);
     expect((await client.boxLocation.findUniqueOrThrow({
       where: { userId_id: { userId: 'u1', id: 'loc' } },
     })).name).toBe('Shelf');
     expect(await client.syncChangeLog.count()).toBe(1);
+  });
+  it('updates one unresolved conflict without duplicating its entity identity', async () => {
+    const input = operation('66666666-6666-4666-8666-666666666666', {
+      contentHash: 'new-intent',
+      payload: { ...operation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').payload, name: 'New intent' },
+    });
+    const result = await applyPushV2('u1', input, client);
+    const saved = await client.syncConflict.findUniqueOrThrow({ where: {
+      userId_entityType_entityId: { userId: 'u1', entityType: 'BOX_LOCATION', entityId: 'loc' },
+    } });
+    expect(result.conflictId).toBe(saved.id);
+    expect(saved.clientContentHash).toBe('new-intent');
+    expect(await client.syncConflict.count()).toBe(1);
+    expect(await client.syncChangeLog.count()).toBe(1);
+  });
+  it('rolls back the conflict receipt when persistence fails', async () => {
+    await client.$executeRawUnsafe(`CREATE TRIGGER "conflict_failure"
+      BEFORE UPDATE ON "SyncConflict"
+      BEGIN SELECT RAISE(ABORT, 'forced conflict failure'); END`);
+    const input = operation('77777777-7777-4777-8777-777777777777', {
+      contentHash: 'failed-intent',
+    });
+    try {
+      await expect(applyPushV2('u1', input, client)).rejects.toThrow();
+      expect(await client.syncPushReceipt.findUnique({
+        where: { userId_operationId: { userId: 'u1', operationId: input.operationId } },
+      })).toBeNull();
+      expect((await client.syncConflict.findFirstOrThrow({ where: { userId: 'u1' } })).clientContentHash)
+        .toBe('new-intent');
+    } finally {
+      await client.$executeRawUnsafe('DROP TRIGGER "conflict_failure"');
+    }
   });
   it('returns UNCHANGED for stale revision with identical content, without writing a new change', async () => {
     const input = operation('55555555-5555-4555-8555-555555555555');
@@ -127,5 +180,14 @@ describe('v0.8 Push on isolated SQLite', () => {
     const result = await applyPushV2('u2', input, client);
     expect(result).toMatchObject({ status: 'APPLIED', revision: '1', syncSeq: '3' });
     expect(await client.syncChangeLog.count()).toBe(3);
+    const foreign = operation('88888888-8888-4888-8888-888888888888', {
+      contentHash: 'foreign-intent',
+    });
+    const conflict = await applyPushV2('u2', foreign, client);
+    expect(conflict.status).toBe('CONFLICT');
+    expect(await client.syncConflict.count()).toBe(2);
+    expect((await client.syncConflict.findUniqueOrThrow({ where: {
+      userId_entityType_entityId: { userId: 'u1', entityType: 'BOX_LOCATION', entityId: 'loc' },
+    } })).clientContentHash).toBe('new-intent');
   });
 });
