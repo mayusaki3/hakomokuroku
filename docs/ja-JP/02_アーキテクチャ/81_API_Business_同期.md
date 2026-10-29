@@ -151,12 +151,13 @@ businessPayload
 operation:
 
 ```text
-CREATE
-UPDATE
+UPSERT
 DELETE
 ```
 
-serverは各operationについて現在のcanonical revision / contentHashと比較する。
+`UPSERT` はBusiness entityの新規作成または更新を表す。新規作成では `baseRevision=0` を指定し、既存entityの更新ではclientが保持する `baseRevision` を指定する。
+
+serverは各operationについて現在のcanonical revision / contentHashを確認し、通常受理、`UNCHANGED`、`CONFLICT` を判定する。`UPSERT` は無条件上書きを意味しない。
 
 ### 8.1 通常受理
 
