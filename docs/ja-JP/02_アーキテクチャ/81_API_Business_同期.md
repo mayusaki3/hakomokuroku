@@ -303,17 +303,32 @@ Business payloadの `thumbs` はordered PhotoRef array。
 
 ## 15. Error mapping
 
-HTTP request全体に対する主なerror:
+HTTP request全体のエラー応答では、machine-readableな `code` を必須とする。エラーコードは大文字の識別子とし、`error` は正式な識別フィールドとして使用しない。
 
-| HTTP | error | 意味 |
+基本形式:
+
+```json
+{
+  "code": "INVALID_REQUEST"
+}
+```
+
+HTTP request全体に対する主なエラー:
+
+| HTTP | code | 意味 |
 | --- | --- | --- |
-| 400 | invalid_request | request形式不正 |
-| 401 | unauthorized | 認証なし / session失効 |
-| 409 | conflict | request全体を処理できない状態競合 |
-| 429 | too_many_requests | rate limit |
-| 500 | internal_error | server内部エラー |
+| 400 | `INVALID_REQUEST` | request形式不正 |
+| 401 | `AUTH_REQUIRED` | 認証なし / session失効 |
+| 409 | `RESTORE_LOCKED` | Restore lockによる一時停止。再試行可能 |
+| 409 | `FULL_RESYNC_REQUIRED` | incremental Pullを継続できない |
+| 409 | `CONFLICT_STALE` | 競合解決時にserver stateが変更されている |
+| 429 | `TOO_MANY_REQUESTS` | rate limit |
+| 500 | `INTERNAL_ERROR` | server内部エラー |
+| 503 | `TEMPORARILY_UNAVAILABLE` | 一時的なサービス利用不可。再試行可能 |
 
-個々のBusiness operationの競合やvalidation failureは、可能な限りHTTP全体の409ではなくPush resultの `CONFLICT` / `REJECTED` として返す。
+上表は代表例であり、各endpoint固有のerror codeとHTTP statusは詳細同期設計の該当節に従う。例えばPullの不正cursorは `INVALID_CURSOR`、競合解決時のvalidation failureは `RESOLUTION_REJECTED` とする。409を単一の `CONFLICT` に集約しない。
+
+個々のBusiness operationの競合やvalidation failureは、可能な限りHTTP request全体の409ではなくPush resultの `CONFLICT` / `REJECTED` として返す。
 
 ## 16. 現行実装との差分
 
