@@ -281,11 +281,11 @@ request body:
 - 認証済みUserと登録済みDeviceの所有関係を検証する。対象Receiptは `(userId,deviceId,resolutionId)` で検索し、別User・別DeviceのReceiptにはアクセスさせない。
 - clientは解決成功responseをlocal Business / Outbox / SyncConflictへatomicに反映した後に限りACKを送信する。
 - Receiptが `PENDING_ACK` ならserver clockで `acknowledgedAt` を記録して `ACKED` に遷移し、成功responseの詳細を破棄する。
-- 同じACKの再送は冪等。初回の `acknowledgedAt` を変更せず成功として扱う。
-- `ACKED` の同一解決要求再送は `ALREADY_ACKNOWLEDGED` とし、Business変更を再実行しない。
+- 同じACKの再送は冪等。HTTP 200で成功とし、初回の `acknowledgedAt` を変更しない。
+- `ACKED` の同一解決要求再送はHTTP 200で `status: ALREADY_ACKNOWLEDGED` とし、Business変更を再実行しない。
 - ACKから30日経過したReceiptは完全削除する。未ACKのReceiptはこの期限の対象外。
 - Device削除時は当該DeviceのReceiptを完全削除する。ただしv0.8のDevice削除APIは未提供であり、将来のDevice削除実装で連動させる。
-- Receiptが存在しない場合は `404 RESOLUTION_RECEIPT_NOT_FOUND`。不正・非所有Deviceは認可エラーとし、他UserのReceiptの存在を漏らさない。
+- Receiptが存在しない場合は `404 RESOLUTION_RECEIPT_NOT_FOUND`。認証なしは `401 AUTH_REQUIRED`、他Userに属するDeviceは `403 USER_SCOPE_VIOLATION` とし、他UserのReceiptの存在を漏らさない。
 
 詳細は [同期設計](./60_同期設計.md) 第17.3.1節および[DBスキーマ定義](./40_DBスキーマ定義.md) 第11.1節を参照。
 
@@ -346,12 +346,19 @@ HTTP request全体に対する主なエラー:
 | --- | --- | --- |
 | 400 | `INVALID_REQUEST` | request形式不正 |
 | 401 | `AUTH_REQUIRED` | 認証なし / session失効 |
+| 403 | `USER_SCOPE_VIOLATION` | 認証済みUserの操作範囲外 |
 | 409 | `RESTORE_LOCKED` | Restore lockによる一時停止。再試行可能 |
 | 409 | `FULL_RESYNC_REQUIRED` | incremental Pullを継続できない |
 | 409 | `CONFLICT_STALE` | 競合解決時にserver stateが変更されている |
+| 409 | `RESOLUTION_ID_REUSED` | 同一Device・resolutionIdに異なる解決要求を使用 |
+| 404 | `CONFLICT_NOT_FOUND` | 指定した未解決Conflictが存在しない |
+| 404 | `RESOLUTION_RECEIPT_NOT_FOUND` | ACK対象のReceiptが存在しない |
+| 422 | `RESOLUTION_REJECTED` | 競合解決要求の検証失敗 |
 | 429 | `TOO_MANY_REQUESTS` | rate limit |
 | 500 | `INTERNAL_ERROR` | server内部エラー |
 | 503 | `TEMPORARILY_UNAVAILABLE` | 一時的なサービス利用不可。再試行可能 |
+
+`ALREADY_ACKNOWLEDGED` はエラーcodeではなく、ACK済みの同一解決要求に返すHTTP 200の成功statusである。保存済みBusiness snapshotは返さない。
 
 上表は代表例であり、各endpoint固有のerror codeとHTTP statusは詳細同期設計の該当節に従う。例えばPullの不正cursorは `INVALID_CURSOR`、競合解決時のvalidation failureは `RESOLUTION_REJECTED` とする。409を単一の `CONFLICT` に集約しない。
 
