@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyPushV2 } from '@/server/sync-push-v2';
 import { listConflictsV2 } from '@/server/sync-conflicts-v2';
+import { keepServerV2 } from '@/server/sync-conflict-resolve-v2';
 
 let directory: string;
 let client: PrismaClient;
@@ -216,5 +217,38 @@ describe('v0.8 Push on isolated SQLite', () => {
     expect((await client.syncConflict.findUniqueOrThrow({ where: {
       userId_entityType_entityId: { userId: 'u1', entityType: 'BOX_LOCATION', entityId: 'loc' },
     } })).clientContentHash).toBe('new-intent');
+  });
+  it('KEEP_SERVER rejects another user without changing conflicts', async () => {
+    const own = (await listConflictsV2('u1', client))[0];
+    await expect(keepServerV2('u2', own.conflictId, '2', client))
+      .rejects.toThrow('CONFLICT_NOT_FOUND');
+    expect(await listConflictsV2('u1', client)).toHaveLength(1);
+  });
+  it('KEEP_SERVER refreshes stale snapshot and requires explicit retry', async () => {
+    const own = (await listConflictsV2('u1', client))[0];
+    const result = await keepServerV2('u1', own.conflictId, '1', client);
+    expect(result).toMatchObject({ status: 'CONFLICT_STALE', revision: '2', contentHash: 'h2' });
+    const refreshed = (await listConflictsV2('u1', client))[0];
+    expect(refreshed.serverRevisionAtConflict).toBe('2');
+    expect((refreshed.serverPayloadAtConflict as { name: string }).name).toBe('New Shelf');
+    expect(await client.syncChangeLog.count()).toBe(3);
+  });
+  it('KEEP_SERVER removes only the conflict without changing Business or sequence', async () => {
+    const own = (await listConflictsV2('u1', client))[0];
+    const before = await client.boxLocation.findUniqueOrThrow({
+      where: { userId_id: { userId: 'u1', id: 'loc' } },
+    });
+    const result = await keepServerV2('u1', own.conflictId, '2', client);
+    expect(result).toMatchObject({ status: 'RESOLVED', resolution: 'KEEP_SERVER',
+      revision: '2', contentHash: 'h2', syncSeq: '2' });
+    expect((result.payload as { name: string }).name).toBe('New Shelf');
+    expect(await listConflictsV2('u1', client)).toEqual([]);
+    expect(await client.boxLocation.findUniqueOrThrow({
+      where: { userId_id: { userId: 'u1', id: 'loc' } },
+    })).toEqual(before);
+    expect(await client.syncChangeLog.count()).toBe(3);
+    expect((await client.syncSequence.findUniqueOrThrow({ where: { id: 'global' } })).lastSeq).toBe(3n);
+    await expect(keepServerV2('u1', own.conflictId, '2', client))
+      .rejects.toThrow('CONFLICT_NOT_FOUND');
   });
 });
