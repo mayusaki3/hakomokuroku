@@ -262,6 +262,33 @@ snapshot全体を取得するまでcurrent local Businessへ部分採用しな�
 
 詳細は [同期モデル](./50_同期モデル.md) を参照。
 
+### 12.1 競合解決Receipt ACK
+
+競合解決はユーザーが都度選択する。ACKは新しい解決判断ではなく、既に成功した解決要求の結果をデバイスがlocal DBへatomicに反映済みであることの通知。
+
+```text
+POST /api/sync/conflicts/resolutions/{resolutionId}/ack
+```
+
+request body:
+
+```json
+{
+  "deviceId": "registered-device-id"
+}
+```
+
+- 認証済みUserと登録済みDeviceの所有関係を検証する。対象Receiptは `(userId,deviceId,resolutionId)` で検索し、別User・別DeviceのReceiptにはアクセスさせない。
+- clientは解決成功responseをlocal Business / Outbox / SyncConflictへatomicに反映した後に限りACKを送信する。
+- Receiptが `PENDING_ACK` ならserver clockで `acknowledgedAt` を記録して `ACKED` に遷移し、成功responseの詳細を破棄する。
+- 同じACKの再送は冪等。初回の `acknowledgedAt` を変更せず成功として扱う。
+- `ACKED` の同一解決要求再送は `ALREADY_ACKNOWLEDGED` とし、Business変更を再実行しない。
+- ACKから30日経過したReceiptは完全削除する。未ACKのReceiptはこの期限の対象外。
+- Device削除時は当該DeviceのReceiptを完全削除する。ただしv0.8のDevice削除APIは未提供であり、将来のDevice削除実装で連動させる。
+- Receiptが存在しない場合は `404 RESOLUTION_RECEIPT_NOT_FOUND`。不正・非所有Deviceは認可エラーとし、他UserのReceiptの存在を漏らさない。
+
+詳細は [同期設計](./60_同期設計.md) 第17.3.1節および[DBスキーマ定義](./40_DBスキーマ定義.md) 第11.1節を参照。
+
 ## 13. 削除
 
 Business deleteはtombstoneとして同期する。
