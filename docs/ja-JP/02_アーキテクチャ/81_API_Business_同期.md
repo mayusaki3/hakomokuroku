@@ -155,7 +155,7 @@ UPSERT
 DELETE
 ```
 
-`UPSERT` はBusiness entityの新規作成または更新を表す。新規作成では `baseRevision=0` を指定し、既存entityの更新ではclientが保持する `baseRevision` を指定する。
+`UPSERT` はBusiness entityの新規作成または更新を表す。新規作成では `baseRevision="0"` を指定し、既存entityの更新ではclientが保持する `baseRevision` を指定する。`baseRevision`、`revision`、`syncSeq`、Pull cursorなどのsigned 64-bit値は、JSONではすべてdecimal stringで表現する。URL queryの`cursor`もdecimal stringとする。
 
 serverは各operationについて現在のcanonical revision / contentHashを確認し、通常受理、`UNCHANGED`、`CONFLICT` を判定する。`UPSERT` は無条件上書きを意味しない。
 
@@ -193,8 +193,8 @@ operationごとに結果を返す。
       "entityType": "Box",
       "entityId": "string",
       "status": "APPLIED",
-      "revision": 2,
-      "syncSeq": 123
+      "revision": "2",
+      "syncSeq": "123"
     }
   ]
 }
@@ -218,7 +218,7 @@ status:
 request例:
 
 ```text
-GET /api/sync/pull?after=<syncSeq>
+GET /api/sync/pull?cursor=<syncSeq>&limit=<n>
 ```
 
 serverはauthenticated Userに属し、指定cursorより後のSyncChangeLogをsyncSeq順に返す。
