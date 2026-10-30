@@ -283,6 +283,8 @@ request body:
 - Receiptが `PENDING_ACK` ならserver clockで `acknowledgedAt` を記録して `ACKED` に遷移し、成功responseの詳細を破棄する。
 - 同じACKの再送は冪等。HTTP 200で成功とし、初回の `acknowledgedAt` を変更しない。
 - `ACKED` の同一解決要求再送はHTTP 200で `status: ALREADY_ACKNOWLEDGED` とし、Business変更を再実行しない。
+- clientは成功結果のlocal atomic反映とACK待ち記録を同一IndexedDB transactionで永続化し、ACK HTTP 200を受信するまでACKを再送可能にする。ACK済み解決要求の再送応答にはBusiness snapshotを含めない。
+- `ALREADY_ACKNOWLEDGED` を受け取ってもlocal反映済みを確認できない場合、Business/Outboxを推測で更新せずFull Resyncへ移行する。
 - ACKから30日経過したReceiptは完全削除する。未ACKのReceiptはこの期限の対象外。
 - Device削除時は当該DeviceのReceiptを完全削除する。ただしv0.8のDevice削除APIは未提供であり、将来のDevice削除実装で連動させる。
 - Receiptが存在しない場合は `404 RESOLUTION_RECEIPT_NOT_FOUND`。認証なしは `401 AUTH_REQUIRED`、他Userに属するDeviceは `403 USER_SCOPE_VIOLATION` とし、他UserのReceiptの存在を漏らさない。
