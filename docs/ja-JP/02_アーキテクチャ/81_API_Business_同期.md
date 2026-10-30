@@ -279,6 +279,9 @@ request body:
 ```
 
 - 認証済みUserと登録済みDeviceの所有関係を検証する。対象Receiptは `(userId,deviceId,resolutionId)` で検索し、別User・別DeviceのReceiptにはアクセスさせない。
+- ACK requestの`deviceId`は、ACK待ち記録に保存された元の解決操作のDevice IDを使用する。現在のlocal `DeviceState.deviceId`との一致は要求しない。DeviceState再セットアップ後も旧DeviceのACK待ち記録を新Device IDに書き換えない。
+- serverはauthenticated Userに属する登録済みDeviceであることと、同じ`(userId,deviceId,resolutionId)`のReceiptが存在することを確認する。ACKの許可は旧DeviceStateの復元、Device登録の再利用、Box.code prefixの切替を意味しない。
+- clientは元のACK待ち記録が健全であることを確認できない場合、推測した`deviceId`/`resolutionId`でACKを送信しない。認証・所有関係検証が失敗したACK待ち記録は削除せず、送信を保留する。
 - clientは解決成功responseをlocal Business / Outbox / SyncConflictへatomicに反映した後に限りACKを送信する。
 - Receiptが `PENDING_ACK` ならserver clockで `acknowledgedAt` を記録して `ACKED` に遷移し、成功responseの詳細を破棄する。
 - 同じACKの再送は冪等。HTTP 200で成功とし、初回の `acknowledgedAt` を変更しない。
