@@ -7,7 +7,7 @@ document_type: index
 canonical_document: true
 -->
 
-[目次](../README.md) > API仕様
+[目次](../目次.md) > API仕様
 
 # API仕様 目次
 
@@ -44,4 +44,4 @@ canonical_document: true
 ## 03 ユーザー情報API
 - [ユーザーアイコン更新](./03_ユーザー情報API/api_user_icon.md)
 
-[目次](../README.md) > API仕様
+[目次](../目次.md) > API仕様
