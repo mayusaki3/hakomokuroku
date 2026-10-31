@@ -262,38 +262,6 @@ snapshot全体を取得するまでcurrent local Businessへ部分採用しな�
 
 詳細は [同期モデル](./50_同期モデル.md) を参照。
 
-### 12.1 競合解決Receipt ACK
-
-競合解決はユーザーが都度選択する。ACKは新しい解決判断ではなく、既に成功した解決要求の結果をデバイスがlocal DBへatomicに反映済みであることの通知。
-
-```text
-POST /api/sync/conflicts/resolutions/{resolutionId}/ack
-```
-
-request body:
-
-```json
-{
-  "deviceId": "registered-device-id"
-}
-```
-
-- 認証済みUserと登録済みDeviceの所有関係を検証する。対象Receiptは `(userId,deviceId,resolutionId)` で検索し、別User・別DeviceのReceiptにはアクセスさせない。
-- ACK requestの`deviceId`は、ACK待ち記録に保存された元の解決操作のDevice IDを使用する。現在のlocal `DeviceState.deviceId`との一致は要求しない。DeviceState再セットアップ後も旧DeviceのACK待ち記録を新Device IDに書き換えない。
-- serverはauthenticated Userに属する登録済みDeviceであることと、同じ`(userId,deviceId,resolutionId)`のReceiptが存在することを確認する。ACKの許可は旧DeviceStateの復元、Device登録の再利用、Box.code prefixの切替を意味しない。
-- clientは元のACK待ち記録が健全であることを確認できない場合、推測した`deviceId`/`resolutionId`でACKを送信しない。認証・所有関係検証が失敗したACK待ち記録は削除せず、送信を保留する。
-- clientは解決成功responseをlocal Business / Outbox / SyncConflictへatomicに反映した後に限りACKを送信する。
-- Receiptが `PENDING_ACK` ならserver clockで `acknowledgedAt` を記録して `ACKED` に遷移し、成功responseの詳細を破棄する。
-- 同じACKの再送は冪等。HTTP 200で成功とし、初回の `acknowledgedAt` を変更しない。
-- `ACKED` の同一解決要求再送はHTTP 200で `status: ALREADY_ACKNOWLEDGED` とし、Business変更を再実行しない。
-- clientは成功結果のlocal atomic反映とACK待ち記録を同一IndexedDB transactionで永続化し、ACK HTTP 200を受信するまでACKを再送可能にする。ACK済み解決要求の再送応答にはBusiness snapshotを含めない。
-- `ALREADY_ACKNOWLEDGED` を受け取ってもlocal反映済みを確認できない場合、Business/Outboxを推測で更新せずFull Resyncへ移行する。
-- ACKから30日経過したReceiptは完全削除する。未ACKのReceiptはこの期限の対象外。
-- Device削除時は当該DeviceのReceiptを完全削除する。ただしv0.8のDevice削除APIは未提供であり、将来のDevice削除実装で連動させる。
-- Receiptが存在しない場合は `404 RESOLUTION_RECEIPT_NOT_FOUND`。認証なしは `401 AUTH_REQUIRED`、他Userに属するDeviceは `403 USER_SCOPE_VIOLATION` とし、他UserのReceiptの存在を漏らさない。
-
-詳細は [同期設計](./60_同期設計.md) 第17.3.1節および[DBスキーマ定義](./40_DBスキーマ定義.md) 第11.1節を参照。
-
 ## 13. 削除
 
 Business deleteはtombstoneとして同期する。
@@ -355,15 +323,12 @@ HTTP request全体に対する主なエラー:
 | 409 | `RESTORE_LOCKED` | Restore lockによる一時停止。再試行可能 |
 | 409 | `FULL_RESYNC_REQUIRED` | incremental Pullを継続できない |
 | 409 | `CONFLICT_STALE` | 競合解決時にserver stateが変更されている |
-| 409 | `RESOLUTION_ID_REUSED` | 同一Device・resolutionIdに異なる解決要求を使用 |
 | 404 | `CONFLICT_NOT_FOUND` | 指定した未解決Conflictが存在しない |
-| 404 | `RESOLUTION_RECEIPT_NOT_FOUND` | ACK対象のReceiptが存在しない |
 | 422 | `RESOLUTION_REJECTED` | 競合解決要求の検証失敗 |
 | 429 | `TOO_MANY_REQUESTS` | rate limit |
 | 500 | `INTERNAL_ERROR` | server内部エラー |
 | 503 | `TEMPORARILY_UNAVAILABLE` | 一時的なサービス利用不可。再試行可能 |
 
-`ALREADY_ACKNOWLEDGED` はエラーcodeではなく、ACK済みの同一解決要求に返すHTTP 200の成功statusである。保存済みBusiness snapshotは返さない。
 
 上表は代表例であり、各endpoint固有のerror codeとHTTP statusは詳細同期設計の該当節に従う。例えばPullの不正cursorは `INVALID_CURSOR`、競合解決時のvalidation failureは `RESOLUTION_REJECTED` とする。409を単一の `CONFLICT` に集約しない。
 
