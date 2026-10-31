@@ -243,7 +243,7 @@ Content-Type: application/json
 - 現行実装は `User.lockUntil` を401 `unauthorized` として扱い、500は `internal_error` を返す。
 - 旧VitestはSyncTokenのモックを含み、現行 `AuthSession` と端末Cookieの検証へ更新が必要。
 - `MfaLoginAttempt` の追加migrationは未作成。既存DBのバックアップ・未適用migration確認を経て導入する。
-- テスト仕様: [ログイン2段階認証テスト仕様](../../../05_テストケース集/01_ユーザー認証API/api_auth_login_totp_testcases.md)。
+- テスト仕様: [ログイン2段階認証テスト仕様](../../05_テストケース集/01_ユーザー認証API/api_auth_login_totp_testcases.md)。
 - 設計根拠: `LLM_WORKSPACE/Worklog/mfa-login-attempt-model-20261013.md`。
 
 ---
