@@ -348,10 +348,6 @@ Business DBが残っていてもDeviceStateだけ欠損/破損している場合
 
 既存Business/Outboxは変更しない。
 
-`SyncResolutionAckOutbox` に旧 `deviceId` のACK待ち記録が残っている場合、DeviceState再セットアップで削除・新 `deviceId` への付け替えをしない。ACK待ち記録の `deviceId` は元の競合解決操作の識別子であり、Box.code発行用DeviceStateの復元根拠にしてはならない。
-
-新DeviceStateの作成後、旧Device IDに属するACK待ち記録を新Device IDとして送信してはならない。旧Device IDでのACK再送は、そのIDがserverで同一Userに登録済みであり、元のACK待ち記録が健全な場合に限る。条件を確認できない場合は送信を保留し、記録を保全する。ACK成功HTTP 200以外を理由に記録を削除しない。
-
 ### 10.4 App reinstall / browser storage clear
 local storage identityが保持されていることを前提にしない。DeviceStateが無ければ常にnew device setupとして扱う。
 
