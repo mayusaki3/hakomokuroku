@@ -7,7 +7,7 @@ document_type: index
 canonical_document: true
 -->
 
-[目次](../README.md) > HLDocS検証 > HLDocS検証 目次
+[目次](../目次.md) > HLDocS検証 > HLDocS検証 目次
 
 # HLDocS検証 目次
 
@@ -38,4 +38,4 @@ pnpm hldocs:validate
 
 ---
 
-[目次](../README.md) > HLDocS検証 > HLDocS検証 目次
+[目次](../目次.md) > HLDocS検証 > HLDocS検証 目次
