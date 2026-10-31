@@ -7,6 +7,8 @@ document_type: testspec
 canonical_document: true
 -->
 
+[目次](../../目次.md) > テストケース集 > 箱管理 > Box削除トランザクション テスト仕様
+
 # Box削除トランザクション テスト仕様
 
 参照仕様: `docs/ja-JP/02_アーキテクチャ/40_DBスキーマ定義.md` §6, §6.1, §16.3, §17。
@@ -41,3 +43,7 @@ canonical_document: true
 ## 実装状況（2026-10-20）
 
 `apps/web/src/app/(authed)/boxes/[id]/delete/route.ts` はHTTP 501の仮実装。上記ケースは未実施。
+
+---
+
+[目次](../../目次.md) > テストケース集 > 箱管理 > Box削除トランザクション テスト仕様
