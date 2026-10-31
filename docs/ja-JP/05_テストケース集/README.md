@@ -7,7 +7,7 @@ document_type: index
 canonical_document: true
 -->
 
-[目次](../README.md) > テストケース集
+[目次](../目次.md) > テストケース集
 
 # テストケース集 目次
 
@@ -42,4 +42,4 @@ API仕様と原則同じ分類番号を使用する。
 ## 03 ユーザー情報API
 - [ユーザーアイコン更新](./03_ユーザー情報API/api_user_icon_testcases.md)
 
-[目次](../README.md) > テストケース集
+[目次](../目次.md) > テストケース集
