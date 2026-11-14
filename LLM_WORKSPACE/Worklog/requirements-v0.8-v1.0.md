@@ -690,6 +690,9 @@
 - 通知からItemへの複合外部キー `(userId, itemId) -> Item(userId, id)` に `ON DELETE CASCADE` を設定し、Itemの将来的な物理削除時にも通知を削除する。
 - `ON DELETE CASCADE` は論理削除では発動しないため、論理削除時の通知削除を代替しない。
 - 通知単体の削除ではItemを削除しない。具体的なORM/SQL実装・エラー時処理は詳細設計で定義する。
+- **A案採用（2026-11-14確定）**：通知の `itemId` はNULL許可とし、Itemを参照しない通知も保持できるようにする。Vision後追い認識完了通知では `itemId` を必須とする。
+- `itemId` が非NULLの場合のみ `(userId, itemId) -> Item(userId, id)` の複合FKで参照整合性を保証する。NULLの通知はItem削除によるカスケード削除対象にならない。
+- 通知種別ごとの `itemId` 必須条件の具体的なDB制約またはアプリケーション検証方法は詳細設計で定義する。
 
 ### 要件整理の対応先（暫定）
 
