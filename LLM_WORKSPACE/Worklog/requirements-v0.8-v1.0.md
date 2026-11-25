@@ -1182,3 +1182,9 @@ URLは格納しない。
 - 既存の90日保持、保持範囲外cursorのFULL_RESYNC_REQUIREDを維持。起算点serverUpdatedAt、毎日18:20 UTC、最大500件/バッチ、共通既定リース60秒、serverUpdatedAt ASC, syncSeq ASCを推奨設定として採用。
 - 現行同期設計17章では競合解決結果追跡専用Receipt・ACK・ACK待ちキューを採用しないため、その用途の削除ジョブは追加しない。
 - DB-wide syncSeqはUser内で欠番を持つ。残存ログ最小値だけでは削除済みイベントの欠落を判定できない。User単位の削除済み最大syncSeqを保持し、削除と同一トランザクションで更新する案を検討する。Pullの境界判定と取得の同一snapshot、全ログ削除時の境界維持、採番状態の独立保持も詳細設計対象。方式確定まで正式仕様反映・実装を保留する。
+
+### 21.3 SyncChangeLog削除境界（2026-11-26確定、A案）
+
+- User単位のpurgedThroughSeq（signed int64、初期0）を永続保持。実削除最大syncSeqとのmaxを削除と同一transactionで保存。全ログ削除後も維持。global counterは独立。
+- cursor < purgedThroughSeq はFULL_RESYNC_REQUIRED。同値は他条件を満たせば許可。境界判定・throughSeq・変更取得は同一read snapshot。
+- 40_DBスキーマ定義第10.1節、60_同期設計第3.1節、50_同期モデル第13節に反映済み。物理テーブル配置・テスト・validatorは未実施。
