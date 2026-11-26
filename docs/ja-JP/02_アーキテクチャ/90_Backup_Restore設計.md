@@ -136,6 +136,10 @@ same applyIdに異なるrequest contentを送信した場合はvalidation error�
 - その場合markerをcleanupし、通常syncでserver canonical stateへ収束する
 - RestoreApplyResult削除はBusiness / SyncChangeLog / photo referenceを変更しない
 
+### 7.2 RestoreApplyResultの定期削除
+
+[共通定期削除機構](../02_システム仕様/共通/10_定期削除機構.md)を使用する。毎日18:30 UTC、最大500件/バッチ、共通既定リース60秒とする。committedAtから168時間以上経過したCOMMITTED行をcommittedAt ASC, userId ASC, applyId ASCで選択し、削除条件を同一書き込みトランザクションで再確認する。保持期間と結果照会の契約は第7.1節に従う。500件と60秒は実測で検証する。
+
 ## 8. Client crash safety
 minimal durable markerは以下。
 
