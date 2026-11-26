@@ -1188,3 +1188,9 @@ URLは格納しない。
 - User単位のpurgedThroughSeq（signed int64、初期0）を永続保持。実削除最大syncSeqとのmaxを削除と同一transactionで保存。全ログ削除後も維持。global counterは独立。
 - cursor < purgedThroughSeq はFULL_RESYNC_REQUIRED。同値は他条件を満たせば許可。境界判定・throughSeq・変更取得は同一read snapshot。
 - 40_DBスキーマ定義第10.1節、60_同期設計第3.1節、50_同期モデル第13節に反映済み。物理テーブル配置・テスト・validatorは未実施。
+
+### 21.4 RestoreApplyResult・Full Resync Snapshot定期削除（2026-11-27確定）
+
+- RestoreApplyResultは既存のcommit後168時間保持を維持。毎日18:30 UTC、500件/バッチ、共通既定リース60秒、committedAt ASC, userId ASC, applyId ASC。既存ジョブとの時刻分散を理由に推奨設定を採用。
+- Full Resync Snapshotは既存の60分固定期限を維持。毎時40分UTC、共通既定リース60秒。B案（Entity単位分割削除）をユーザー承認。管理行を含め最大500行/バッチとし、Entity消尽後のみ管理行を削除する。巨大CASCADEによる書き込み占有を避けるため。進捗専用テーブルなし。期限判定とページ取得は同一読み取りsnapshot。途中失敗は次回残存行から再開。
+- 同期設計18.4.1（8041d6b）、Backup/Restore設計7.2（52bd418）に反映済み。バッチ上限とリース期間は実測検証対象。実装・テスト・HLDocS validator未実施。
