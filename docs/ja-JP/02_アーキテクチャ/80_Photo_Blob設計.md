@@ -373,6 +373,16 @@ server GC済みphotoIdへのstatusはnot-readyを返す。
 
 local Business/Outboxがそのphotoを必要としておりlocal originalが残っていれば、同じphotoId/photoHashで再uploadしてreference-readyへ戻せる。ただし別parentへの再利用は禁止。
 
+### 15.6 定期削除とファイル排他
+
+[共通定期削除機構](../02_システム仕様/共通/10_定期削除機構.md)に従う。毎日18:50 UTC、未参照から720時間、最大100 Blob/バッチ、既定リース60秒とする。
+
+- PhotoBlobの論理削除属性はNULL許容のdeletedAtとする。通常未参照状態と区別する。論理削除済みを優先し、未参照期限が古い順に処理する。同一期限はuserId, photoIdで安定順序とする。
+- 対象種別・userId・photoIdで共通ファイル排他を取得する。参照不存在と期限を再確認し、論理削除をDBに確定する。論理削除後はreference-readyではなく、参照追加・通常状態への復帰・同一ID再uploadを禁止する。
+- originalと対応するthumbnail等の対象ファイルを削除し、全削除成功後に管理レコードを削除する。不存在（ENOENT）のみ削除済みとして扱い、その他のI/O失敗時は論理削除状態を維持する。DB削除失敗時も次回再処理する。
+- 同一ID再uploadは管理レコード削除完了後に既存のphotoId/photoHash契約に従って許可する。GCはBusiness正本・同期履歴を変更しない。
+- 100件、60秒、256分割の妥当性は実測で検証する。具体的APIエラー、物理DB型およびstagingとの接続は詳細設計で確定する。
+
 ## 16. Local / server responsibility boundary
 - Business reference truth: server Business + local pending Outbox
 - unsynced binary保全: local responsibility
